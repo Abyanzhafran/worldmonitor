@@ -20,6 +20,7 @@ const testWorkflow = read(resolve(workflowsDir, 'test.yml'));
 const desktopBuildWorkflow = read(resolve(workflowsDir, 'build-desktop.yml'));
 const desktopCanaryWorkflow = read(resolve(workflowsDir, 'test-linux-app.yml'));
 const lintCodeWorkflow = read(resolve(workflowsDir, 'lint-code.yml'));
+const protoCheckWorkflow = read(resolve(workflowsDir, 'proto-check.yml'));
 const workflowText = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .map((name) => read(resolve(workflowsDir, name)))
@@ -143,6 +144,19 @@ function workflowStepBlock(workflow: string, stepName: string): string {
   assert.notEqual(startIndex, -1, `workflow must define step ${stepName}`);
   const nextStepIndex = workflow.indexOf('\n      - ', startIndex + marker.length);
   return workflow.slice(startIndex, nextStepIndex === -1 ? workflow.length : nextStepIndex);
+}
+
+function workflowStepBlocksByUses(workflow: string, action: string): string[] {
+  const marker = new RegExp(`\\n      - uses: ${escapeRegExp(action)}@[^\\n]+\\n`, 'g');
+  const blocks: string[] = [];
+  for (const match of workflow.matchAll(marker)) {
+    const startIndex = match.index ?? -1;
+    assert.notEqual(startIndex, -1, `workflow must define ${action}`);
+    const nextStepIndex = workflow.indexOf('\n      - ', startIndex + match[0].length);
+    blocks.push(workflow.slice(startIndex, nextStepIndex === -1 ? workflow.length : nextStepIndex));
+  }
+  assert.ok(blocks.length > 0, `workflow must define ${action}`);
+  return blocks;
 }
 
 function workflowRunScript(stepBlock: string): string {
@@ -280,6 +294,49 @@ function securityAuditMatrixLockfiles(): string[] {
 }
 
 describe('CI workflow coverage', () => {
+  it('runs the proto breaking check against the full main history (#6114)', () => {
+    const breakingJob = workflowJobBlock(protoCheckWorkflow, 'proto-breaking');
+    assert.doesNotMatch(breakingJob, /^\s+if:/m, 'proto-breaking must run for fork pull requests');
+    const [checkoutStep] = workflowStepBlocksByUses(breakingJob, 'actions/checkout');
+    assert.match(
+      checkoutStep,
+      /\n\s+with:\n\s+fetch-depth: 0\n/,
+      'proto-breaking must fetch full history so the main baseline is available',
+    );
+    const breakingStep = workflowStepBlock(protoCheckWorkflow, 'Check for breaking proto changes');
+    assert.match(
+      breakingStep,
+      /^\s+run: make breaking\s*$/m,
+      'proto-check.yml must run the canonical buf breaking target against the fetched origin/main proto baseline',
+    );
+    assert.doesNotMatch(breakingStep, /^\s+continue-on-error:/m);
+
+    // Pin the shared Makefile baseline. `run: make breaking` alone stays green if the
+    // recipe regresses to proto/.git#branch=main (no repo) or loses origin/main.
+    const makefile = read(resolve(root, 'Makefile'));
+    assert.match(
+      makefile,
+      /^breaking:[^\n]*\n\tcd \$\(PROTO_DIR\) && buf breaking --against '\.\.\/\.git#branch=origin\/main,subdir=proto'\s*$/m,
+      "make breaking must use '../.git#branch=origin/main,subdir=proto' from PROTO_DIR",
+    );
+
+    // Pin the documented FILE/PACKAGE/WIRE_JSON policy (binary WIRE intentionally off).
+    const bufYaml = read(resolve(root, 'proto/buf.yaml'));
+    const breakingUse = bufYaml.match(/\nbreaking:\n(?:[^\n]*\n)*?[ \t]+use:\n((?:[ \t]+-[^\n]*\n)+)/);
+    assert.ok(breakingUse, 'proto/buf.yaml must declare breaking.use');
+    const rules = [...breakingUse[1].matchAll(/^[ \t]+-[ \t]+(\S+)\s*$/gm)].map((m) => m[1]).sort();
+    assert.deepEqual(
+      rules,
+      ['FILE', 'PACKAGE', 'WIRE_JSON'].sort(),
+      'breaking.use must be exactly FILE, PACKAGE, WIRE_JSON (binary WIRE intentionally omitted)',
+    );
+
+    // Path-filtered Proto Generation Check is outside deploy-gate's aggregated
+    // workflows (#5402). A red `proto-breaking` check-run does not fail the
+    // required `gate` context until it is wired into deploy-gate (with a
+    // path-safe always-run/skip pattern) or listed in branch-protection/rulesets.
+  });
+
   it('runs the public documentation boundary on docs-only pull requests', () => {
     const publicDocsJob = workflowJobBlock(lintCodeWorkflow, 'public-docs');
 
