@@ -151,7 +151,16 @@ export function managedRailwayServices(registry) {
 // railway-seeder-watch-paths-can-skip-deployments.md).
 export const BROAD_WATCH_PATTERNS = Object.freeze(['scripts/**', 'shared/**']);
 
-const REPOSITORY = 'koala73/worldmonitor';
+export const REPOSITORY = 'koala73/worldmonitor';
+
+// Every live service Railway builds from this repository, which is a broader
+// set than the seeders below: it also covers the relays, the workers, the
+// consumer-prices trio and the collector. `check-railway-deploy-drift.mjs`
+// checks that set against main, so the two files share one definition of
+// "ours" rather than each carrying its own idea of which services count.
+export function isRepositoryService(service) {
+  return service?.source?.repo === REPOSITORY;
+}
 const SEED_COMMAND_RE = /^node\s+(?:\.\/)?(?:scripts\/)?(?:seed-[^\s]+|fetch-gpsjam\.mjs|publish-bootstrap-tiers\.mjs)(?:\s|$)/;
 const SEED_DOCKERFILE_RE = /(?:^|\/)Dockerfile\.(?:seed-[^/\s]+|digest-notifications|publish-bootstrap-tiers)$/;
 
@@ -387,12 +396,21 @@ export function serializeRailwayServiceConfigPatch(drift) {
   return `${JSON.stringify(buildRailwayServiceConfigPatch(drift))}\n`;
 }
 
-function runRailway(args, options = {}) {
+// A hung Railway call must not consume the whole job budget: this runs inside a
+// scheduled workflow with a wall-clock timeout, and a subprocess with no bound
+// turns one unresponsive API call into a cancelled monitor.
+export const RAILWAY_CALL_TIMEOUT_MS = 60_000;
+
+export function runRailway(args, options = {}) {
   const result = spawnSync('railway', args, {
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
+    timeout: RAILWAY_CALL_TIMEOUT_MS,
     ...options,
   });
+  if (result.signal) {
+    throw new Error(`railway ${args.join(' ')} timed out after ${RAILWAY_CALL_TIMEOUT_MS}ms`);
+  }
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(
