@@ -267,7 +267,7 @@ export function summarizeData(data: Record<string, unknown>): Record<string, unk
 // ---------------------------------------------------------------------------
 // Every cache tool returns a uniform envelope from `executeTool`:
 //
-//   { cached_at: string|null, stale: boolean, data: { [label]: ... } }
+//   { cached_at: string|null, stale: boolean, contentFreshnessPendingUntil?: string, data: { [label]: ... } }
 //
 // where each `label` is derived from one of the tool's `_cacheKeys` via the
 // NON_LABEL regex in executeTool. `cacheEnvelope(dataProps)` returns the spec
@@ -283,6 +283,9 @@ export function summarizeData(data: Record<string, unknown>): Record<string, unk
 //     per-label `data` properties are intentionally NOT required because any
 //     single cache key may be transiently null without tripping the
 //     `cache_all_null` guard (which fires only when ALL keys are null).
+//     `contentFreshnessPendingUntil` is likewise optional: it is advertised on
+//     every cache envelope but only a tool whose freshness check declares a
+//     `contentFreshnessActivationKey` can ever populate it.
 //   - `additionalProperties` is left implicit (true) so forward-compat fields
 //     added to a payload by a producer don't suddenly fail validation.
 //   - Per-array `items.properties` lists known top-level fields with types but
@@ -300,6 +303,11 @@ export function cacheEnvelope(dataProperties: Record<string, object>): object {
       stale: {
         type: 'boolean',
         description: 'True when any contributing cache key is older than its per-key maxStaleMin freshness budget.',
+      },
+      contentFreshnessPendingUntil: {
+        type: 'string',
+        format: 'date-time',
+        description: 'Optional ISO-8601 deadline while a cleanly absent content-freshness block is temporarily covered by deployment-order grace.',
       },
       data: { type: 'object', properties: dataProperties },
     },
