@@ -1022,7 +1022,7 @@ export const CACHE_TOOLS: ToolDef[] = [
   {
     name: 'get_economic_data',
     _outputBudgetBytes: 131072,
-    description: 'China macro: official-only 12-series; 5 NBS/SAFE ingestible, PBoC/GACC unavailable, no proxies; see launchReady/status. Retained values expose transportStatus and transportFailureReason independently. Other economic data includes Fed Funds (FRED), economic and official NBS/PBoC release calendars, fuel prices, ECB FX rates, EU yield curves, earnings, COT positioning, energy storage, BIS household debt service ratios, and BIS residential/commercial property prices.',
+    description: 'China macro: official-only 12-series; 5 NBS/SAFE ingestible, PBoC/GACC unavailable, no proxies; see launchReady/status. Retained values expose transportStatus and transportFailureReason independently. Other economic data includes Fed Funds (FRED), economic and official NBS/PBoC release calendars, fuel prices, ECB FX rates, Bank of Russia official rates (RUB per 1 unit of each listed currency, plus the CBR key policy rate), EU yield curves, earnings, COT positioning, energy storage, BIS household debt service ratios, and BIS residential/commercial property prices.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1030,7 +1030,7 @@ export const CACHE_TOOLS: ToolDef[] = [
           type: 'array',
           items: {
             type: 'string',
-            enum: ['fedfunds', 'econ-calendar', 'china-macro', 'china-release-calendar', 'fuel-prices', 'ecb-fx-rates', 'yield-curve-eu', 'spending', 'earnings-calendar', 'cot', 'dsr', 'property-residential', 'property-commercial'],
+            enum: ['fedfunds', 'econ-calendar', 'china-macro', 'china-release-calendar', 'fuel-prices', 'ecb-fx-rates', 'cbr-rates', 'yield-curve-eu', 'spending', 'earnings-calendar', 'cot', 'dsr', 'property-residential', 'property-commercial'],
           },
           description: 'Restrict the response to one or more sub-datasets. Omit for the full economic bundle.',
         },
@@ -1079,6 +1079,50 @@ export const CACHE_TOOLS: ToolDef[] = [
         properties: { countries: { type: 'array', items: { type: 'object', properties: { code: { type: 'string' }, price: { type: 'number' }, currency: { type: 'string' } } } } },
       },
       'ecb-fx-rates': { type: ['object', 'null'] },
+      // Described rather than left as a bare object, unlike its ecb-fx-rates
+      // neighbour: this dataset has no dashboard panel, so an MCP caller is its
+      // ONLY reader and there is no UI to cross-check a misreading against. The
+      // three properties below each name a specific misreading — inverted
+      // direction, a date read as "today", and the per-Nominal block price
+      // mistaken for the unit rate.
+      'cbr-rates': {
+        type: ['object', 'null'],
+        properties: {
+          quoteCurrency: { type: 'string', description: 'Always "RUB". Rates are RUB PER ONE UNIT of each listed currency — rates.USD.rate = 81.13 means 1 USD costs 81.13 RUB, not the reverse.' },
+          rateUnit: { type: 'string', description: 'Human-readable restatement of the quote direction.' },
+          effectiveDate: { type: 'string', description: 'ISO date the rate is OFFICIALLY IN FORCE. CBR sets rates for the next calendar day, so this is routinely tomorrow — it is not "as of today".' },
+          previousDate: { type: ['string', 'null'], description: 'The calendar day requested as the change1d baseline.' },
+          previousEffectiveDate: { type: ['string', 'null'], description: 'The day CBR stamped on the baseline table it returned; differs from previousDate after a weekend or holiday.' },
+          rates: {
+            type: 'object',
+            description: 'Keyed by ISO 4217 alpha code. Use `rate`; `valuePerNominal` is the block price and is 100x or 10000x larger for currencies quoted per 100 or per 10 000 units.',
+            additionalProperties: {
+              type: 'object',
+              properties: {
+                rate: { type: 'number', description: 'RUB per ONE unit. The field to quote.' },
+                valuePerNominal: { type: 'number', description: 'RUB per `nominal` units, as published. NOT the unit rate.' },
+                nominal: { type: 'number', description: 'Units the published price covers (1, 100, or 10000).' },
+                name: { type: 'string', description: 'Official CBR currency name, in Russian.' },
+                numCode: { type: 'string' },
+                change1d: { type: ['number', 'null'], description: 'Change in `rate` vs the previous day, or null when that baseline was unavailable — never 0 for unknown.' },
+              },
+            },
+          },
+          keyRate: {
+            type: ['object', 'null'],
+            description: 'CBR key policy rate. `changes` lists only observed transitions; `windowStart` is where the 2-year lookback opened and is NOT a policy decision.',
+            properties: {
+              rate: { type: 'number', description: 'Current key rate, percent.' },
+              observedAt: { type: 'string', description: 'Newest observation date, not the date the rate last moved.' },
+              previousRate: { type: ['number', 'null'] },
+              changedAt: { type: ['string', 'null'], description: 'First date at the current rate, or null when the window shows no move.' },
+              change: { type: ['number', 'null'] },
+              windowStart: { type: 'object', description: 'Oldest observation in the queried window. Its date is the lookback boundary, NOT a rate decision.' },
+              changes: { type: 'array', description: 'Observed transitions, oldest first. Empty when the rate held for the whole window.', items: { type: 'object' } },
+            },
+          },
+        },
+      },
       'yield-curve-eu': { type: ['object', 'null'] },
       spending: {
         type: ['object', 'null'],
@@ -1129,6 +1173,7 @@ export const CACHE_TOOLS: ToolDef[] = [
       BOOTSTRAP_CACHE_KEYS.chinaReleaseCalendar,
       'economic:fuel-prices:v1',
       'economic:ecb-fx-rates:v1',
+      'economic:cbr-rates:v1',
       'economic:yield-curve-eu:v1',
       'economic:spending:v1',
       'market:earnings-calendar:v1',
@@ -1154,6 +1199,15 @@ export const CACHE_TOOLS: ToolDef[] = [
       { key: 'seed-meta:economic:bis-dsr', maxStaleMin: 1440 }, // 12h cron × 2
       { key: 'seed-meta:economic:bis-property-residential', maxStaleMin: 1440 },
       { key: 'seed-meta:economic:bis-property-commercial', maxStaleMin: 1440 },
+      // No cbr-rates entry, matching its closest peer in this tool (ecb-fx-rates)
+      // and 8 of the 14 datasets here. evaluateFreshness treats a missing
+      // seed-meta as stale and ORs every check into ONE tool-level flag, so a
+      // brand-new key would mark every UNRELATED dataset stale — with
+      // cached_at: null — from the Vercel deploy until the first Railway tick.
+      // The activation-marker grace only covers requireContentFreshness blocks,
+      // so it cannot bridge that. CBR freshness is owned by /api/health, which
+      // models it per-key and with a content-age contract this shape cannot
+      // express (see cbrContentMeta in scripts/seed-cbr-rates.mjs).
     ],
     _apiPaths: [
       "GET /api/economic/v1/get-ecb-fx-rates",
