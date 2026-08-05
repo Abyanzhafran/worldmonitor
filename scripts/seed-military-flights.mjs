@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
-import { loadEnvFile, CHROME_UA, getRedisCredentials, acquireLockSafely, releaseLock, withRetry, writeFreshnessMetadata, logSeedResult, verifySeedKey, extendExistingTtl } from './_seed-utils.mjs';
+import { loadEnvFile, CHROME_UA, getRedisCredentials, acquireLockSafely, releaseLock, withRetry, writeFreshnessMetadata, logSeedResult, verifySeedKey, extendExistingTtl, getResponseHeader } from './_seed-utils.mjs';
 import { summarizeMilitaryTheaters, buildMilitarySurges, appendMilitaryHistory } from './_military-surges.mjs';
 import { buildEnvelope, unwrapEnvelope } from './_seed-envelope-source.mjs';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 
 loadEnvFile(import.meta.url);
 
@@ -525,6 +526,19 @@ function redactProxy(msg) {
   return String(msg || '').replace(/\/\/[^@]+@/g, '//<redacted>@');
 }
 
+// Carries the rate-limit metadata off the tunnel. Without this a 429 arriving
+// through the proxy can only ever produce the fallback cooldown, because the
+// transport used to drop every response header. Pure and exported because
+// proxyFetch runs on raw sockets and cannot be reached from a fetch mock — the
+// companion test drives proxyFetch itself to prove `result` really has this
+// shape, and this one proves the shape becomes a usable error (#6241).
+function proxyResponseError(result) {
+  return Object.assign(new Error(`HTTP ${result?.status}`), {
+    status: result?.status,
+    retryAfterSeconds: parseRetryAfterSeconds(result?.headers),
+  });
+}
+
 async function proxyFetchJson(url, { headers = {}, timeout = 15000, method = 'GET', body = null } = {}) {
   const { proxyFetch, parseProxyConfig } = createRequire(import.meta.url)('./_proxy-utils.cjs');
   const proxyConfig = parseProxyConfig(OPENSKY_PROXY_AUTH);
@@ -536,7 +550,7 @@ async function proxyFetchJson(url, { headers = {}, timeout = 15000, method = 'GE
     body,
     timeoutMs: timeout,
   });
-  if (!result.ok) throw Object.assign(new Error(`HTTP ${result.status}`), { status: result.status });
+  if (!result.ok) throw proxyResponseError(result);
   return JSON.parse(result.buffer.toString('utf8'));
 }
 
@@ -546,6 +560,20 @@ const WINGBITS_BASE = 'https://customer-api.wingbits.com/v1/flights';
 const OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
 const OPENSKY_AUTH_COOLDOWN_MS = 60_000;
 const OPENSKY_AUTH_RETRY_DELAYS = [0, 2_000, 5_000];
+// This seeder is a one-shot process on a */5 Railway cron, so the 429 cooldown
+// CANNOT live in a module variable the way the relay's does — the deadline has
+// to outlive the process. Redis is the only state that does (#6241).
+const OPENSKY_COOLDOWN_KEY = 'opensky:cooldown-until:v1';
+// OpenSky omits the retry-after header on some rejections; those repeat just as
+// reliably, so a header-less 429 still parks the tier. Sized against THIS
+// seeder's cadence, not the relay's sub-minute loop: the process is one-shot on
+// a */5 cron, so any deadline under 300s has already expired by the next tick
+// and suppresses exactly zero requests. Two ticks buys real headroom.
+const OPENSKY_429_FALLBACK_COOLDOWN_MS = 10 * 60_000;
+// Upper bound on ANY cooldown, applied on write AND on read. This guard is the
+// alarm, so a corrupt or hand-written deadline must not be able to switch a data
+// tier off permanently — anything past this window is treated as garbage.
+const OPENSKY_MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 let openskyToken = null;
 let openskyTokenExpiry = 0;
 let openskyTokenPromise = null;
@@ -557,6 +585,13 @@ function clearOpenSkyToken() {
 }
 
 function isOpenSkyRateLimitedError(error) {
+  // `proxyConnect` marks a rejection by the residential proxy's own gateway
+  // (its auth/quota/policy), not by OpenSky. Both collapse to status 429, and
+  // treating the proxy vendor's quota as an OpenSky lockout would park a
+  // healthy data tier for hours — _proxy-utils.cjs sets the marker for exactly
+  // this discrimination.
+  if (error?.proxyConnect) return false;
+  if (Number(error?.status) === 429) return true;
   return /HTTP 429\b/i.test(String(error?.message || error || ''));
 }
 
@@ -570,6 +605,32 @@ function getOpenSkyAuthStatus() {
   return 'pending';
 }
 
+// OpenSky advertises how long the account is locked out for; the standard
+// Retry-After is accepted as a fallback, in both the delta-seconds and the
+// HTTP-date form RFC 7231 permits. Reads through getResponseHeader so the same
+// parser works on a fetch `Headers` and on the plain-object header map the
+// proxy transport returns. Values are clamped rather than trusted — an upstream
+// typo must not be able to park the tier for a week.
+function parseRetryAfterSeconds(headers) {
+  for (const name of ['x-rate-limit-retry-after-seconds', 'retry-after']) {
+    const raw = getResponseHeader(headers, name);
+    if (!raw) continue;
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.min(Math.ceil(seconds), OPENSKY_MAX_COOLDOWN_MS / 1000);
+    }
+    const retryAt = Date.parse(raw);
+    if (Number.isFinite(retryAt)) {
+      const delta = Math.ceil((retryAt - Date.now()) / 1000);
+      if (delta > 0) return Math.min(delta, OPENSKY_MAX_COOLDOWN_MS / 1000);
+    }
+  }
+  return null;
+}
+
+// The status code and rate-limit headers are the only things that distinguish
+// "the quota is gone for 6 hours" from "one request failed" — throwing a bare
+// `HTTP ${status}` string discarded both before any caller could act (#6241).
 async function fetchJsonDirect(url, { headers = {}, method = 'GET', body = null, timeout = 15_000 } = {}) {
   const resp = await fetch(url, {
     method,
@@ -579,9 +640,140 @@ async function fetchJsonDirect(url, { headers = {}, method = 'GET', body = null,
   });
   if (!resp.ok) {
     const bodyText = await resp.text().catch(() => '');
-    throw new Error(`HTTP ${resp.status}: ${bodyText.substring(0, 200)}`);
+    throw Object.assign(new Error(`HTTP ${resp.status}: ${bodyText.substring(0, 200)}`), {
+      status: resp.status,
+      retryAfterSeconds: parseRetryAfterSeconds(resp.headers),
+    });
   }
   return resp.json();
+}
+
+// The cooldown is a property of an ACCOUNT's quota, but the key is global. On a
+// credential rotation a healthy new account would otherwise inherit the old
+// one's lockout and lose coverage for its remaining window. A non-secret
+// fingerprint of the client id makes the record self-identifying; a mismatch
+// fails OPEN, same as every other unreadable record (#6241).
+function openSkyAccountFingerprint() {
+  const clientId = process.env.OPENSKY_CLIENT_ID;
+  if (!clientId) return null;
+  return createHash('sha256').update(clientId).digest('hex').slice(0, 12);
+}
+
+function getOptionalRedisCredentials() {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  return url && token ? { url, token } : null;
+}
+
+function formatWait(ms) {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m ${totalSec % 60}s`;
+}
+
+// Fails OPEN on every error path. The worst case of a wrong "no cooldown" answer
+// is one wasted request; the worst case of a wrong "cooldown active" answer is
+// silently deleting a data tier for as long as Redis stays unhappy.
+//
+// The try wraps the WHOLE body, not just the Redis call. This function's own
+// parsing runs on an untrusted record, and it is called outside any caller's
+// try — so a throw here would kill the entire run, Wingbits included, on every
+// tick until someone deleted the key by hand. That is strictly worse than the
+// bug the cooldown exists to fix, so nothing in here may escape (#6241).
+async function readOpenSkyCooldown() {
+  const creds = getOptionalRedisCredentials();
+  if (!creds) return { remainingMs: 0 };
+  try {
+    const record = await redisGet(creds.url, creds.token, OPENSKY_COOLDOWN_KEY);
+    const until = Number(record?.until);
+    if (!Number.isFinite(until)) return { remainingMs: 0 };
+    // A record written by different credentials describes a quota this run does
+    // not share. Records with no fingerprint predate this field, so they are
+    // also treated as not-ours rather than obeyed blindly.
+    const account = openSkyAccountFingerprint();
+    if (!record?.account || record.account !== account) {
+      console.warn('  [OpenSky Quota] ignoring cooldown recorded for a different OpenSky account');
+      return { remainingMs: 0 };
+    }
+    const remainingMs = until - Date.now();
+    // Beyond the documented maximum the record cannot have come from this code
+    // path, so obey the clock rather than the value. Logged as a raw number:
+    // `new Date(n).toISOString()` throws RangeError past ±8.64e15, and a
+    // nanosecond-scale timestamp lands there — formatting the very value this
+    // branch exists to reject would turn the guard into the outage.
+    if (remainingMs > OPENSKY_MAX_COOLDOWN_MS) {
+      console.warn(`  [OpenSky Quota] ignoring implausible cooldown deadline ${until}`);
+      return { remainingMs: 0 };
+    }
+    return { remainingMs: Math.max(0, remainingMs) };
+  } catch (err) {
+    console.warn(`  [OpenSky Quota] cooldown read failed, proceeding without it: ${err.message || err}`);
+    return { remainingMs: 0 };
+  }
+}
+
+async function recordOpenSkyCooldown(retryAfterSeconds) {
+  const cooldownMs = Math.min(
+    OPENSKY_MAX_COOLDOWN_MS,
+    Math.max(OPENSKY_429_FALLBACK_COOLDOWN_MS, (Number(retryAfterSeconds) || 0) * 1000),
+  );
+  const until = Date.now() + cooldownMs;
+  console.warn(
+    `  [OpenSky Quota] 429 quota exhausted — cooldown ${formatWait(cooldownMs)} ` +
+    `(until ${new Date(until).toISOString()}, retryAfter=${retryAfterSeconds ?? 'absent'})`,
+  );
+  const creds = getOptionalRedisCredentials();
+  if (!creds) return;
+  try {
+    // The TTL outlives the deadline so a live key always answers the read; the
+    // successful-call path deletes it, and the TTL is only the backstop.
+    await redisSet(creds.url, creds.token, OPENSKY_COOLDOWN_KEY, {
+      until,
+      untilIso: new Date(until).toISOString(),
+      // Both values: the clamped one drove the deadline, the advertised one is
+      // what OpenSky actually said. Persisting only the clamp hides an
+      // implausible upstream header from whoever reads this key during an
+      // incident.
+      retryAfterSeconds: retryAfterSeconds ?? null,
+      cooldownMs,
+      account: openSkyAccountFingerprint(),
+      recordedAt: Date.now(),
+      recordedBy: 'seed-military-flights',
+    }, Math.ceil(cooldownMs / 1000) + 60);
+  } catch (err) {
+    console.warn(`  [OpenSky Quota] failed to persist cooldown: ${err.message || err}`);
+  }
+}
+
+// A direct 429 short-circuits before the proxy is ever tried, so a 429 reaching
+// this combiner came from the PROXY leg and still describes a real account-wide
+// lockout — its retry-after must survive the re-wrap or the cooldown collapses
+// to the 90s fallback. Pure and exported because the proxy leg runs on raw
+// sockets in _proxy-utils.cjs and is unreachable from a fetch mock (#6241).
+function combineOpenSkyFetchErrors(directError, proxyError) {
+  return Object.assign(
+    new Error(`direct=${redactProxy(directError?.message)} | proxy=${redactProxy(proxyError?.message)}`),
+    {
+      status: proxyError?.status,
+      retryAfterSeconds: proxyError?.retryAfterSeconds ?? null,
+      // `proxyConnect` must survive alongside `status`, or the combined error
+      // reads as a bare 429 and a proxy-vendor quota problem gets recorded as an
+      // OpenSky lockout — parking a healthy upstream on someone else's billing.
+      proxyConnect: proxyError?.proxyConnect === true,
+    },
+  );
+}
+
+async function clearOpenSkyCooldown() {
+  const creds = getOptionalRedisCredentials();
+  if (!creds) return;
+  try {
+    await redisDel(creds.url, creds.token, OPENSKY_COOLDOWN_KEY);
+  } catch (err) {
+    console.warn(`  [OpenSky Quota] failed to clear cooldown: ${err.message || err}`);
+  }
 }
 
 async function getOpenSkyToken() {
@@ -698,11 +890,16 @@ async function fetchOpenSkyAuthenticated() {
             clearOpenSkyToken();
             if (attempt === 0) continue;
           }
-          throw new Error(`direct=${redactProxy(directError.message)} | proxy=${redactProxy(proxyError.message)}`);
+          throw combineOpenSkyFetchErrors(directError, proxyError);
         }
       }
     } catch (error) {
-      return { states: null, status: `error:${redactProxy(error.message)}` };
+      return {
+        states: null,
+        status: `error:${redactProxy(error.message)}`,
+        rateLimited: isOpenSkyRateLimitedError(error),
+        retryAfterSeconds: error?.retryAfterSeconds ?? null,
+      };
     }
   }
 
@@ -722,10 +919,38 @@ async function fetchOpenSkyGlobal({ source, fetchSources, seenIds, allStates }) 
     statesAdded: 0,
   };
 
+  // A 429 spends no credits — the budget is already gone — so #6222's spend fix
+  // deliberately left this alone. What it costs is a full round-trip and its
+  // share of the run's wall clock, every 5 minutes, for a window production has
+  // seen run to 22,688s (~6.3h): ~76 doomed requests per outage (#6241).
+  const cooldown = await readOpenSkyCooldown();
+  if (cooldown.remainingMs > 0) {
+    regionSource.authStatus = `quota-cooldown:${Math.ceil(cooldown.remainingMs / 1000)}s`;
+    fetchSources.openSkyCooldownRemainingMs = cooldown.remainingMs;
+    // Quota exhaustion and a provider outage both look like "no OpenSky states"
+    // downstream; only this line tells them apart.
+    console.warn(
+      `  [OpenSky Quota] GLOBAL: SKIPPED — quota cooldown, ${formatWait(cooldown.remainingMs)} remaining. ` +
+      'Publishing from Wingbits only.',
+    );
+    fetchSources.regions.push(regionSource);
+    return;
+  }
+
   try {
     const authResult = await fetchOpenSkyAuthenticated();
     states = authResult?.states || null;
     regionSource.authStatus = authResult?.status || regionSource.authStatus;
+    if (authResult?.rateLimited) {
+      await recordOpenSkyCooldown(authResult.retryAfterSeconds);
+    } else if (regionSource.authStatus.startsWith('success:')) {
+      // Unconditional on success. Gating this on "we read a record earlier"
+      // would tie the cleanup to a read that also returns empty when Redis is
+      // merely unreachable, so one GET blip would strand a dead deadline. A
+      // proven-live upstream is the authoritative signal; one DEL per healthy
+      // run is the whole cost, and it self-heals any corrupt record.
+      await clearOpenSkyCooldown();
+    }
     if (states && states.length > 0) {
       if (source.value === 'none') source.value = 'opensky-auth';
       fetchSources.openSkyAuthSuccess = true;
@@ -738,6 +963,13 @@ async function fetchOpenSkyGlobal({ source, fetchSources, seenIds, allStates }) 
   } catch (e) {
     regionSource.authStatus = `error:${redactProxy(e.message)}`;
     console.warn(`  [OpenSky Auth] GLOBAL: ${redactProxy(e.message)}`);
+    // fetchOpenSkyAuthenticated has two exit contracts: it RETURNS a result
+    // carrying `rateLimited` for failures on the data call, and it THROWS for
+    // token acquisition — which runs outside its try. A 429 on the token
+    // endpoint is the same account-wide lockout and is just as doomed to
+    // repeat, but it costs three attempts and ~7s of sleeps per tick, so arm
+    // the cooldown here too rather than leaving that path un-gated (#6241).
+    if (isOpenSkyRateLimitedError(e)) await recordOpenSkyCooldown(e?.retryAfterSeconds ?? null);
   }
 
   if (states) {
@@ -850,6 +1082,7 @@ async function fetchAllStates() {
     oauthConfigured,
     proxyEnabled: PROXY_ENABLED,
     openSkyAuthSuccess: false,
+    openSkyCooldownRemainingMs: 0,
     regions: [],
   };
 
@@ -1206,6 +1439,16 @@ async function redisSet(url, token, key, value, ttl) {
   if (!resp.ok) throw new Error(`Redis SET ${key} failed: HTTP ${resp.status}`);
 }
 
+async function redisDel(url, token, key) {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'User-Agent': CHROME_UA },
+    body: JSON.stringify(['DEL', key]),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!resp.ok) throw new Error(`Redis DEL ${key} failed: HTTP ${resp.status}`);
+}
+
 async function redisGet(url, token, key) {
   const resp = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -1462,4 +1705,19 @@ export {
   // from the published payload. Exported so tests can assert the request
   // shape directly rather than grepping source text.
   fetchAllStates,
+  // Test seam: the proxy leg opens raw sockets in _proxy-utils.cjs and never
+  // touches globalThis.fetch, so the rate-limit metadata this carries onto the
+  // combined error cannot be observed by driving fetchOpenSkyAuthenticated (#6241).
+  combineOpenSkyFetchErrors,
+  // Test seam: this parser must work on BOTH header containers the two transports
+  // produce — a fetch `Headers` (direct) and a plain object (the proxy tunnel).
+  // Only the direct shape is reachable by driving fetchAllStates (#6241).
+  parseRetryAfterSeconds,
+  // Test seam: distinguishing an OpenSky lockout from the residential proxy's
+  // own gateway quota needs a proxy-leg failure, which raw sockets make
+  // unreachable from a fetch mock (#6241).
+  isOpenSkyRateLimitedError,
+  // Test seam: completes the proxy-leg chain — proxyFetch surfaces the headers,
+  // this turns them into an error the cooldown can read (#6241).
+  proxyResponseError,
 };
