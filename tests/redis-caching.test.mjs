@@ -1819,6 +1819,186 @@ describe('aviation aircraft provider priority', { concurrency: 1 }, () => {
     }
   });
 
+  it('issues zero bbox provider calls for an icao24-only request with absent bbox params', async () => {
+    const { module, cleanup } = await importTrackAircraft();
+    const restoreEnv = withEnv({
+      WS_RELAY_URL: 'wss://relay.test',
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    let wingbitsBboxCalls = 0;
+    let openskyBboxCalls = 0;
+    let icao24Calls = 0;
+
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/wingbits/track') && raw.includes('lamin=')) {
+        wingbitsBboxCalls += 1;
+        return jsonResponse({}, false);
+      }
+      if (raw.includes('/opensky/states/all') && raw.includes('lamin=')) {
+        openskyBboxCalls += 1;
+        return jsonResponse({}, false);
+      }
+      if (raw.includes('/opensky/states/all') && raw.includes('icao24=')) {
+        icao24Calls += 1;
+        return jsonResponse({}, false);
+      }
+      if (raw.includes('/wingbits/track') && raw.includes('icao24=')) {
+        icao24Calls += 1;
+        return jsonResponse({}, false);
+      }
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+
+    try {
+      const result = await module.trackAircraft({}, {
+        icao24: '4b1805',
+        swLat: 0,
+        swLon: 0,
+        neLat: 0,
+        neLon: 0,
+      });
+
+      assert.equal(wingbitsBboxCalls, 0, 'degenerate bbox must not trigger Wingbits');
+      assert.equal(openskyBboxCalls, 0, 'degenerate bbox must not trigger OpenSky');
+      assert.equal(icao24Calls, 1, 'icao24-only should reach the icao24 tier');
+      // The icao24 tier fires a single OpenSky fetch. It returns !ok here
+      // (jsonResponse({}, false)), so the handler returns no positions. That's
+      // acceptable — we are testing the bbox gate, not the icao24 response path.
+      assert.equal(result.source, 'none');
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('pins the worst-case timeout ladder for an icao24-only request to a single 8s tier', async () => {
+    const { module, cleanup } = await importTrackAircraft();
+    const restoreEnv = withEnv({
+      WS_RELAY_URL: 'wss://relay.test',
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    const originalTimeout = AbortSignal.timeout;
+    const requestedTimeouts = [];
+
+    AbortSignal.timeout = (milliseconds) => {
+      requestedTimeouts.push(milliseconds);
+      return AbortSignal.abort(new Error('test timeout'));
+    };
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/opensky/states/all') && raw.includes('icao24=')) return jsonResponse({ states: [] });
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+
+    try {
+      const result = await module.trackAircraft({}, {
+        icao24: '4b1805',
+        swLat: 0,
+        swLon: 0,
+        neLat: 0,
+        neLon: 0,
+      });
+      // The icao24 path must not run the two 6s bbox tiers first. Before the
+      // degenerate-bbox gate, this request spent 6s + 6s + 8s = 20s; now only
+      // the single 8s icao24 tier runs.
+      assert.deepEqual(requestedTimeouts, [8_000]);
+      assert.equal(
+        requestedTimeouts.reduce((sum, timeout) => sum + timeout, 0), 8_000,
+        'icao24 must not spend time on the bbox provider ladder',
+      );
+      assert.equal(result.source, 'none');
+    } finally {
+      cleanup();
+      AbortSignal.timeout = originalTimeout;
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('returns positions from the icao24 tier when the relay responds with data', async () => {
+    const { module, cleanup } = await importTrackAircraft();
+    const restoreEnv = withEnv({
+      WS_RELAY_URL: 'wss://relay.test',
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/opensky/states/all') && raw.includes('icao24=')) {
+        return jsonResponse({
+          states: [['4b1805', 'TEST1', null, null, null, 10.5, 20.5, 30000, false, 420, 180]],
+        });
+      }
+      return jsonResponse({}, false);
+    };
+
+    try {
+      const result = await module.trackAircraft({}, {
+        icao24: '4b1805',
+        swLat: 0,
+        swLon: 0,
+        neLat: 0,
+        neLon: 0,
+      });
+      assert.equal(result.source, 'opensky');
+      assert.equal(result.positions.length, 1);
+      assert.equal(result.positions[0].icao24, '4b1805');
+      assert.equal(result.positions[0].lat, 20.5);
+      assert.equal(result.positions[0].lon, 10.5);
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('treats an asymmetric bbox (equal lat, different lon) as non-degenerate', async () => {
+    const { module, cleanup } = await importTrackAircraft();
+    const restoreEnv = withEnv({
+      WS_RELAY_URL: 'wss://relay.test',
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    let wingbitsCalls = 0;
+
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/wingbits/track') && raw.includes('lamin=')) {
+        wingbitsCalls += 1;
+        return jsonResponse({ positions: [{ icao24: 'abc', lat: 20.5, lon: 10.5 }], source: 'wingbits' }, true);
+      }
+      return jsonResponse({}, false);
+    };
+
+    try {
+      const result = await module.trackAircraft({}, {
+        icao24: '',
+        callsign: '',
+        swLat: 10,
+        swLon: 10,
+        neLat: 10,
+        neLon: 15,
+      });
+      // Equal lat (10===10) but different lon (10!==15) → non-degenerate → bbox block runs
+      assert.equal(wingbitsCalls, 1, 'asymmetric bbox must trigger Wingbits');
+      assert.equal(result.source, 'wingbits');
+      assert.equal(result.positions.length, 1);
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
   it('keeps the all-provider failure path inside the edge response deadline', async () => {
     const { module, cleanup } = await importTrackAircraft();
     const restoreEnv = withEnv({
