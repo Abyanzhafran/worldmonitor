@@ -650,3 +650,342 @@ test('AIS health expires an open stream that stops delivering current positions'
   }, 'bounded reconnect after position timeout', 8_000);
   assert.equal(recovered.ingestion.aisSnapshot.upstream.reconnectFailures, 0);
 });
+
+test('sustained upstream throttling escalates the reconnect ceiling beyond the ordinary cap', async (t) => {
+  let upstreamAttempts = 0;
+  const upstream = http.createServer((_req, res) => {
+    upstreamAttempts++;
+    res.writeHead(429, { 'Content-Type': 'text/plain' });
+    res.end('rate limited');
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => new Promise((resolve) => upstream.close(resolve)));
+
+  const child = spawn(process.execPath, [relayScript], {
+    env: {
+      ...process.env,
+      AISSTREAM_API_KEY: 'test-key',
+      AISSTREAM_URL: `ws://127.0.0.1:${upstreamPort}/stream`,
+      RELAY_SHARED_SECRET: 'relay-secret',
+      RELAY_TEST_MODE: 'true',
+      NODE_ENV: 'test',
+      PORT: '0',
+      // Compress the ladder so escalation is observable without waiting out
+      // the production 5s base / 5min ceiling.
+      AIS_RECONNECT_BASE_MS: '100',
+      AIS_RECONNECT_MAX_MS: '300',
+      AIS_THROTTLE_RECONNECT_MAX_MS: '60000',
+      AIS_THROTTLE_ESCALATE_AFTER: '3',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => stopChild(child));
+
+  let output = '';
+  child.stdout.on('data', (chunk) => { output += chunk.toString('utf8'); });
+  child.stderr.on('data', (chunk) => { output += chunk.toString('utf8'); });
+  await waitFor(() => output.includes('WebSocket relay on port'), 'relay startup');
+  const relayPort = Number(output.match(/WebSocket relay on port (\d+)/)[1]);
+
+  // Upstream connection is lazy — a snapshot request kicks off the first attempt,
+  // after which the bounded reconnect timer drives the ladder on its own.
+  await get(relayPort, '/ais/snapshot', { 'x-relay-key': 'relay-secret' });
+
+  // Four consecutive 429s crosses the escalate-after=3 threshold.
+  await waitFor(() => upstreamAttempts >= 4, 'four consecutive upstream throttles', 15_000);
+
+  // Wait for escalation AND a live cooldown together. `throttleEscalated` is
+  // sticky but `upstreamReconnectAt` is zeroed the instant the reconnect timer
+  // fires, so sampling the cooldown separately can land mid-handshake and read 0.
+  const escalated = await waitForAsync(async () => {
+    const health = await getJson(relayPort, '/health');
+    const upstreamHealth = health.ingestion.aisSnapshot.upstream;
+    return upstreamHealth.throttleEscalated === true
+      && upstreamHealth.reconnectCooldownRemainingMs > 300
+      ? upstreamHealth
+      : null;
+  }, 'escalated cooldown above the ordinary 300ms ceiling', 15_000);
+
+  assert.ok(
+    escalated.consecutiveThrottles >= 3,
+    `expected consecutive throttles to be tracked, got ${escalated.consecutiveThrottles}`,
+  );
+});
+
+test('a non-throttle failure resets throttle escalation back to the ordinary ceiling', async (t) => {
+  let upstreamAttempts = 0;
+  let throttling = true;
+  const upstream = http.createServer((_req, res) => {
+    upstreamAttempts++;
+    if (throttling) {
+      res.writeHead(429, { 'Content-Type': 'text/plain' });
+      res.end('rate limited');
+      return;
+    }
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('upstream boom');
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => new Promise((resolve) => upstream.close(resolve)));
+
+  const child = spawn(process.execPath, [relayScript], {
+    env: {
+      ...process.env,
+      AISSTREAM_API_KEY: 'test-key',
+      AISSTREAM_URL: `ws://127.0.0.1:${upstreamPort}/stream`,
+      RELAY_SHARED_SECRET: 'relay-secret',
+      RELAY_TEST_MODE: 'true',
+      NODE_ENV: 'test',
+      PORT: '0',
+      AIS_RECONNECT_BASE_MS: '100',
+      AIS_RECONNECT_MAX_MS: '300',
+      AIS_THROTTLE_RECONNECT_MAX_MS: '4000',
+      AIS_THROTTLE_ESCALATE_AFTER: '3',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => stopChild(child));
+
+  let output = '';
+  child.stdout.on('data', (chunk) => { output += chunk.toString('utf8'); });
+  child.stderr.on('data', (chunk) => { output += chunk.toString('utf8'); });
+  await waitFor(() => output.includes('WebSocket relay on port'), 'relay startup');
+  const relayPort = Number(output.match(/WebSocket relay on port (\d+)/)[1]);
+
+  // Upstream connection is lazy — a snapshot request kicks off the first attempt.
+  await get(relayPort, '/ais/snapshot', { 'x-relay-key': 'relay-secret' });
+
+  await waitFor(() => upstreamAttempts >= 4, 'four consecutive upstream throttles', 15_000);
+  await waitForAsync(async () => {
+    const health = await getJson(relayPort, '/health');
+    return health.ingestion.aisSnapshot.upstream.throttleEscalated === true ? health : null;
+  }, 'throttle escalation engaged', 15_000);
+
+  // Upstream stops throttling and starts failing for an unrelated reason.
+  throttling = false;
+
+  const reset = await waitForAsync(async () => {
+    const health = await getJson(relayPort, '/health');
+    const upstreamHealth = health.ingestion.aisSnapshot.upstream;
+    return upstreamHealth.throttleEscalated === false ? upstreamHealth : null;
+  }, 'escalation cleared by a non-throttle failure', 30_000);
+
+  assert.equal(reset.consecutiveThrottles, 0);
+  assert.ok(
+    reset.reconnectCooldownRemainingMs <= 300,
+    `after reset the cooldown ${reset.reconnectCooldownRemainingMs}ms must fall back under the ordinary 300ms ceiling`,
+  );
+});
+
+test('a throttle ceiling configured below the ordinary ceiling cannot shorten the backoff', async (t) => {
+  let upstreamAttempts = 0;
+  const upstream = http.createServer((_req, res) => {
+    upstreamAttempts++;
+    res.writeHead(429, { 'Content-Type': 'text/plain' });
+    res.end('rate limited');
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => new Promise((resolve) => upstream.close(resolve)));
+
+  const child = spawn(process.execPath, [relayScript], {
+    env: {
+      ...process.env,
+      AISSTREAM_API_KEY: 'test-key',
+      AISSTREAM_URL: `ws://127.0.0.1:${upstreamPort}/stream`,
+      RELAY_SHARED_SECRET: 'relay-secret',
+      RELAY_TEST_MODE: 'true',
+      NODE_ENV: 'test',
+      PORT: '0',
+      AIS_RECONNECT_BASE_MS: '100',
+      AIS_RECONNECT_MAX_MS: '2000',
+      // Misconfigured BELOW the ordinary ceiling: escalation must clamp up to
+      // the ordinary ceiling rather than reconnect faster while throttled.
+      AIS_THROTTLE_RECONNECT_MAX_MS: '100',
+      AIS_THROTTLE_ESCALATE_AFTER: '3',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => stopChild(child));
+
+  let output = '';
+  child.stdout.on('data', (chunk) => { output += chunk.toString('utf8'); });
+  child.stderr.on('data', (chunk) => { output += chunk.toString('utf8'); });
+  await waitFor(() => output.includes('WebSocket relay on port'), 'relay startup');
+  const relayPort = Number(output.match(/WebSocket relay on port (\d+)/)[1]);
+
+  await get(relayPort, '/ais/snapshot', { 'x-relay-key': 'relay-secret' });
+  await waitFor(() => upstreamAttempts >= 4, 'four consecutive upstream throttles', 15_000);
+
+  // Same joint wait as above: a separate cooldown sample can race the reconnect
+  // timer zeroing `upstreamReconnectAt` and read 0 mid-handshake.
+  await waitForAsync(async () => {
+    const health = await getJson(relayPort, '/health');
+    const upstreamHealth = health.ingestion.aisSnapshot.upstream;
+    return upstreamHealth.throttleEscalated === true
+      && upstreamHealth.reconnectCooldownRemainingMs > 500
+      ? upstreamHealth
+      : null;
+  }, 'escalated cooldown that did not collapse toward the misconfigured 100ms ceiling', 15_000);
+});
+
+// Throttle-escalated upstream that answers the first `throttleUpgrades` WebSocket
+// upgrades with HTTP 429, then accepts. `onOpen` decides what the accepted socket
+// does, which is what selects the production reset site under test.
+async function startThrottleThenAcceptUpstream({ throttleUpgrades, onOpen }) {
+  let upgradeAttempts = 0;
+  const accepted = [];
+  const upstream = http.createServer();
+  const wss = new WebSocketServer({ noServer: true });
+  upstream.on('upgrade', (req, socket, head) => {
+    upgradeAttempts += 1;
+    if (upgradeAttempts <= throttleUpgrades) {
+      socket.write('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      accepted.push(ws);
+      onOpen(ws);
+    });
+  });
+  const port = await listen(upstream);
+  // http.Server#close waits for live connections to end, so an accepted socket
+  // left open would stall teardown until the relay's position watchdog fires
+  // (5 minutes by default). Terminate accepted sockets first.
+  const close = () => new Promise((resolve) => {
+    for (const ws of accepted) ws.terminate();
+    upstream.close(resolve);
+  });
+  return { upstream, port, close, attempts: () => upgradeAttempts };
+}
+
+test('an accepted frame clears throttle escalation', async (t) => {
+  // Accepted socket immediately delivers a valid PositionReport, so recovery runs
+  // through the accepted-frame reset rather than any failure path.
+  const { close: closeUpstream, port: upstreamPort } = await startThrottleThenAcceptUpstream({
+    throttleUpgrades: 4,
+    onOpen: (ws) => {
+      const sendPosition = () => ws.send(JSON.stringify({
+        MessageType: 'PositionReport',
+        MetaData: { MMSI: '111000111', ShipName: 'RECOVERED' },
+        Message: {
+          PositionReport: { Latitude: 25.5, Longitude: 55.5, Sog: 12, Cog: 90, TrueHeading: 90 },
+        },
+      }));
+      ws.once('message', () => {
+        sendPosition();
+        // Keep the stream current so the position watchdog never fires. Without
+        // this the socket goes silent, the watchdog closes it, and the
+        // clean-close reset would clear the escalation instead — giving the
+        // fixture a second path to the verdict and making this test vacuous.
+        const keepAlive = setInterval(sendPosition, 250);
+        ws.once('close', () => clearInterval(keepAlive));
+      });
+    },
+  });
+  t.after(closeUpstream);
+
+  const child = spawn(process.execPath, [relayScript], {
+    env: {
+      ...process.env,
+      AISSTREAM_API_KEY: 'test-key',
+      AISSTREAM_URL: `ws://127.0.0.1:${upstreamPort}/stream`,
+      RELAY_SHARED_SECRET: 'relay-secret',
+      RELAY_TEST_MODE: 'true',
+      NODE_ENV: 'test',
+      PORT: '0',
+      AIS_RECONNECT_BASE_MS: '100',
+      AIS_RECONNECT_MAX_MS: '300',
+      AIS_THROTTLE_RECONNECT_MAX_MS: '2000',
+      AIS_THROTTLE_ESCALATE_AFTER: '3',
+      // Keep teardown bounded: without this the accepted socket stays open on the
+      // production 5-minute default and stalls the suite.
+      AIS_POSITION_FRESHNESS_MS: '2000',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => stopChild(child));
+
+  let output = '';
+  child.stdout.on('data', (chunk) => { output += chunk.toString('utf8'); });
+  child.stderr.on('data', (chunk) => { output += chunk.toString('utf8'); });
+  await waitFor(() => output.includes('WebSocket relay on port'), 'relay startup');
+  const relayPort = Number(output.match(/WebSocket relay on port (\d+)/)[1]);
+
+  await get(relayPort, '/ais/snapshot', { 'x-relay-key': 'relay-secret' });
+  await waitForAsync(async () => {
+    const health = await getJson(relayPort, '/health');
+    return health.ingestion.aisSnapshot.upstream.throttleEscalated === true ? health : null;
+  }, 'throttle escalation engaged', 20_000);
+
+  // `connected === true` is the isolation: the socket is still open, so no close
+  // handler has run and the accepted-frame reset is the only path that could have
+  // cleared the escalation.
+  const recovered = await waitForAsync(async () => {
+    const health = await getJson(relayPort, '/health');
+    const upstreamHealth = health.ingestion.aisSnapshot.upstream;
+    return upstreamHealth.throttleEscalated === false
+      && upstreamHealth.connected === true
+      && upstreamHealth.successfulConnectionsSinceBoot > 0
+      ? upstreamHealth
+      : null;
+  }, 'escalation cleared by an accepted frame on a still-open socket', 30_000);
+
+  assert.equal(recovered.consecutiveThrottles, 0);
+  assert.equal(recovered.connected, true, 'socket must still be open — no close path involved');
+});
+
+test('a clean close with no recorded error clears throttle escalation', async (t) => {
+  // Accepted socket stays open and silent, so the position watchdog terminates it.
+  // That close records no error, exercising the clean-close reset specifically.
+  const { close: closeUpstream, port: upstreamPort } = await startThrottleThenAcceptUpstream({
+    throttleUpgrades: 4,
+    onOpen: () => { /* accept, then deliver nothing */ },
+  });
+  t.after(closeUpstream);
+
+  const child = spawn(process.execPath, [relayScript], {
+    env: {
+      ...process.env,
+      AISSTREAM_API_KEY: 'test-key',
+      AISSTREAM_URL: `ws://127.0.0.1:${upstreamPort}/stream`,
+      RELAY_SHARED_SECRET: 'relay-secret',
+      RELAY_TEST_MODE: 'true',
+      NODE_ENV: 'test',
+      PORT: '0',
+      AIS_RECONNECT_BASE_MS: '100',
+      AIS_RECONNECT_MAX_MS: '300',
+      AIS_THROTTLE_RECONNECT_MAX_MS: '2000',
+      AIS_THROTTLE_ESCALATE_AFTER: '3',
+      AIS_POSITION_FRESHNESS_MS: '1000',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => stopChild(child));
+
+  let output = '';
+  child.stdout.on('data', (chunk) => { output += chunk.toString('utf8'); });
+  child.stderr.on('data', (chunk) => { output += chunk.toString('utf8'); });
+  await waitFor(() => output.includes('WebSocket relay on port'), 'relay startup');
+  const relayPort = Number(output.match(/WebSocket relay on port (\d+)/)[1]);
+
+  await get(relayPort, '/ais/snapshot', { 'x-relay-key': 'relay-secret' });
+  await waitForAsync(async () => {
+    const health = await getJson(relayPort, '/health');
+    return health.ingestion.aisSnapshot.upstream.throttleEscalated === true ? health : null;
+  }, 'throttle escalation engaged', 20_000);
+
+  const recovered = await waitForAsync(async () => {
+    const health = await getJson(relayPort, '/health');
+    const upstreamHealth = health.ingestion.aisSnapshot.upstream;
+    return upstreamHealth.throttleEscalated === false
+      && upstreamHealth.lastFailure === 'position_timeout'
+      ? upstreamHealth
+      : null;
+  }, 'escalation cleared by a silent-stream close', 30_000);
+
+  assert.equal(recovered.consecutiveThrottles, 0);
+  // position_timeout is only reachable via the close handler's no-error branch,
+  // so this pins the clean-close reset rather than the non-throttle error reset.
+  assert.equal(recovered.lastFailure, 'position_timeout');
+});
