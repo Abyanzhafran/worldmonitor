@@ -354,11 +354,26 @@ export function coingeckoEndpoint(): { baseUrl: string; headers: Record<string, 
   return { baseUrl: 'https://api.coingecko.com/api/v3', headers, tier: 'keyless' };
 }
 
+/**
+ * Shape of the `/coins/markets` projection. Defaults reproduce the original
+ * call exactly (sparkline on, 24h window) so existing callers are unchanged;
+ * the stablecoin RPC asks for `24h,7d` and no sparkline, because it must
+ * populate a `change7d` field and renders no chart. Requesting `7d` is not
+ * optional there: CoinGecko omits `price_change_percentage_7d_in_currency`
+ * unless the window is named, which would silently zero the column.
+ */
+export interface CoinGeckoMarketsOpts {
+  sparkline?: boolean;
+  priceChangePercentage?: string;
+}
+
 export async function fetchCoinGeckoMarkets(
   ids: string[],
+  opts: CoinGeckoMarketsOpts = {},
 ): Promise<CoinGeckoMarketItem[]> {
+  const { sparkline = true, priceChangePercentage = '24h' } = opts;
   const { baseUrl, headers } = coingeckoEndpoint();
-  const url = `${baseUrl}/coins/markets?vs_currency=usd&ids=${ids.join(',')}&order=market_cap_desc&sparkline=true&price_change_percentage=24h`;
+  const url = `${baseUrl}/coins/markets?vs_currency=usd&ids=${ids.join(',')}&order=market_cap_desc&sparkline=${sparkline}&price_change_percentage=${encodeURIComponent(priceChangePercentage)}`;
 
   const resp = await fetch(url, {
     headers,
@@ -490,13 +505,39 @@ export async function fetchCoinPaprikaMarkets(
 // Unified crypto market fetcher: CoinGecko → CoinPaprika fallback
 // ========================================================================
 
+export type CryptoMarketsSource = 'coingecko' | 'coinpaprika';
+
+/**
+ * Same ladder as `fetchCryptoMarkets`, but names the leg that answered.
+ *
+ * The two legs do not have the same reach: CoinGecko resolves any ID it knows,
+ * while CoinPaprika can only answer for IDs present in COINPAPRIKA_ID_MAP. So
+ * "absent from the result" means "no such coin" on the primary and merely
+ * "outside our mapping table" on the fallback. A caller that reports per-ID
+ * outcomes has to tell those apart; one that just renders the rows does not,
+ * and should keep using `fetchCryptoMarkets`.
+ */
+export async function fetchCryptoMarketsWithSource(
+  ids: string[],
+  opts: CoinGeckoMarketsOpts = {},
+): Promise<{ items: CoinGeckoMarketItem[]; source: CryptoMarketsSource }> {
+  try {
+    return { items: await fetchCoinGeckoMarkets(ids, opts), source: 'coingecko' };
+  } catch (err) {
+    // sentry-coverage-ok: a primary-leg failure is the expected trigger for
+    // this ladder, and the CoinPaprika call below owns recovery. If that leg
+    // fails too the error propagates to the caller, which is where the
+    // both-providers-down condition is worth reporting.
+    console.warn(`[CoinGecko] Failed, falling back to CoinPaprika:`, (err as Error).message);
+    // No opts pass-through: CoinPaprika's ticker response always carries both
+    // the 24h and 7d change, so the projection knobs have nothing to select.
+    return { items: await fetchCoinPaprikaMarkets(ids), source: 'coinpaprika' };
+  }
+}
+
 export async function fetchCryptoMarkets(
   ids: string[],
+  opts: CoinGeckoMarketsOpts = {},
 ): Promise<CoinGeckoMarketItem[]> {
-  try {
-    return await fetchCoinGeckoMarkets(ids);
-  } catch (err) {
-    console.warn(`[CoinGecko] Failed, falling back to CoinPaprika:`, (err as Error).message);
-    return fetchCoinPaprikaMarkets(ids);
-  }
+  return (await fetchCryptoMarketsWithSource(ids, opts)).items;
 }
