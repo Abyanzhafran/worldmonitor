@@ -169,6 +169,28 @@ const GDELT_TOPIC_EXAMPLE_ID = (() => {
 // undefined to fall through. `series_id` / `series_ids` is shared by FRED (no
 // enum, needs an override) and BLS (enum-resolved upstream) — disambiguate by
 // operation.
+// Real, documented fields a specific operation's example should not FEATURE.
+//
+// Distinct from honeypots (security decoys that must never be advertised):
+// these are legitimate response fields whose only truthful value in the state
+// the example depicts is the enum zero value — which
+// tests/openapi-examples-contract.test.mjs rightly bans from examples, since a
+// sample showing `_UNSPECIFIED` teaches nothing. Emitting any other member
+// instead would contradict the rest of the payload, so the honest option is to
+// leave the field out and let the schema below document it.
+//
+// Dropping it here also frees a MAX_OPTIONAL_PROPERTIES slot for a field that
+// IS informative in that state.
+function isCuratedOmission(key, context = {}) {
+  const where = `${context.operationId ?? ''} ${context.path ?? ''}`.toLowerCase();
+  // GetTradeFlows: a 200 carrying rows always has unavailableReason at the
+  // UNSPECIFIED zero value. The generic enum picker skips the zero value and so
+  // paired flow rows with INVALID_REQUEST — a response the handler cannot
+  // produce. See #6309.
+  return key === 'unavailableReason'
+    && (where.includes('gettradeflows') || where.includes('get-trade-flows'));
+}
+
 function overrideStringExample(key, context = {}) {
   const where = `${context.operationId ?? ''} ${context.path ?? ''}`.toLowerCase();
   if (key === 'jmespath') return 'keys(@)';
@@ -184,6 +206,18 @@ function overrideStringExample(key, context = {}) {
         ? 'pending'
         : '/api/scenario/v1/get-scenario-status?jobId=scenario%3A1717200000000%3Aabcd1234';
     }
+  }
+  // GetTradeFlows' 200 example must depict a SERVED response. The field-name
+  // heuristic otherwise picks "156" for partnerCountry (China — a partner the
+  // WTO indicators behind this RPC cannot answer at all, so it could never
+  // appear on a served row) and the first enum member other than the zero value
+  // for unavailableReason, producing rows and INVALID_REQUEST together: a state
+  // the handler cannot emit. See #6309.
+  if (where.includes('gettradeflows') || where.includes('get-trade-flows')) {
+    if (key === 'partnercountry') return '000';
+    if (key === 'reportingcountry') return '840';
+    if (key === 'unavailablereason') return 'TRADE_FLOW_UNAVAILABLE_REASON_UNSPECIFIED';
+    if (key === 'productsector') return 'Total merchandise';
   }
   if (key === 'period' && where.includes('getsectorsummary')) return '1d';
   if (key === 'timespan' && where.includes('searchgdeltdocuments')) return '15min';
@@ -794,9 +828,12 @@ function exampleForSchema(schema, spec, context = {}, depth = 0, seen = new Set(
     // Drop honeypot fields before slot selection so they never appear in the
     // example and never consume a MAX_OPTIONAL_PROPERTIES slot from a real field.
     const isHoneypot = (key) => isHoneypotField(props[key], spec);
-    const required = new Set((Array.isArray(schema.required) ? schema.required : []).filter((key) => !isHoneypot(key)));
+    // Curated omissions join honeypots in being dropped BEFORE slot selection,
+    // so the freed slot goes to a field that actually informs the example.
+    const isDropped = (key) => isHoneypot(key) || isCuratedOmission(key, context);
+    const required = new Set((Array.isArray(schema.required) ? schema.required : []).filter((key) => !isDropped(key)));
     const optional = Object.keys(props)
-      .filter((key) => !required.has(key) && !isHoneypot(key))
+      .filter((key) => !required.has(key) && !isDropped(key))
       .slice(0, MAX_OPTIONAL_PROPERTIES);
     const keys = [...required, ...optional];
     if (keys.length === 0) {
