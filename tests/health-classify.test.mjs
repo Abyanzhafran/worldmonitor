@@ -440,6 +440,11 @@ test('classifyKey: a failure streak must not downgrade a vanished panel from EMP
 
   assert.equal(entry.status, 'EMPTY');
   assert.equal(STATUS_COUNTS[entry.status], 'crit', 'an absent homepage panel is a crit, per the ON_DEMAND_KEYS policy block');
+  assert.equal(
+    entry.lastSynthesisFailureCode,
+    'MARKET_IMPLICATIONS_LLM_NO_RESPONSE',
+    'the recorded reason survives the escalation — a bare crit with no cause makes the operator re-read seed-meta by hand',
+  );
 });
 
 test('classifyKey: an insights failure streak likewise cannot mask a vanished LKG', () => {
@@ -477,6 +482,403 @@ test('classifyKey: a market-implications run with nothing servable still errors 
 
   assert.equal(entry.status, 'SEED_ERROR');
   assert.equal(STATUS_COUNTS[entry.status], 'warn');
+});
+
+// ── Producer fault vs. missing data, fleet-wide (#6263) ──────────────────────
+// The synthesisFailure arm above learned to yield to the absence verdict. The
+// `seedError` and `sourceBlocked` arms sit on the same seam and apply to EVERY
+// SEED_META key, so the rule has to be stated once for all of them: a
+// producer-fault verdict says WHY the producer is unhappy, the absence verdict
+// says WHETHER anything is being served, and when both are true the STRONGER
+// one wins.
+//
+// That is deliberately not the one-word `&& hasData` guard the issue proposed.
+// Four key classes resolve an absent data key to something SOFTER than
+// SEED_ERROR — EMPTY_DATA_OK_KEYS (OK/STALE_SEED), cascade coverage
+// (OK_CASCADE), on-demand (EMPTY_ON_DEMAND) and rollout (ROLLOUT_PENDING) — so
+// a bare guard would demote or silence those instead of escalating them. Each
+// class gets a lock below.
+
+test('classifyKey: an error seed-meta must not downgrade a vanished panel from EMPTY to a warn', () => {
+  // The fleet-wide twin of the synthesisFailure case above. seed-meta holds 7
+  // days, the canonical key 180min, so a producer that errored once and then
+  // stopped leaves a blank homepage panel reporting warn for the rest of the
+  // week.
+  const entry = classifyKey(
+    'marketImplications',
+    STANDALONE_KEYS.marketImplications,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {}, // canonical key expired -> panel is blank
+      metaValues: {
+        [SEED_META.marketImplications.key]: JSON.stringify({
+          fetchedAt: NOW - 190 * ONE_MIN_MS,
+          recordCount: 0,
+          status: 'error',
+          errorReason: 'llm_no_response',
+          errorCode: 'MARKET_IMPLICATIONS_LLM_NO_RESPONSE',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'EMPTY');
+  assert.equal(STATUS_COUNTS[entry.status], 'crit');
+  assert.equal(
+    entry.errorCode,
+    'MARKET_IMPLICATIONS_LLM_NO_RESPONSE',
+    'escalating the severity must not cost the operator the cause the producer recorded',
+  );
+});
+
+test('classifyKey: a degraded sourceState likewise cannot mask a vanished panel', () => {
+  // seedError has two producers: `status:'error'` (above) and any non-ok
+  // `sourceState` (here). The second reaches classifyKey with a FRESH
+  // fetchedAt — seedStale stays false — so it is the arm that can hide an
+  // absence behind an otherwise healthy-looking meta.
+  const entry = classifyKey(
+    'marketImplications',
+    STANDALONE_KEYS.marketImplications,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {},
+      metaValues: {
+        [SEED_META.marketImplications.key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 5,
+          sourceState: 'error',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'EMPTY');
+  assert.equal(STATUS_COUNTS[entry.status], 'crit');
+});
+
+test('classifyKey: a blocked source with no data escalates like every other fault', () => {
+  // The `sourceBlocked` arm has the same shape and today produces the fleet's
+  // one self-contradiction: crossStraitActivityJapanMod is excluded from it, so
+  // that key ALREADY reports EMPTY for a blocked-and-absent state while every
+  // other key reports SEED_ERROR. One state, two verdicts. Assert both agree.
+  const blockedAndAbsent = (name) => classifyKey(
+    name,
+    STANDALONE_KEYS[name],
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {},
+      metaValues: {
+        [SEED_META[name].key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 0,
+          sourceState: 'blocked',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(blockedAndAbsent('humanitarianSummary').status, 'EMPTY');
+  assert.equal(blockedAndAbsent('crossStraitActivityJapanMod').status, 'EMPTY');
+
+  // Both landing on EMPTY proves they AGREE, but not that the blocked fault
+  // still fires at all — a guard that dropped it entirely would produce the
+  // same pair. Pin the other direction on the same key: with data present, the
+  // non-Japan blocked arm still yields its fault.
+  const blockedWithData = classifyKey(
+    'humanitarianSummary',
+    STANDALONE_KEYS.humanitarianSummary,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: { [STANDALONE_KEYS.humanitarianSummary]: 2048 },
+      metaValues: {
+        [SEED_META.humanitarianSummary.key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 4,
+          sourceState: 'blocked',
+        }),
+      },
+    }),
+  );
+  assert.equal(blockedWithData.status, 'SEED_ERROR');
+});
+
+test('classifyKey: a collapsed forecast funnel keeps SEED_ERROR when its payload is absent', () => {
+  // forecastFunnel is in EMPTY_DATA_OK_KEYS, so its absence branch resolves to
+  // OK/STALE_SEED — softer than the fault. api/health.js's own comment on the
+  // set entry states the dependency: "A COLLAPSED funnel still surfaces via
+  // seed-meta status:'error' → SEED_ERROR, which classifyKey checks before this
+  // branch." A bare `&& hasData` guard would demote the collapse to a generic
+  // STALE_SEED and drop the reason.
+  const entry = classifyKey(
+    'forecastFunnel',
+    STANDALONE_KEYS.forecastFunnel,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {},
+      metaValues: {
+        [SEED_META.forecastFunnel.key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 0,
+          status: 'error',
+          errorReason: 'funnel_collapsed',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'SEED_ERROR');
+  assert.equal(STATUS_COUNTS[entry.status], 'warn');
+});
+
+test('classifyKey: a fresh degraded funnel source is not silently OK when its payload is absent', () => {
+  // The sharpest edge of the same class: `sourceState` degradation leaves
+  // seedStale false, so EMPTY_DATA_OK_KEYS resolves the absence to plain OK. A
+  // bare `&& hasData` guard would turn a reported producer fault into a green
+  // check — the exact softening #6263 exists to remove.
+  const entry = classifyKey(
+    'forecastFunnel',
+    STANDALONE_KEYS.forecastFunnel,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {},
+      metaValues: {
+        [SEED_META.forecastFunnel.key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 0,
+          sourceState: 'error',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'SEED_ERROR');
+  // The absence verdict this beat, asserted directly: with the fault removed
+  // the very same fixture resolves to a green OK, so the fault is doing all the
+  // work here and a guard that skipped it would ship a silent pass.
+  const withoutFault = classifyKey(
+    'forecastFunnel',
+    STANDALONE_KEYS.forecastFunnel,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {},
+      metaValues: {
+        [SEED_META.forecastFunnel.key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 0,
+        }),
+      },
+    }),
+  );
+  assert.equal(withoutFault.status, 'OK');
+});
+
+test('classifyKey: cascade coverage does not hide a producer error on the covered key', () => {
+  // militaryFlights cascades onto militaryFlightsStale. Cascade answers "is the
+  // panel being served from a sibling", which is true here — but the live
+  // producer still reported a fault, and OK_CASCADE would erase it. Absence
+  // resolves to `ok`, softer than the fault, so the fault holds.
+  const entry = classifyKey(
+    'militaryFlights',
+    STANDALONE_KEYS.militaryFlights,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: { [STANDALONE_KEYS.militaryFlightsStale]: 2048 },
+      metaValues: {
+        [SEED_META.militaryFlights.key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 0,
+          status: 'error',
+          errorReason: 'opensky_auth_failed',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'SEED_ERROR');
+});
+
+test('classifyKey: a compact projection that must always publish is EMPTY when it errors with no payload', () => {
+  // MISSING_DATA_IS_FAILURE_KEYS members publish a canonical payload on every
+  // successful cycle, so a vanished payload is a real publish failure. The set
+  // is also a subset of EMPTY_DATA_OK_KEYS, whose absence verdict is only
+  // STALE_SEED — so if the strict arm is skipped, the fault ties the softer
+  // verdict and wins, and the key reports warn.
+  //
+  // The arm is skipped exactly when `seedStale === true`, and readSeedMeta
+  // SYNTHESIZES that on the `status:'error'` return as a fault marker rather
+  // than measuring it. Reading a fault marker as "the meta aged out" is what
+  // let #6263's own headline case — a `status:'error'` seed-meta over a
+  // vanished panel — survive on all eight of these keys.
+  const entry = classifyKey(
+    'crossStraitActivityBootstrap',
+    STANDALONE_KEYS.crossStraitActivityBootstrap,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {},
+      metaValues: {
+        [SEED_META.crossStraitActivityBootstrap.key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 0,
+          status: 'error',
+          errorReason: 'publish_failed',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'EMPTY');
+  assert.equal(STATUS_COUNTS[entry.status], 'crit');
+});
+
+test('classifyKey: both fault paths agree for one physical state on a strict projection', () => {
+  // The parity that finding above turns on. `status:'error'` and a non-ok
+  // `sourceState` are two ways to say "the producer is failing", and
+  // readSeedMeta treats them differently — the first forces seedStale true, the
+  // second measures it. Same key, same absent payload, same fault: the verdict
+  // must not depend on which dialect the producer used.
+  const classifyWith = (meta) => classifyKey(
+    'wildfiresBootstrap',
+    STANDALONE_KEYS.wildfiresBootstrap,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {},
+      metaValues: {
+        [SEED_META.wildfiresBootstrap.key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 0,
+          ...meta,
+        }),
+      },
+    }),
+  );
+
+  assert.equal(
+    classifyWith({ status: 'error', errorReason: 'publish_failed' }).status,
+    classifyWith({ sourceState: 'error' }).status,
+    'a producer reporting failure via status:error must classify like one reporting it via sourceState',
+  );
+});
+
+test('classifyKey: a strict projection that has never published keeps its STALE_SEED grace', () => {
+  // The other side of the same guard, and the reason it cannot simply be
+  // deleted: before the producer's first run the payload is absent with no
+  // fault recorded, and EMPTY (crit) would be a false alarm on a key that is
+  // merely new. Only a REPORTED fault revokes the grace — absence alone does
+  // not.
+  const entry = classifyKey(
+    'wildfiresBootstrap',
+    STANDALONE_KEYS.wildfiresBootstrap,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {},
+      metaValues: {
+        [SEED_META.wildfiresBootstrap.key]: JSON.stringify({
+          fetchedAt: NOW - 10_000 * ONE_MIN_MS, // long past maxStaleMin
+          recordCount: 0,
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'STALE_SEED');
+  assert.equal(STATUS_COUNTS[entry.status], 'warn');
+});
+
+test('classifyKey: an unconfigured adapter raises no fault and publishes no errorCode', () => {
+  // NOT_CONFIGURED means "this deployment never opted into the adapter", so
+  // there is nothing to be degraded ABOUT — the fault is skipped entirely
+  // rather than merely losing the verdict. Without the `!sourceUnavailable`
+  // guard the fault still fires, and a green NOT_CONFIGURED entry ships an
+  // errorCode for a producer this deployment does not run.
+  //
+  // Asserted on `errorCode` only. `lastSynthesisFailureCode` is deliberately
+  // ungated upstream — it rides with consecutiveFailures/lastAttemptAt, which
+  // publish on every status — so its presence here is correct, not a leak.
+  const entry = classifyKey(
+    'marketImplications',
+    STANDALONE_KEYS.marketImplications,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: { [STANDALONE_KEYS.marketImplications]: 4096 },
+      metaValues: {
+        [SEED_META.marketImplications.key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 5,
+          sourceState: 'unavailable',
+          errorCode: 'PRODUCER_FAILED',
+          lastAttemptAt: NOW - ONE_MIN_MS,
+          lastSuccessAt: NOW - 200 * ONE_MIN_MS,
+          consecutiveFailures: 3,
+          lastSynthesisFailureCode: 'MARKET_IMPLICATIONS_LLM_NO_RESPONSE',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'NOT_CONFIGURED');
+  assert.equal(STATUS_COUNTS[entry.status], 'ok');
+  assert.equal(Object.hasOwn(entry, 'errorCode'), false, 'an unconfigured adapter has no fault to explain');
+});
+
+test('classifyKey: a fault outranks every served-data verdict it precedes', () => {
+  // The refactor hoisted the fault arms out of the status if/else chain into a
+  // precomputed `fault`, and only the placement of `else if (fault)` keeps them
+  // ahead of the records===0 / staleness / coverage arms. Nothing else pins
+  // that ordering, so a reordering would go unnoticed — most visibly as
+  // EMPTY_DATA, which is what a mis-ordered fault arm produces for the
+  // zero-record case.
+  const withData = (over) => classifyKey(
+    'gdeltIntel',
+    BOOTSTRAP_KEYS.gdeltIntel,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: { [BOOTSTRAP_KEYS.gdeltIntel]: 4096 },
+      metaValues: {
+        'seed-meta:intelligence:gdelt-intel': JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 5,
+          ...over,
+        }),
+      },
+    }),
+  );
+
+  assert.equal(withData({ status: 'error' }).status, 'SEED_ERROR', 'fault beats a healthy served payload');
+  assert.equal(
+    withData({ status: 'error', recordCount: 0 }).status,
+    'SEED_ERROR',
+    'fault beats EMPTY_DATA — a zero-record payload under a reported fault is the fault, not a separate finding',
+  );
+  assert.equal(
+    withData({ sourceState: 'error', fetchedAt: NOW - 10_000 * ONE_MIN_MS }).status,
+    'SEED_ERROR',
+    'fault beats STALE_SEED',
+  );
+});
+
+test('classifyKey: an on-demand key with an error seed-meta keeps the error verdict', () => {
+  // EMPTY_ON_DEMAND and SEED_ERROR are both warn, so severity alone does not
+  // separate them — the tie goes to the fault, which is the only one of the two
+  // that carries a cause.
+  const entry = classifyKey(
+    'macroSignals',
+    STANDALONE_KEYS.macroSignals,
+    { allowOnDemand: true },
+    makeCtx({
+      strens: {},
+      metaValues: {
+        [SEED_META.macroSignals.key]: JSON.stringify({
+          fetchedAt: NOW - ONE_MIN_MS,
+          recordCount: 0,
+          status: 'error',
+          errorReason: 'macro_publish_failed',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'SEED_ERROR');
+  assert.equal(entry.onDemand, true);
 });
 
 test('compact health problem projection retains insights synthesis diagnostics', () => {
