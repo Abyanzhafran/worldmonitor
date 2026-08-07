@@ -30,9 +30,18 @@ const REQUIRED_PR_SCRIPTS = [
   'test:data',
   'test:sidecar',
   'test:convex',
-  'test:e2e:mcp-grant',
-  'test:e2e:variant-smoke:full',
+  'test:e2e:ci-smoke',
   'test:resilience-validation-smoke',
+] as const;
+
+// Every spec the combined ci-smoke invocation must keep exercising. The three
+// specs used to be three separate workflow steps; now that one script carries
+// them, dropping a spec from its command line is the new way a guard can stop
+// being invoked while CI stays green — so the spec list is pinned here.
+const REQUIRED_CI_SMOKE_SPECS = [
+  'e2e/variant-live-smoke.spec.ts',
+  'e2e/mcp-grant-consent.spec.ts',
+  'e2e/dashboard-news-request-budget.spec.ts',
 ] as const;
 
 const REQUIRED_TEST_JOBS = [
@@ -353,6 +362,31 @@ describe('CI workflow coverage', () => {
         `A workflow must run npm run ${script}`,
       );
     }
+  });
+
+  it('keeps every smoke spec on the combined ci-smoke command line', () => {
+    const ciSmoke = packageScripts['test:e2e:ci-smoke'] ?? '';
+    // Tokenize as the shell would, and stop at the first comment token: npm
+    // scripts run under `sh -c`, where a word-initial `#` comments out the
+    // rest of the line. A substring check would stay green with the spec
+    // paths sitting in the commented-out tail while playwright never runs
+    // them — the argv-token check is what gives this guard teeth.
+    const argvTokens: string[] = [];
+    for (const token of ciSmoke.trim().split(/\s+/)) {
+      if (token.startsWith('#')) break;
+      argvTokens.push(token);
+    }
+    for (const spec of REQUIRED_CI_SMOKE_SPECS) {
+      assert.ok(
+        argvTokens.includes(spec),
+        `test:e2e:ci-smoke must pass ${spec} as a live argv token — a spec dropped ` +
+          '(or commented out) from this command has no other CI invocation',
+      );
+    }
+    assert.ok(
+      argvTokens.includes('VITE_VARIANT=full'),
+      'test:e2e:ci-smoke must pin VITE_VARIANT=full — variant-live-smoke asserts the full-variant panel set',
+    );
   });
 
   it('keeps the main Test workflow jobs for defensibility smoke gates', () => {

@@ -5,6 +5,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load as loadYaml } from 'js-yaml';
+
+import { loadUnifiedOpenApiSpec } from './_lib/openapi-spec-cache.mjs';
 import { normalizeKey } from '../scripts/lib/openapi-codegen.mjs';
 
 // Guards the generated OpenAPI examples injected by
@@ -687,7 +689,7 @@ describe('OpenAPI examples contract', () => {
         'InfrastructureService.openapi.yaml',
         loadYaml(readFileSync(resolve(apiDir, 'InfrastructureService.openapi.yaml'), 'utf8')),
       ],
-      ['worldmonitor.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'))],
+      ['worldmonitor.openapi.yaml', loadUnifiedOpenApiSpec()],
     ];
 
     for (const [label, spec] of specs) {
@@ -706,7 +708,7 @@ describe('OpenAPI examples contract', () => {
   });
 
   it('adds request and response examples to the unified OpenAPI bundle', () => {
-    const bundle = loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'));
+    const bundle = loadUnifiedOpenApiSpec();
     const result = assertOperationExamples(bundle, 'worldmonitor.openapi.yaml');
     assert.equal(result.operations, 214);
     assert.equal(result.responseExpected, 214);
@@ -729,7 +731,7 @@ describe('OpenAPI examples contract', () => {
       const yamlSpec = loadYaml(readFileSync(resolve(apiDir, yamlFile), 'utf8'));
       violations.push(...honeypotRequestViolations(yamlSpec, yamlFile));
     }
-    const bundle = loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'));
+    const bundle = loadUnifiedOpenApiSpec();
     violations.push(...honeypotRequestViolations(bundle, 'worldmonitor.openapi.yaml'));
 
     assert.ok(guardedFields >= 2, `expected honeypot-marked schema fields to guard, found ${guardedFields}`);
@@ -810,7 +812,7 @@ describe('OpenAPI curated example values', () => {
     const specs = [
       ['NewsService.openapi.json', JSON.parse(readFileSync(resolve(apiDir, 'NewsService.openapi.json'), 'utf8'))],
       ['NewsService.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'NewsService.openapi.yaml'), 'utf8'))],
-      ['worldmonitor.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'))],
+      ['worldmonitor.openapi.yaml', loadUnifiedOpenApiSpec()],
     ];
 
     for (const [label, spec] of specs) {
@@ -827,7 +829,7 @@ describe('OpenAPI curated example values', () => {
     const intelligenceSpecs = [
       ['IntelligenceService.openapi.json', JSON.parse(readFileSync(resolve(apiDir, 'IntelligenceService.openapi.json'), 'utf8'))],
       ['IntelligenceService.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'IntelligenceService.openapi.yaml'), 'utf8'))],
-      ['worldmonitor.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'))],
+      ['worldmonitor.openapi.yaml', loadUnifiedOpenApiSpec()],
     ];
     assertParamExampleSet(intelligenceSpecs, 'GetGdeltTopicTimeline', 'topic', CURATED.gdeltTopics);
     assertParamExampleSet(intelligenceSpecs, 'GetRegionalSnapshot', 'region_id', CURATED.regionIds);
@@ -840,7 +842,7 @@ describe('OpenAPI curated example values', () => {
     const consumerSpecs = [
       ['ConsumerPricesService.openapi.json', JSON.parse(readFileSync(resolve(apiDir, 'ConsumerPricesService.openapi.json'), 'utf8'))],
       ['ConsumerPricesService.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'ConsumerPricesService.openapi.yaml'), 'utf8'))],
-      ['worldmonitor.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'))],
+      ['worldmonitor.openapi.yaml', loadUnifiedOpenApiSpec()],
     ];
     for (const operationId of ['GetConsumerPriceOverview', 'GetConsumerPriceBasketSeries', 'ListConsumerPriceCategories', 'ListRetailerPriceSpreads']) {
       assertParamExampleSet(consumerSpecs, operationId, 'basket_slug', CURATED.consumerBaskets);
@@ -852,7 +854,7 @@ describe('OpenAPI curated example values', () => {
     const aviationSpecs = [
       ['AviationService.openapi.json', JSON.parse(readFileSync(resolve(apiDir, 'AviationService.openapi.json'), 'utf8'))],
       ['AviationService.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'AviationService.openapi.yaml'), 'utf8'))],
-      ['worldmonitor.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'))],
+      ['worldmonitor.openapi.yaml', loadUnifiedOpenApiSpec()],
     ];
     const flightOps = ['SearchGoogleFlights', 'SearchGoogleDates'];
     for (const operationId of flightOps) {
@@ -873,7 +875,7 @@ describe('OpenAPI curated example values', () => {
     const newsSpecs = [
       ['NewsService.openapi.json', JSON.parse(readFileSync(resolve(apiDir, 'NewsService.openapi.json'), 'utf8'))],
       ['NewsService.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'NewsService.openapi.yaml'), 'utf8'))],
-      ['worldmonitor.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'))],
+      ['worldmonitor.openapi.yaml', loadUnifiedOpenApiSpec()],
     ];
     for (const [label, spec] of newsSpecs) {
       const mode = spec.paths?.['/api/news/v1/summarize-article']?.post
@@ -896,7 +898,7 @@ describe('OpenAPI curated example values', () => {
       const yamlSpec = loadYaml(readFileSync(resolve(apiDir, yamlFile), 'utf8'));
       checked += assertClosedValueParamExamples(yamlSpec, yamlFile);
     }
-    const bundle = loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'));
+    const bundle = loadUnifiedOpenApiSpec();
     checked += assertClosedValueParamExamples(bundle, 'worldmonitor.openapi.yaml');
     assert.ok(checked >= 20, `expected at least 20 prose-enumerated parameter examples, checked ${checked}`);
   });
@@ -913,7 +915,7 @@ describe('OpenAPI curated example values', () => {
       ['DisplacementService.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'DisplacementService.openapi.yaml'), 'utf8'))],
       ['MilitaryService.openapi.json', JSON.parse(readFileSync(resolve(apiDir, 'MilitaryService.openapi.json'), 'utf8'))],
       ['MilitaryService.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'MilitaryService.openapi.yaml'), 'utf8'))],
-      ['worldmonitor.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'))],
+      ['worldmonitor.openapi.yaml', loadUnifiedOpenApiSpec()],
     ];
     assertIssue4827Cluster7ResidueFixed(specs);
   });
@@ -922,7 +924,7 @@ describe('OpenAPI curated example values', () => {
     const specs = [
       ['ScenarioService.openapi.json', JSON.parse(readFileSync(resolve(apiDir, 'ScenarioService.openapi.json'), 'utf8'))],
       ['ScenarioService.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'ScenarioService.openapi.yaml'), 'utf8'))],
-      ['worldmonitor.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'))],
+      ['worldmonitor.openapi.yaml', loadUnifiedOpenApiSpec()],
     ];
 
     for (const [label, spec] of specs) {
@@ -934,7 +936,7 @@ describe('OpenAPI curated example values', () => {
     const specs = [
       ['GivingService.openapi.json', JSON.parse(readFileSync(resolve(apiDir, 'GivingService.openapi.json'), 'utf8'))],
       ['GivingService.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'GivingService.openapi.yaml'), 'utf8'))],
-      ['worldmonitor.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'))],
+      ['worldmonitor.openapi.yaml', loadUnifiedOpenApiSpec()],
     ];
 
     for (const [label, spec] of specs) {
@@ -952,7 +954,7 @@ describe('OpenAPI curated example values', () => {
         'ShippingV2Service.openapi.yaml',
         loadYaml(readFileSync(resolve(apiDir, 'ShippingV2Service.openapi.yaml'), 'utf8')),
       ],
-      ['worldmonitor.openapi.yaml', loadYaml(readFileSync(resolve(apiDir, 'worldmonitor.openapi.yaml'), 'utf8'))],
+      ['worldmonitor.openapi.yaml', loadUnifiedOpenApiSpec()],
     ];
 
     for (const [label, spec] of specs) {
