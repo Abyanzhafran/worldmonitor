@@ -223,6 +223,7 @@ test('classifyKey: one recent insights synthesis failure stays OK within the war
   assert.equal(entry.status, 'OK');
   assert.equal(STATUS_COUNTS[entry.status], 'ok');
   assert.equal(entry.consecutiveFailures, 1);
+  assert.equal(entry.lastSynthesisFailureCode, 'INSIGHTS_SYNTHESIS_GATE');
 });
 
 test('classifyKey: an old single insights synthesis failure warns by age', () => {
@@ -270,6 +271,212 @@ test('classifyKey: no-LKG synthesis failure warns even on the first attempted pu
   assert.equal(entry.status, 'SEED_ERROR');
   assert.equal(entry.consecutiveFailures, 1);
   assert.equal(entry.lastSuccessAt, null);
+});
+
+// ── marketImplications: the hourly tail LLM stage ────────────────────────────
+// Same bounded-degradation contract as newsInsights, sized to an hourly cron:
+// the panel serves published cards for hours, so ONE missed generation while
+// fresh cards are still being served is not an incident. Two consecutive
+// misses (~2h, the maxStaleMin budget) is.
+const classifyMarketImplications = (over = {}) => classifyKey(
+  'marketImplications',
+  STANDALONE_KEYS.marketImplications,
+  { allowOnDemand: false },
+  makeCtx({
+    strens: { [STANDALONE_KEYS.marketImplications]: 4096 },
+    metaValues: {
+      [SEED_META.marketImplications.key]: JSON.stringify({
+        fetchedAt: NOW - 94 * ONE_MIN_MS,
+        recordCount: 5,
+        status: 'ok',
+        ...over,
+      }),
+    },
+  }),
+);
+
+test('classifyKey: one market-implications LLM miss over fresh served cards stays OK', () => {
+  // The reported production state: three of five hourly attempts published,
+  // the latest attempt timed out, five valid cards still served.
+  const entry = classifyMarketImplications({
+    lastAttemptAt: NOW - 4 * ONE_MIN_MS,
+    lastSuccessAt: NOW - 94 * ONE_MIN_MS,
+    servedGeneratedAt: '2026-08-05T17:02:30.133Z',
+    consecutiveFailures: 1,
+    lastSynthesisFailureCode: 'MARKET_IMPLICATIONS_LLM_NO_RESPONSE',
+  });
+
+  assert.equal(entry.status, 'OK', 'a single transient LLM miss must not warn while five cards are being served');
+  assert.equal(STATUS_COUNTS[entry.status], 'ok');
+  assert.equal(entry.records, 5);
+  assert.equal(entry.consecutiveFailures, 1, 'the miss is still reported, it just is not an alarm yet');
+  assert.equal(entry.lastSynthesisFailureCode, 'MARKET_IMPLICATIONS_LLM_NO_RESPONSE');
+});
+
+test('classifyKey: two consecutive market-implications misses warn with the reason attached', () => {
+  const entry = classifyMarketImplications({
+    lastAttemptAt: NOW - 4 * ONE_MIN_MS,
+    lastSuccessAt: NOW - 154 * ONE_MIN_MS,
+    servedGeneratedAt: '2026-08-05T17:02:30.133Z',
+    consecutiveFailures: 2,
+    lastSynthesisFailureCode: 'MARKET_IMPLICATIONS_LLM_NO_RESPONSE',
+  });
+
+  assert.equal(entry.status, 'SEED_ERROR');
+  assert.equal(STATUS_COUNTS[entry.status], 'warn');
+  assert.equal(entry.consecutiveFailures, 2);
+  assert.equal(entry.lastSynthesisFailureCode, 'MARKET_IMPLICATIONS_LLM_NO_RESPONSE');
+  assert.equal(entry.servedGeneratedAt, '2026-08-05T17:02:30.133Z');
+});
+
+test('classifyKey: every market-implications failure code reaches health', () => {
+  for (const code of [
+    'MARKET_IMPLICATIONS_LLM_NO_RESPONSE',
+    'MARKET_IMPLICATIONS_NO_PARSEABLE_CARDS',
+    'MARKET_IMPLICATIONS_VALIDATION',
+    'MARKET_IMPLICATIONS_UNKNOWN',
+  ]) {
+    const entry = classifyMarketImplications({
+      lastAttemptAt: NOW - 4 * ONE_MIN_MS,
+      consecutiveFailures: 2,
+      lastSynthesisFailureCode: code,
+    });
+    assert.equal(entry.lastSynthesisFailureCode, code, `${code} must survive validation`);
+  }
+});
+
+test('classifyKey: a foreign failure code is rejected on the market-implications key', () => {
+  // The code vocabulary is per-key. A newsInsights code appearing here would
+  // mean the pattern degenerated into "any string", which would let a
+  // malformed producer write arbitrary text into the health response.
+  const entry = classifyMarketImplications({
+    lastAttemptAt: NOW - 4 * ONE_MIN_MS,
+    consecutiveFailures: 2,
+    lastSynthesisFailureCode: 'INSIGHTS_SYNTHESIS_PARSE',
+  });
+
+  assert.equal(entry.status, 'SEED_ERROR', 'the streak still escalates');
+  assert.equal(entry.lastSynthesisFailureCode, undefined, 'but a foreign code is not echoed');
+});
+
+test('classifyKey: a stalled market-implications cron warns by attempt age, not silently', () => {
+  // A single miss followed by no further attempt for over two hours: the
+  // served cards are past the staleness budget, so this would classify as a
+  // bare STALE_SEED. The failure contract upgrades it to SEED_ERROR so the
+  // operator gets the reason, not just the age.
+  const entry = classifyMarketImplications({
+    fetchedAt: NOW - 190 * ONE_MIN_MS,
+    lastAttemptAt: NOW - 125 * ONE_MIN_MS,
+    lastSuccessAt: NOW - 190 * ONE_MIN_MS,
+    consecutiveFailures: 1,
+    lastSynthesisFailureCode: 'MARKET_IMPLICATIONS_LLM_NO_RESPONSE',
+  });
+
+  assert.equal(entry.status, 'SEED_ERROR');
+  assert.equal(entry.synthesisFailureAgeMin, 125);
+});
+
+test('classifyKey: market-implications age escalation still fires with no failure recorded', () => {
+  // A budget starve records no failure at all, so the streak contract must not
+  // be the only thing that can escalate — the served vintage aging past
+  // maxStaleMin (120) still has to surface on its own.
+  const entry = classifyMarketImplications({
+    fetchedAt: NOW - 200 * ONE_MIN_MS,
+    lastAttemptAt: NOW - 200 * ONE_MIN_MS,
+    lastSuccessAt: NOW - 200 * ONE_MIN_MS,
+    consecutiveFailures: 0,
+  });
+
+  assert.equal(entry.status, 'STALE_SEED');
+  assert.equal(STATUS_COUNTS[entry.status], 'warn');
+});
+
+test('every synthesisFailure key declares its own failure-code vocabulary', () => {
+  // readSeedMeta falls back to the insights pattern when a key omits
+  // failureCodePattern, which would silently DROP every code a third producer
+  // writes — its streak would still escalate, but the reason would vanish.
+  // The fallback stays for safety; this is the guard that stops a new key
+  // from depending on it.
+  const withContract = Object.entries(SEED_META).filter(([, cfg]) => cfg?.synthesisFailure);
+  assert.ok(withContract.length >= 2, 'guard against this passing because the mechanism disappeared');
+  for (const [name, cfg] of withContract) {
+    assert.ok(
+      cfg.synthesisFailure.failureCodePattern instanceof RegExp,
+      `${name} must declare its own failureCodePattern, not inherit the insights default`,
+    );
+    assert.ok(
+      !cfg.synthesisFailure.failureCodePattern.global,
+      `${name}'s pattern must not be /g — a stateful lastIndex makes .test() alternate between true and false`,
+    );
+  }
+});
+
+test('classifyKey: a failure streak must not downgrade a vanished panel from EMPTY to a warn', () => {
+  // The canonical key holds 180min; the seed-meta holds 7 days. So a cron that
+  // dies right after a miss leaves a failure-bearing meta pointing at a panel
+  // that emptied hours ago. A producer-failure warning describes
+  // degraded-but-serving — when nothing is served at all, the stronger
+  // absence verdict has to win, or a blank homepage panel reports warn
+  // instead of crit for the rest of the week.
+  const entry = classifyKey(
+    'marketImplications',
+    STANDALONE_KEYS.marketImplications,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {}, // canonical key expired -> panel is blank
+      metaValues: {
+        [SEED_META.marketImplications.key]: JSON.stringify({
+          fetchedAt: NOW - 190 * ONE_MIN_MS,
+          recordCount: 5,
+          status: 'ok',
+          lastAttemptAt: NOW - 185 * ONE_MIN_MS,
+          lastSuccessAt: NOW - 190 * ONE_MIN_MS,
+          consecutiveFailures: 1,
+          lastSynthesisFailureCode: 'MARKET_IMPLICATIONS_LLM_NO_RESPONSE',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'EMPTY');
+  assert.equal(STATUS_COUNTS[entry.status], 'crit', 'an absent homepage panel is a crit, per the ON_DEMAND_KEYS policy block');
+});
+
+test('classifyKey: an insights failure streak likewise cannot mask a vanished LKG', () => {
+  // Same precedence, asserted on the other key that carries this contract, so
+  // the fix is not silently market-implications-only.
+  const entry = classifyKey(
+    'newsInsights',
+    BOOTSTRAP_KEYS.newsInsights,
+    { allowOnDemand: false },
+    makeCtx({
+      strens: {},
+      metaValues: {
+        [SEED_META.newsInsights.key]: seedMeta({
+          lastAttemptAt: NOW - 2 * ONE_MIN_MS,
+          consecutiveFailures: 2,
+          lastSynthesisFailureCode: 'INSIGHTS_SYNTHESIS_PARSE',
+        }),
+      },
+    }),
+  );
+
+  assert.equal(entry.status, 'EMPTY');
+});
+
+test('classifyKey: a market-implications run with nothing servable still errors immediately', () => {
+  // The producer's fail-closed branch: no last-good cards to hold a content
+  // clock against, so it writes the zero-record error meta and health must
+  // warn on the FIRST occurrence.
+  const entry = classifyMarketImplications({
+    fetchedAt: NOW - ONE_MIN_MS,
+    recordCount: 0,
+    status: 'error',
+    errorReason: 'llm_no_response',
+  });
+
+  assert.equal(entry.status, 'SEED_ERROR');
+  assert.equal(STATUS_COUNTS[entry.status], 'warn');
 });
 
 test('compact health problem projection retains insights synthesis diagnostics', () => {
