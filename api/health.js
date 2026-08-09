@@ -673,7 +673,7 @@ const SEED_META = {
   // already gone. 420 = the 6h cron plus one hour of grace, so health reaches
   // STALE_SEED an hour BEFORE the keys it vouches for lapse. Same shape as the
   // meta-only comtradeBilateralHs4 entry above (35d budget, 40d payload TTL).
-  tradeFlows:          { key: 'seed-meta:trade:flows',                        maxStaleMin: 420, minRecordCount: 200 },
+  tradeFlows:          { key: 'seed-meta:trade:flows',                        maxStaleMin: 420, minRecordCount: 200, dominantFailureMode: true },
   // Same meta-only shape as tradeFlows above (#6316 moved tariffs off the
   // single-key US years=10 probe). maxStaleMin 420 sits inside TARIFF_TTL
   // (480min); minRecordCount 150 leaves headroom under a ~200+ reporter fleet.
@@ -1197,14 +1197,18 @@ function keyHasData(redisKey, len) {
   return LIST_DATA_KEYS.has(redisKey) ? len > 0 : strlenIsData(len);
 }
 
+const TRADE_FLOW_DOMINANT_FAILURE_MODES = new Set([
+  'run-failed', 'upstream', 'empty', 'incomplete-years', 'mixed', 'none',
+]);
+
 function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
   if (!seedCfg) {
-    return { hasMeta: false, seedAge: null, seedStale: null, seedError: false, sourceUnavailable: false, sourceBlocked: false, metaReadFailed: false, metaCount: null, contentAge: null, coverage: null, synthesisFailure: null };
+    return { hasMeta: false, seedAge: null, seedStale: null, seedError: false, sourceUnavailable: false, sourceBlocked: false, metaReadFailed: false, metaCount: null, contentAge: null, coverage: null, synthesisFailure: null, dominantFailureMode: null };
   }
   // Per-command Redis errors on the GET seed-meta half of the pipeline must
   // not silently fall through to STALE_SEED — promote to REDIS_PARTIAL.
   if (keyMetaErrors.get(seedCfg.key)) {
-    return { hasMeta: false, seedAge: null, seedStale: null, seedError: false, sourceUnavailable: false, sourceBlocked: false, metaReadFailed: true, metaCount: null, contentAge: null, coverage: null, synthesisFailure: null };
+    return { hasMeta: false, seedAge: null, seedStale: null, seedError: false, sourceUnavailable: false, sourceBlocked: false, metaReadFailed: true, metaCount: null, contentAge: null, coverage: null, synthesisFailure: null, dominantFailureMode: null };
   }
   // Unwrap through the envelope helper. Legacy seed-meta is a bare
   // `{ fetchedAt, recordCount, sourceVersion, status? }` object with no `_seed`
@@ -1235,6 +1239,7 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
       coverage: null,
       errorCode,
       synthesisFailure: null,
+      dominantFailureMode: null,
     };
   }
   let seedAge = null;
@@ -1385,6 +1390,17 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
       warning,
     };
   }
+  // Coarse trade-flows run diagnostic (#6323). Only the seed-supply-chain-trade
+  // seeder writes this today; parsing is opt-in per-key via SEED_META entry
+  // declaring `dominantFailureMode: true` so no other seed-meta reader changes.
+  // The vocabulary is a closed set (health would otherwise relay arbitrary
+  // producer free-text into a public endpoint):
+  //   run-failed | upstream | empty | incomplete-years | mixed | none
+  let dominantFailureMode = null;
+  if (seedCfg?.dominantFailureMode && typeof meta?.dominantFailureMode === 'string'
+    && TRADE_FLOW_DOMINANT_FAILURE_MODES.has(meta.dominantFailureMode)) {
+    dominantFailureMode = meta.dominantFailureMode;
+  }
   return {
     hasMeta: meta != null,
     seedAge,
@@ -1401,6 +1417,7 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
     coverage,
     errorCode,
     synthesisFailure,
+    dominantFailureMode,
   };
 }
 
@@ -1495,6 +1512,7 @@ function classifyKey(name, redisKey, opts, ctx) {
     coverage,
     errorCode,
     synthesisFailure,
+    dominantFailureMode,
   } = meta;
 
   // Pending activation: the producer has never published a contentFreshness
@@ -1718,6 +1736,12 @@ function classifyKey(name, redisKey, opts, ctx) {
   // "why" for the severity bump — leaving a bare crit whose explanation is
   // sitting unread in seed-meta.
   if (fault === 'SEED_ERROR' && errorCode) entry.errorCode = errorCode;
+  // Coarse producer-run diagnostic, relayed whenever the producer recorded it —
+  // the whole point of #6323 is that a coverage shortfall's dominant cause is
+  // visible on /api/health without Railway logs or a raw index read, so gating
+  // it on the fault verdict would hide exactly the "healthy-looking partial"
+  // case. Mirrors the ungated synthesisFailure emission below.
+  if (dominantFailureMode) entry.dominantFailureMode = dominantFailureMode;
   // Surface content-age fields when seeder opted in (presence of
   // meta.maxContentAgeMin). Operators can distinguish "stale content" from
   // "stale seeder run" at a glance.
