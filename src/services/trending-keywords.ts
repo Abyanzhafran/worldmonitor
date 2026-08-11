@@ -23,6 +23,7 @@ import {
   isLikelyProperNoun,
   toTermKey,
 } from '../../shared/keyword-spike-core.js';
+import { PUBLISHER_FAMILIES, publisherFamilyFor } from '../../shared/publisher-families.js';
 import { t } from '@/services/i18n';
 
 export { extractEntities };
@@ -313,14 +314,33 @@ function dedupeHeadlines(headlines: StoredHeadline[]): StoredHeadline[] {
   return unique;
 }
 
-function distinctNamedSources(headlines: StoredHeadline[]): string[] {
-  return Array.from(
-    new Set(
-      headlines
-        .map(headline => headline.source.trim())
-        .filter(source => source.length > 0)
-    )
-  );
+/**
+ * Distinct PUBLISHERS behind a window of headlines, as display names.
+ *
+ * #6414 made the alert's count and the names it shows the same fact, so that
+ * the number a user reads is backed by the list beside it. #6428 makes that
+ * fact publishers rather than feed labels: `headline.source` is a feed label,
+ * and one newsroom ships many ("Reuters World" + "Reuters US"), so a
+ * label-keyed Set let a single publisher raise a "4 different news sources"
+ * alert on its own.
+ *
+ * Deduping by family and displaying the publisher keeps both properties —
+ * the count still equals the chips, and both now mean independent outlets.
+ * Per-article evidence is untouched: `headlines` still carries every article
+ * with its own source label and link.
+ */
+function distinctPublisherNames(headlines: StoredHeadline[]): string[] {
+  const byFamily = new Map<string, string>();
+  for (const headline of headlines) {
+    const family = publisherFamilyFor(headline.source);
+    if (!family || byFamily.has(family)) continue;
+    // A curated family displays its publisher name ("BBC" for "BBC Africa").
+    // An unmapped label displays its own original text — the singleton family
+    // id is case-normalized so counting cannot be fooled by casing drift, and
+    // that normalized id is a key, not something to show a user.
+    byFamily.set(family, PUBLISHER_FAMILIES[family]?.publisher ?? headline.source.trim());
+  }
+  return [...byFamily.values()];
 }
 
 function recordTermCandidates(
@@ -386,7 +406,7 @@ function checkForSpikes(now: number, config: TrendingConfig, blockedTerms: Set<s
     const recentHeadlines = dedupeHeadlines(
       record.headlines.filter(headline => now - headline.ingestedAt <= ROLLING_WINDOW_MS)
     );
-    const sourceNames = distinctNamedSources(recentHeadlines);
+    const sourceNames = distinctPublisherNames(recentHeadlines);
     if (sourceNames.length < MIN_SPIKE_SOURCE_COUNT) continue;
 
     record.lastSpikeAlertMs = now;
