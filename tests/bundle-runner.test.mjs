@@ -187,6 +187,12 @@ async function startFakeUpstash({
   hashes = new Map(),
   beforeCommand,
   failCommand,
+  // Delay applied to each GET before responding. Lets a test burn bundle wall
+  // time inside the freshness gate rather than inside a section, which is the
+  // only way to reach `ran:0 deferred:>0` without a failure. Must stay under
+  // the runner's REDIS_READ_TIMEOUT_MS or the read aborts and the section reads
+  // as due instead of fresh.
+  getDelayMs = 0,
 } = {}) {
   const pipelines = [];
   const commands = [];
@@ -239,8 +245,12 @@ async function startFakeUpstash({
     if (req.method === 'GET' && req.url?.startsWith('/get/')) {
       const key = decodeURIComponent(req.url.slice('/get/'.length));
       reads.push(key);
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ result: strings.get(key) ?? null }));
+      const send = () => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ result: strings.get(key) ?? null }));
+      };
+      if (getDelayMs > 0) setTimeout(send, getDelayMs);
+      else send();
       return;
     }
     if (req.method === 'POST' && req.url === '/pipeline') {
@@ -595,21 +605,244 @@ test('timeout emits terminal reason BEFORE SIGTERM/SIGKILL grace (survives conta
 });
 
 test('budget check accounts for SIGKILL grace when deferring', async () => {
-  const cleanup = writeFixture(
+  const cleanupFirst = writeFixture(
+    '_bundle-fixture-budget-first.mjs',
+    `await new Promise((r) => setTimeout(r, 16000));\nconsole.log('first-ran');\n`,
+  );
+  const cleanupGated = writeFixture(
     '_bundle-fixture-sleep.mjs',
-    `console.log('ok');\n`,
+    `console.log('gated-ran');\n`,
   );
   try {
-    // timeoutMs (15s) + grace (10s) = 25s worst-case. Budget 20s must defer.
+    // Budget 60s. FIRST is admittable (30s + 10s grace + 15s headroom = 55s)
+    // and burns ~16s of it. GATED's own timeout (35s) still fits the ~44s that
+    // remain — only adding the 10s kill grace (45s) pushes it over. Deferring
+    // under that cumulative pressure is the feature; a section that cannot fit
+    // the whole budget is a config bug rejected at startup instead (see below).
+    //
+    // FIRST has to burn more than ADMISSION_HEADROOM_MS for GATED to defer at
+    // all: any section that passes the startup check by definition fits the
+    // budget with the headroom to spare, so only elapsed time beyond that
+    // headroom can squeeze it out. That is what makes this test slow, and why
+    // it cannot be tightened without also weakening what it proves.
+    //
+    // FIRST's timeout is ~2x its sleep on purpose. This file spawns real child
+    // processes and a loaded CI runner has already produced one cold-start
+    // flake here (PR #3617); a timeout close to the sleep would turn that into
+    // a section failure and change the exit code being asserted.
     const { code, stdout } = await runBundleWith(
-      [{ label: 'GATED', script: '_bundle-fixture-sleep.mjs', intervalMs: 1, timeoutMs: 15_000 }],
-      { maxBundleMs: 20_000 },
+      [
+        { label: 'FIRST', script: '_bundle-fixture-budget-first.mjs', intervalMs: 1, timeoutMs: 30_000 },
+        { label: 'GATED', script: '_bundle-fixture-sleep.mjs', intervalMs: 1, timeoutMs: 35_000 },
+      ],
+      { maxBundleMs: 60_000 },
     );
-    assert.equal(code, 0, 'deferred sections are not failures');
-    assert.match(stdout, /\[GATED\] Deferred, needs 25s \(timeout\+grace\)/);
-    assert.match(stdout, /deferred:1/);
+    assert.equal(code, 0, 'a deferral after real work is pressure, not a failure');
+    assert.match(stdout, /\[FIRST\] first-ran/);
+    assert.match(stdout, /\[GATED\] Deferred, needs 45s \(timeout\+grace\)/);
+    assert.match(stdout, /ran:1 skipped:0 deferred:1/);
+    assert.doesNotMatch(stdout, /gated-ran/);
+  } finally {
+    cleanupFirst();
+    cleanupGated();
+  }
+});
+
+test('a section whose worst case exceeds the whole budget is rejected at startup', async () => {
+  // #6556: seed-bundle-resilience declared maxBundleMs 570s against sections
+  // whose cheapest worst case was 610s, so EVERY tick deferred EVERY section
+  // and exited 0. Railway painted SUCCESS for six hours while the service was
+  // dead. A section that cannot fit the whole budget can never be admitted on
+  // any tick, which makes it a static config error, not runtime pressure.
+  const cleanup = writeFixture('_bundle-fixture-unadmittable.mjs', `console.log('must-not-run');\n`);
+  try {
+    const { code, stdout, stderr } = await runBundleWith(
+      [{ label: 'NEVER', script: '_bundle-fixture-unadmittable.mjs', intervalMs: 1, timeoutMs: 560_000 }],
+      { maxBundleMs: 560_000 },
+    );
+    assert.notEqual(code, 0, 'a permanently unadmittable section must not exit 0');
+    assert.match(
+      stderr,
+      /maxBundleMs=560000 is below the worst case of 1 section\(s\)[^\n]*'NEVER' needs 585000ms \(timeoutMs 560000 \+ 10000ms kill grace \+ 15000ms admission headroom\)/,
+      `expected the admission-arithmetic error; stderr:\n${stderr}`,
+    );
+    assert.doesNotMatch(stdout + stderr, /must-not-run/, 'nothing may spawn once the config is known bad');
   } finally {
     cleanup();
+  }
+});
+
+test('an env-gated section does not take its healthy siblings down via the admission check', async () => {
+  // The startup throw is deliberately loud, but its blast radius is the whole
+  // bundle. A section already failing the requiredEnv gate cannot run this tick
+  // whatever its timeout says, so letting its arithmetic throw would stop the
+  // bundle's healthy members from publishing for the duration of an unrelated
+  // secret outage — while requiredEnv's own path exists precisely to fail only
+  // the affected section. Nothing is lost: the CI gate checks that timeout
+  // statically, with no knowledge of the environment.
+  const cleanup = writeFixture('_bundle-fixture-env-gated-sibling.mjs', `console.log('healthy-sibling-ran');\n`);
+  try {
+    const { code, stdout, stderr } = await runBundleWith(
+      [
+        { label: 'HEALTHY', script: '_bundle-fixture-env-gated-sibling.mjs', intervalMs: 1, timeoutMs: 5_000 },
+        {
+          label: 'GATED_AND_OVERSIZED',
+          script: '_bundle-fixture-must-not-run.mjs',
+          intervalMs: 1,
+          timeoutMs: 5_000_000,                       // would throw on its own
+          requiredEnv: ['WM_BUNDLE_TEST_ABSENT_SECRET'],
+        },
+      ],
+      { maxBundleMs: 60_000 },
+    );
+    assert.match(stdout, /\[HEALTHY\] healthy-sibling-ran/, `the healthy section must still run; stdout:\n${stdout}`);
+    assert.match(stderr, /section=GATED_AND_OVERSIZED status=CONFIG_ERROR/);
+    assert.equal(code, 1, 'the missing secret still fails the bundle');
+    assert.doesNotMatch(stdout + stderr, /can therefore never be admitted/, 'must not throw on an env-gated section');
+    assert.doesNotMatch(stdout + stderr, /must-not-run/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a declared-but-unusable maxBundleMs fails instead of silently unbudgeting', async () => {
+  // Every budget guard is gated on Number.isFinite(maxBundleMs), so a string
+  // (or a NaN from Number(process.env.X)) would turn all of them off and let a
+  // 600s section run in a container that dies at 600s — #6556's outcome via a
+  // different route. A missing budget is unbudgeted; a broken one is an error.
+  const cleanup = writeFixture('_bundle-fixture-bad-budget.mjs', `console.log('bad-budget-ran');\n`);
+  try {
+    const { code, stdout, stderr } = await runBundleWith(
+      [{ label: 'ANY', script: '_bundle-fixture-bad-budget.mjs', intervalMs: 1, timeoutMs: 5_000 }],
+      { maxBundleMs: '60000' },
+    );
+    assert.notEqual(code, 0, 'a non-numeric budget must not be treated as "no budget"');
+    assert.match(stderr, /maxBundleMs must be a positive finite number, got "60000"/, `stderr:\n${stderr}`);
+    assert.doesNotMatch(stdout + stderr, /bad-budget-ran/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a section sized exactly at the budget is rejected, not silently deferred forever', async () => {
+  // The boundary the first version of this guard got wrong. `timeoutMs +
+  // KILL_GRACE_MS === maxBundleMs` passes a naive `worstCase > maxBundleMs`
+  // check, but the runtime test is `elapsed + worstCase <= maxBundleMs` and
+  // elapsed is never zero — the freshness gate has already run. So the section
+  // was admissible on paper and deferred on every real tick: #6556 surviving
+  // its own fix. ADMISSION_HEADROOM_MS is what closes it.
+  const cleanup = writeFixture('_bundle-fixture-exact-budget.mjs', `console.log('exact-ran');\n`);
+  try {
+    const { code, stdout, stderr } = await runBundleWith(
+      [{ label: 'EXACT', script: '_bundle-fixture-exact-budget.mjs', intervalMs: 1, timeoutMs: 50_000 }],
+      { maxBundleMs: 60_000 },
+    );
+    assert.notEqual(code, 0, 'worstCase === maxBundleMs leaves zero room for the freshness gate');
+    assert.match(stderr, /'EXACT' needs 75000ms/, `stderr:\n${stderr}`);
+    assert.doesNotMatch(stdout + stderr, /exact-ran/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a section with headroom to spare is admitted', async () => {
+  // The other side of the boundary — proves the guard rejects on the specific
+  // arithmetic rather than rejecting everything, which would pass the test
+  // above for the wrong reason.
+  const cleanup = writeFixture('_bundle-fixture-fits.mjs', `console.log('fits-ran');\n`);
+  try {
+    const { code, stdout } = await runBundleWith(
+      [{ label: 'FITS', script: '_bundle-fixture-fits.mjs', intervalMs: 1, timeoutMs: 34_000 }],
+      { maxBundleMs: 60_000 },
+    );
+    assert.equal(code, 0, `34s + 10s grace + 15s headroom = 59s fits a 60s budget; stdout:\n${stdout}`);
+    assert.match(stdout, /\[FITS\] fits-ran/);
+    assert.match(stdout, /ran:1 skipped:0 deferred:0/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a tick that runs nothing while deferring due work exits non-zero', async () => {
+  // The residual silent-stall shape that survives the startup check. Every
+  // section fits the budget on its own, but the runner's OWN freshness gate
+  // burns enough wall time to squeeze the due section out, so the tick
+  // published nothing and shed work. `ran:0 deferred:>0` is indistinguishable
+  // from a healthy no-op in Railway's badge, so the runner has to say so.
+  //
+  // A degraded Upstash is the production shape: four fresh sections whose
+  // reads each take ~4.5s (under the runner's 5s read timeout, so they still
+  // resolve as fresh and are skipped rather than run) push elapsed past the
+  // 15s admission headroom, and DUE then no longer fits.
+  const cleanupDue = writeFixture('_bundle-fixture-starved-due.mjs', `console.log('due-ran');\n`);
+  const freshMeta = JSON.stringify({ fetchedAt: Date.now(), recordCount: 1 });
+  const redis = await startFakeUpstash({
+    getDelayMs: 4_500,
+    strings: new Map([
+      ['seed-meta:starve:a', freshMeta],
+      ['seed-meta:starve:b', freshMeta],
+      ['seed-meta:starve:c', freshMeta],
+      ['seed-meta:starve:d', freshMeta],
+    ]),
+  });
+  try {
+    const skipped = ['a', 'b', 'c', 'd'].map((k) => ({
+      label: `FRESH_${k.toUpperCase()}`,
+      script: '_bundle-fixture-starved-due.mjs',
+      seedMetaKey: `starve:${k}`,
+      intervalMs: DAY,
+      timeoutMs: 5_000,
+    }));
+    const { code, stdout, stderr } = await runBundleWith(
+      [
+        ...skipped,
+        { label: 'DUE', script: '_bundle-fixture-starved-due.mjs', intervalMs: 1, timeoutMs: 35_000 },
+      ],
+      { maxBundleMs: 60_000 },
+      { UPSTASH_REDIS_REST_URL: redis.url, UPSTASH_REDIS_REST_TOKEN: redis.token },
+    );
+    assert.equal(code, 1, 'a tick that published nothing while starving due work is not a success');
+    assert.match(stdout, /\[Bundle:test\] Finished .* ran:0 skipped:4 deferred:1 failed:0 graceful:0/);
+    assert.match(
+      stderr,
+      /\[Bundle:test\] ran:0 while 1 due section\(s\) were deferred/,
+      `expected the zero-admission explanation; stderr:\n${stderr}`,
+    );
+    assert.doesNotMatch(stdout, /due-ran/);
+  } finally {
+    cleanupDue();
+    await redis.close();
+  }
+});
+
+test('a transient graceful skip that also defers work stays exit 0', async () => {
+  // The narrowing on starvedTick. A child exit 75 means the last-good TTL was
+  // extended and no data was lost — a rate-limited upstream, not a stall. If
+  // that blip also pushed a sibling past the budget, `ran:0 deferred:1` is
+  // technically true but firing "Deploy Crashed!" for it is exactly the alert
+  // fatigue the graceful exemption exists to prevent. The deferred section
+  // retries on the next tick; real staleness is caught by the seed-meta
+  // freshness monitor, not by this exit code.
+  const cleanupGrace = writeFixture(
+    '_bundle-fixture-slow-graceful.mjs',
+    `await new Promise((r) => setTimeout(r, 16000));\nconsole.log('=== Failed gracefully ===');\nprocess.exit(${GRACEFUL_FETCH_FAILURE_EXIT_CODE});\n`,
+  );
+  const cleanupLate = writeFixture('_bundle-fixture-late.mjs', `console.log('late-ran');\n`);
+  try {
+    const { code, stdout } = await runBundleWith(
+      [
+        { label: 'GRACE', script: '_bundle-fixture-slow-graceful.mjs', intervalMs: 1, timeoutMs: 30_000 },
+        { label: 'LATE', script: '_bundle-fixture-late.mjs', intervalMs: 1, timeoutMs: 35_000 },
+      ],
+      { maxBundleMs: 60_000 },
+    );
+    assert.equal(code, 0, 'a transient upstream blip must not page, even when it also defers a sibling');
+    assert.match(stdout, /\[Bundle:test\] Finished .* ran:0 skipped:0 deferred:1 failed:0 graceful:1/);
+    assert.match(stdout, /no data lost, exiting 0/);
+    assert.doesNotMatch(stdout, /late-ran/);
+  } finally {
+    cleanupGrace();
+    cleanupLate();
   }
 });
 
