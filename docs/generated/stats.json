@@ -20,7 +20,7 @@
   "serviceTopLevelEntries": 233,
   "apiEndpointEntries": 91,
   "panelClasses": 109,
-  "protoFiles": 296,
+  "protoFiles": 297,
   "protoServices": 36,
   "protoDomainFolders": 37,
   "openapiServiceSpecs": 36,
@@ -93,15 +93,15 @@
   "freshnessRequiredForRisk": 2,
   "feedDefinitions": 632,
   "sourceAttribution": {
-    "activeHosts": 532,
-    "structuredHosts": 292,
+    "activeHosts": 534,
+    "structuredHosts": 294,
     "feedHosts": 268,
     "operationalStatusHosts": 30,
-    "providerCount": 530,
-    "observedHosts": 651,
+    "providerCount": 532,
+    "observedHosts": 653,
     "reviewNeeded": 518
   },
-  "sourceAttributionHosts": 532,
+  "sourceAttributionHosts": 534,
   "airportCount": 115,
   "stockExchangeCount": 29,
   "centralBankInstitutionCount": 14,
@@ -114,7 +114,7 @@
   "leaderNames": 16,
   "populationPriorityCountries": 20,
   "sebufVersion": "v0.11.1",
-  "mcpToolCount": 61,
+  "mcpToolCount": 62,
   "mcpApps": {
     "specVersion": "2026-01-26",
     "mimeType": "text/html;profile=mcp-app",
@@ -304,7 +304,7 @@
   },
   "healthProbedKeys": {
     "bootstrap": 109,
-    "standalone": 151,
-    "total": 260
+    "standalone": 152,
+    "total": 261
   }
 }

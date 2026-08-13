@@ -774,7 +774,11 @@
       "scripts/shared/country-names.json",
       "scripts/shared/iso3-to-iso2.json",
       "scripts/seed-military-bases.mjs",
-      "scripts/seed-submarine-cables.mjs"
+      "scripts/seed-mineral-production.mjs",
+      "scripts/seed-submarine-cables.mjs",
+      "scripts/shared/mineral-commodities.json",
+      "scripts/shared/mineral-country-aliases.json",
+      "scripts/shared/mineral-production-parse.mjs"
     ],
     "cronSchedule": "0 3 * * *",
     "documentedAt": "docs/railway-seed-consolidation-runbook.md#bundle-3-seed-bundle-static-ref"

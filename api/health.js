@@ -339,6 +339,7 @@ const STANDALONE_KEYS = {
   shippingRates:         'supply_chain:shipping:v2',
   chokepoints:           'supply_chain:chokepoints:v4',
   minerals:              'supply_chain:minerals:v2',
+  mineralProduction:     'supply-chain:mineral-production:v1',
   giving:                'giving:summary:v2',
   gpsjam:                'intelligence:gpsjam:v2',
   // Corporate intelligence (issue #5695): SEC ticker→CIK registry + 8-K
@@ -864,6 +865,25 @@ const SEED_META = {
   jodiGas:              { key: 'seed-meta:energy:jodi-gas',               maxStaleMin: 60 * 24 * 40, chinaRow: true }, // monthly cron on 25th; 40d threshold matches 35d TTL + 5d buffer
   lngVulnerability:     { key: 'seed-meta:energy:jodi-gas',               maxStaleMin: 60 * 24 * 40, chinaRow: true }, // written by jodi-gas seeder afterPublish; shares seed-meta key
   chokepointBaselines:  { key: 'seed-meta:energy:chokepoint-baselines', maxStaleMin: 60 * 24 * 400 }, // 400 days
+  // maxStaleMin is 120d = 2x the 60-day bundle interval, matching the repo's
+  // 2-3x norm. The data is annual but the PUBLISHER runs every 60 days, so the
+  // previous 400-day budget (6.7x cadence) would have let a dead seeder read OK
+  // until ~2027-09; the 540-day content-age gate would not have covered it
+  // either. Sized to the publisher, not the source.
+  // Keep `key` and `maxStaleMin` adjacent: the coverage guard in
+  // tests/seed-ttl-outlives-staleness-fleet.test.mjs matches them with a single
+  // regex that only tolerates whitespace between the two, so a comment placed
+  // between them drops this gate from the parsed set.
+  mineralProduction:    {
+    key: 'seed-meta:supply-chain:mineral-production',
+    maxStaleMin: 60 * 24 * 120,
+    cutover: {
+      mode: 'expiring-ack',
+      fromKey: null,
+      issue: 6439,
+      status: 'EMPTY',
+    },
+  },
   sprPolicies:          { key: 'seed-meta:energy:spr-policies',         maxStaleMin: 60 * 24 * 400 }, // 400 days; static registry, same cadence as chokepoint baselines
   pipelinesGas:         { key: 'seed-meta:energy:pipelines-gas',        maxStaleMin: 20_160 }, // 14d — weekly cron (7d) × 2 headroom
   pipelinesOil:         { key: 'seed-meta:energy:pipelines-oil',        maxStaleMin: 20_160 }, // 14d — same seed-pipelines.mjs publishes both keys
