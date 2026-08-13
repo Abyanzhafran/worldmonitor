@@ -94,12 +94,12 @@ test('source inventory has complete metadata and matches the generated catalog',
   }
 
   const stats = sourceAttributionStats(inventory, manifest);
-  // Merge resolution: main added one provider (#6536) and this branch added two
-  // (BGS World Mineral Statistics, USGS ScienceBase), so the merged totals are
-  // neither side's numbers. Recomputed from the merged manifest.
-  assert.equal(stats.activeHosts, 534);
-  assert.equal(stats.providerCount, 532);
-  assert.equal(stats.observedHosts, 653);
+  // Merge resolution: main's totals plus this branch's two new hosts (USDA FAS
+  // PSD via api.fas.usda.gov, FAOSTAT via fenixservices.fao.org), so the merged
+  // totals are neither side's numbers. Recomputed from the merged manifest.
+  assert.equal(stats.activeHosts, 536);
+  assert.equal(stats.providerCount, 534);
+  assert.equal(stats.observedHosts, 655);
   assert.ok(stats.reviewNeeded > 0, 'terms-review rows must remain visible until a license audit is complete');
 });
 

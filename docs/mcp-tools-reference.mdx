@@ -515,6 +515,48 @@ curl -s https://worldmonitor.app/mcp \
 
 </CodeGroup>
 
+### `get_food_stocks`
+
+USDA PSD cereal stocks-to-use by marketing year. Ask for a country plus optional commodity (`wheat`, `corn`, `rice`, `soybeans`, `barley`, `palmOil`), or `country_code=WORLD` for the global balance. Marketing years are stored verbatim and must not be treated as calendar years.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|---------:|-------------|
+| `country_code` | string | yes | ISO 3166-1 alpha-2, or `WORLD` for the global balance. |
+| `commodity` | string | no | `wheat`, `corn`, `rice`, `soybeans`, `barley`, or `palmOil` (note the camelCase). Empty = all six. |
+
+- **API endpoints:** `GET /api/resilience/v1/get-food-stocks`
+- **Kind:** RPC proxy — the handler owns WORLD vs ISO-2 and commodity filtering.
+- **Freshness budget:** oldest world marketing year present (WASDE monthly cycle; 60-day fetch-age / 120-day content-age).
+
+**Reading a zero.** Check `hasStocksToUse` before reporting `stocksToUse`, and
+`hasEndingStocks` before reporting `endingStocksTmt`. Proto3 has no presence for a
+bare number, so an unmeasured value arrives as `0` — and USDA estimates ending
+stocks for selected countries only, so a real producer routinely reports
+production and consumption with no stocks series at all. When the flag is `false`
+the zero is a placeholder; treat it as "not measured", never as 0%.
+
+`totalUseTmt` is consumption + exports for a country, but consumption only for
+`WORLD`, because world exports are internal transfers already counted in the
+importing country's consumption. Rows with `source: "faostat"` are production-only
+gap fill and always carry both flags `false`.
+
+<CodeGroup>
+
+```bash curl
+curl -s https://worldmonitor.app/mcp \
+  -H "X-WorldMonitor-Key: $WM_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,
+    "method":"tools/call",
+    "params":{"name":"get_food_stocks","arguments":{"country_code":"EG","commodity":"wheat"}}
+  }'
+```
+
+</CodeGroup>
+
 ### `get_mineral_production`
 
 Country shares of mine and refinery production, plus HHI, from the annual USGS Mineral Commodity Summaries seed (BGS fills commodities MCS lacks, notably uranium). Use this for "who refines X" / "what does country Y produce". Deposit locations stay on `get_commodity_geo`.

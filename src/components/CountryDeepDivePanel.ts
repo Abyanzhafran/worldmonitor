@@ -153,6 +153,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   private resilienceWidget: import('@/components/ResilienceWidget').ResilienceWidget | null = null;
   private pendingResilienceEnergyMix: CountryEnergyProfileData | null = null;
   private resilienceWidgetRequestId = 0;
+  private foodStocksRequestId = 0;
   private energyBody: HTMLElement | null = null;
   private maritimeBody: HTMLElement | null = null;
   private tradeExposureBody: HTMLElement | null = null;
@@ -308,6 +309,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     if (origin === 'control' && this.historyRegistered) overlayHistory.close('deep-dive');
     this.historyRegistered = false;
     this.destroyResilienceWidget();
+    this.foodStocksRequestId += 1;
     this.tearDownFollowButton();
     if (this.isMaximizedState) {
       this.isMaximizedState = false;
@@ -2595,6 +2597,22 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.energyBody = energyBody;
     energyBody.append(this.makeLoading('Loading energy data\u2026'));
 
+    const [foodStocksCard, foodStocksBody] = this.sectionCard(
+      t('countryBrief.foodStocks'),
+      t('countryBrief.foodStocksHelp'),
+    );
+    // Pro-gated like every other premium card in this panel. Firing the two
+    // premium RPCs for a free user cost two guaranteed 401s per deep-dive open
+    // and painted a dead "unavailable" card where the sibling cards show the
+    // upgrade prompt.
+    const foodStocksIsPro = hasPremiumAccess(getAuthState());
+    if (foodStocksIsPro) {
+      foodStocksBody.append(this.makeLoading(t('countryBrief.loadingFoodStocks')));
+      void this.renderFoodStocks(code, foodStocksBody);
+    } else {
+      foodStocksBody.append(this.makeProLocked(t('countryBrief.foodStocksProLocked')));
+    }
+
     const [maritimeCard, maritimeBody] = this.sectionCard('Maritime Activity', 'Port-level tanker call volume and import/export cargo weight over 30 days. ⚠ badge = port running below 50% of its 30-day baseline. Source: IMF PortWatch.');
     this.maritimeBody = maritimeBody;
     maritimeBody.append(this.makeLoading('Loading port activity\u2026'));
@@ -2673,9 +2691,130 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     marketsBody.append(this.makeLoading(t('countryBrief.loadingMarkets')));
     briefBody.append(this.makeLoading(t('countryBrief.generatingBrief')));
 
-    bodyGrid.append(briefCard, ...(chinaSummaryCard ? [chinaSummaryCard] : []), factsExpanded, energyCard, maritimeCard, tradeCard, costShockCalcCard, productImportsCard, debtCard, sanctionsCard, comtradeCard, tariffCard, signalsCard, timelineCard, newsCard, militaryCard, infraCard, economicCard, housingCard, marketsCard);
+    bodyGrid.append(briefCard, ...(chinaSummaryCard ? [chinaSummaryCard] : []), factsExpanded, foodStocksCard, energyCard, maritimeCard, tradeCard, costShockCalcCard, productImportsCard, debtCard, sanctionsCard, comtradeCard, tariffCard, signalsCard, timelineCard, newsCard, militaryCard, infraCard, economicCard, housingCard, marketsCard);
     shell.append(header, summaryGrid, bodyGrid);
     this.content.append(shell);
+  }
+
+  private async renderFoodStocks(code: string, body: HTMLElement): Promise<void> {
+    const requestId = ++this.foodStocksRequestId;
+    const stillCurrent = (): boolean => requestId === this.foodStocksRequestId;
+    try {
+      // The generated client pulls variant/runtime, which read `location` at
+      // import time. The country-brief harness is location-free, so skip the
+      // import there instead of letting a late catch paint a detached node.
+      if (typeof location === 'undefined') {
+        if (stillCurrent()) body.replaceChildren(this.makeEmpty(t('countryBrief.foodStocksUnavailable')));
+        return;
+      }
+      const { getFoodStocks } = await import('@/services/resilience');
+      // allSettled, not all: the WORLD lookup is a shared comparison column, and
+      // a gateway-level rejection on it alone (billing verification, rate limit,
+      // Clerk token race) must not discard country data that arrived fine.
+      const [countryResult, worldResult] = await Promise.allSettled([
+        getFoodStocks({ countryCode: code, signal: this.signal }),
+        getFoodStocks({ countryCode: 'WORLD', signal: this.signal }),
+      ]);
+      if (!stillCurrent()) return;
+      type FoodStocks = Awaited<ReturnType<typeof getFoodStocks>>;
+      const settledValue = (r: PromiseSettledResult<FoodStocks>): FoodStocks | null => (
+        r.status === 'fulfilled' ? r.value : null
+      );
+      // Both sides down is a genuine failure: rethrow so the catch reports it to
+      // Sentry rather than silently painting an empty card.
+      if (countryResult.status === 'rejected' && worldResult.status === 'rejected') {
+        throw countryResult.reason;
+      }
+      const country = settledValue(countryResult);
+      const world = settledValue(worldResult);
+      if ((country?.unavailable ?? true) && (world?.unavailable ?? true)) {
+        body.replaceChildren(this.makeEmpty(t('countryBrief.foodStocksUnavailable')));
+        return;
+      }
+      const worldByCommodity = new Map(
+        (world?.records ?? []).map((row) => [row.commodity, row]),
+      );
+      const rows = country?.records ?? [];
+      if (rows.length === 0) {
+        body.replaceChildren(this.makeEmpty(t('countryBrief.foodStocksUnavailable')));
+        return;
+      }
+
+      const table = this.el('table', 'cdp-food-stocks');
+      const head = this.el('thead', '');
+      const headRow = this.el('tr', '');
+      for (const label of [
+        t('countryBrief.foodStocksCommodity'),
+        t('countryBrief.foodStocksMarketingYear'),
+        t('countryBrief.foodStocksRatio'),
+        t('countryBrief.foodStocksWorld'),
+      ]) {
+        headRow.append(this.el('th', '', label));
+      }
+      head.append(headRow);
+      const tbody = this.el('tbody', '');
+      for (const rec of rows) {
+        const tr = this.el('tr', '');
+        const worldRec = worldByCommodity.get(rec.commodity);
+        tr.append(
+          this.el('td', '', this.foodStockCommodityLabel(rec.commodity)),
+          this.el('td', '', rec.marketingYear || '—'),
+          this.el('td', '', this.formatStocksToUse(rec.stocksToUse, rec)),
+          this.el('td', '', this.formatStocksToUse(worldRec?.stocksToUse, worldRec)),
+        );
+        tbody.append(tr);
+      }
+      table.append(head, tbody);
+      if (stillCurrent()) body.replaceChildren(table);
+    } catch (error) {
+      console.warn('[CountryDeepDivePanel] food stocks load failed', error);
+      // An aborted request is an expected panel-close/country-switch, not a fault.
+      const aborted = (error as { name?: string })?.name === 'AbortError' || this.signal.aborted;
+      if (!aborted) this.captureFoodStocksLoadFailure(error, code);
+      if (stillCurrent()) body.replaceChildren(this.makeEmpty(t('countryBrief.foodStocksUnavailable')));
+    }
+  }
+
+  private captureFoodStocksLoadFailure(error: unknown, countryCode: string): void {
+    // Mirrors captureResilienceWidgetLoadFailure. Without this a chunk-load
+    // failure and a real RPC error are both a silent console.warn — the same
+    // blind spot that hid a billing_verification_503 on a sibling resilience RPC
+    // (see the comment in src/services/resilience.ts).
+    enqueueSentryCall((Sentry) => {
+      Sentry.addBreadcrumb?.({
+        category: 'country-deep-dive',
+        level: 'warning',
+        message: 'Food stocks load failed',
+        data: { countryCode },
+      });
+      Sentry.captureException?.(error instanceof Error ? error : new Error(String(error)), {
+        tags: { surface: 'country-deep-dive', widget: 'food-stocks' },
+        extra: { countryCode },
+      });
+    });
+  }
+
+  private formatStocksToUse(
+    ratio: number | undefined,
+    rec?: { source?: string; endingStocksTmt?: number; totalUseTmt?: number; hasStocksToUse?: boolean },
+  ): string {
+    // Presence first. Everything below is a heuristic over a coerced zero; this
+    // is the server telling us outright whether the number is a measurement.
+    // USDA estimates ending stocks only for selected countries, so a minor
+    // producer with real production and consumption but no stocks series used
+    // to render a confident "0.0%" here — the most alarming value the card can
+    // show, from data that was never measured.
+    if (rec?.hasStocksToUse === false) return '—';
+    if (rec?.source === 'faostat') return '—';
+    if (ratio == null || !Number.isFinite(ratio) || ratio < 0) return '—';
+    if (ratio === 0 && !(Number(rec?.totalUseTmt) > 0)) return '—';
+    return `${(ratio * 100).toFixed(1)}%`;
+  }
+
+  private foodStockCommodityLabel(slug: string): string {
+    const key = `countryBrief.commodities.${slug}`;
+    const translated = t(key);
+    return translated === key ? slug : translated;
   }
 
   private destroyResilienceWidget(): void {
