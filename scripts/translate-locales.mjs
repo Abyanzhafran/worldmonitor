@@ -30,13 +30,14 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Anthropic } from '@anthropic-ai/sdk';
 
-export const LOCALES = ['ar', 'bg', 'cs', 'de', 'el', 'es', 'fa', 'fr', 'hi', 'hr', 'hu', 'it', 'ja', 'ko', 'nl', 'pl', 'pt', 'ro', 'ru', 'sv', 'sw', 'th', 'tr', 'uk', 'vi', 'zh'];
+export const LOCALES = ['ar', 'bg', 'cs', 'de', 'el', 'es', 'fa', 'fr', 'hi', 'hr', 'hu', 'it', 'ja', 'ko', 'nl', 'pl', 'pt', 'ro', 'ru', 'sv', 'sw', 'th', 'tr', 'uk', 'vi', 'zh', 'zh-TW'];
 const LANG_NAMES = {
   ar: 'Arabic', bg: 'Bulgarian', cs: 'Czech', de: 'German', el: 'Greek',
   es: 'Spanish', fa: 'Persian (Farsi)', fr: 'French', hi: 'Hindi', hr: 'Croatian', hu: 'Hungarian', it: 'Italian', ja: 'Japanese',
   ko: 'Korean', nl: 'Dutch', pl: 'Polish', pt: 'Portuguese (Brazil)',
   ro: 'Romanian', ru: 'Russian', sv: 'Swedish', th: 'Thai', tr: 'Turkish',
   sw: 'Swahili (Kiswahili)', uk: 'Ukrainian', vi: 'Vietnamese', zh: 'Simplified Chinese',
+  'zh-TW': 'Traditional Chinese (Taiwan)',
 };
 const BATCH_SIZE = 50;
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -157,7 +158,7 @@ CRITICAL RULES:
 4. Preserve format (sentence case vs ALL CAPS) — section titles like "BREAKING & CONFIRMED" stay ALL CAPS in the target language too.
 5. Output is tab-separated: one line per input, format: <key><TAB><translation>. NOTHING ELSE — no commentary, no quotes, no markdown.
 6. Translate naturally for a software UI: concise, idiomatic, no over-formal phrasing.
-7. For Arabic, use modern standard Arabic (MSA). For Chinese, use Simplified Chinese.
+7. For Arabic, use modern standard Arabic (MSA). For Chinese, follow the target language named above exactly: Simplified characters and Mainland vocabulary for Simplified Chinese, Traditional characters and Taiwan vocabulary for Traditional Chinese (Taiwan). Never convert between the two scripts.
 8. i18next plural variants: keys ending in _zero, _one, _two, _few, _many, or _other are CLDR plural forms of the same noun. Inflect the noun's morphology to match the CLDR plural category named by the suffix for the target locale, following the standard CLDR plural rules for that language (which include teen-case exceptions — do NOT use simplified "2-4" / "5+" rules of thumb; follow CLDR exactly). Safe per-suffix semantics that always hold: _one = singular form; _two = dual form (Arabic and a few others); _zero = the zero-count form (Arabic). Keep {{count}} in the translation even when the morphology itself encodes the count (i18next convention).
 9. This is an OSINT / geopolitics / markets dashboard. The strings are labels torn out of that context, so the everyday reading of a word is usually the wrong one. Translate these terms in the sense given here:
 ${DOMAIN_GLOSSARY}

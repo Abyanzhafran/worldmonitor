@@ -18,7 +18,10 @@ function decodeInlineString(value) {
 
 function parseOfflineTable(source) {
   const table = {};
-  const rowPattern = /^\s{8}([a-z]{2}): \{ title: "((?:\\\\.|[^"\\\\])*)", msg: "((?:\\\\.|[^"\\\\])*)", retry: "((?:\\\\.|[^"\\\\])*)" \}(?:,)?$/gm;
+  // A code carrying a region subtag (zh-TW) is not a bare JS identifier, so the
+  // generator quotes it. Accept both `zh:` and `'zh-TW':` — matching only
+  // `[a-z]{2}` skips the quoted row and reports it as missing from the table.
+  const rowPattern = /^\s{8}'?([a-z]{2}(?:-[A-Za-z]{2,4})?)'?: \{ title: "((?:\\\\.|[^"\\\\])*)", msg: "((?:\\\\.|[^"\\\\])*)", retry: "((?:\\\\.|[^"\\\\])*)" \}(?:,)?$/gm;
   for (const match of source.matchAll(rowPattern)) {
     table[match[1]] = {
       title: decodeInlineString(match[2]),

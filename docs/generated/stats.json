@@ -52,9 +52,10 @@
     "tr",
     "uk",
     "vi",
-    "zh"
+    "zh",
+    "zh-TW"
   ],
-  "locales": 27,
+  "locales": 28,
   "workflows": [
     "analytics-collector-monitor.yml",
     "build-desktop.yml",
