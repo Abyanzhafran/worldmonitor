@@ -133,6 +133,41 @@ Three invariants now hold, and `tests/resilience-financial-system-exposure.test.
 2. The over-exposure leg floors at 35 — above the isolation floor, because an over-banked entrepôt still has working correspondent access that a severed state does not.
 3. Every segment boundary is continuous, including the new 80% floor knee (the PR #3407 Greptile P1 lesson: cliffs in piecewise-linear scorers destabilize rankings at band edges).
 
+**Diversity-conditioned premium (the Albania residue).** The table above is the RAW band; what the blend consumes is `normalizeDiversityConditionedBand`, which scales the premium **above the 75 low-integration boundary** by Component 4's own redundancy transform:
+
+```
+conditioned = min(band, 75) + max(0, band − 75) × normalizeHigherBetter(parentCount, 1, 10) / 100
+```
+
+The sweet spot's label is "healthy **diversified** financial system", but the raw band reads only the integration level. After the #6459 retune, 29 of the 77 premium-region countries on the 2026-08-12 production payload held that premium through ≤ 2 reporting parents — Bosnia took a 90 band on ONE parent; Albania took 91 on claims routed almost entirely through one Austrian and one Italian banking group, and out-scored Singapore and the United Kingdom on the full dimension. Moderate integration through two doors is a withdrawal channel (Thailand 1997; the 2011-2015 Greek-bank deleveraging in the western Balkans), not a cushion, and the construct's own Component 4 scores the same fact 11/100. Conditioning the premium on demonstrated parent breadth closes that gap with **no new constants or sources**: the scale is verbatim Component 4's, the same reuse discipline as the #6461 market-access proxy.
+
+Everything at or below 75 is untouched — the isolation floor, the over-exposure floor, and the deep over-exposure legs keep the exact #6459 shape, so all three invariants above survive unchanged. Additional conditioning invariants pinned by the same test file: parents ≥ 10 earns the full raw premium; parents ≤ 1, a non-finite count, or a BIS row whose `parentCount` failed to parse earns none — absence of diversity evidence is not diversity; the conditioned band is monotone in parents and remains continuous in claims at every segment boundary.
+
+**Known conservative edge.** `parentCount` counts only parents holding **more than** 1% of host GDP, so a country integrated through many sub-threshold parents forfeits a premium its true breadth might merit. The forfeit is bounded by the premium itself: ≤ 25 band points, and ≤ 7.5 dimension points **only while all four slots resolve**. `weightedBlend` renormalises the band's 0.30 onto the surviving weight, so the dimension cost grows as siblings drop — 8.8 points at coverage 0.85 (Component 4 absent), 11.5 at 0.65 (debt slot absent), 15 at 0.50. The worst arithmetically reachable case is ~14 band points: all 16 enumerated reporting parents sitting just under the counting threshold sums to ~16% of GDP — a raw band of 89 scored at the 75 floor. No production row currently has premium-region claims with `parentCount` 0, so this is a bound on the transform, not an observed effect. If a future BIS payload does produce one, the fix is a breadth measure over the full parent-share distribution (effective parent count or an HHI over `parents`), not a lower threshold.
+
+**Reproducing the concentration statistic.** The "29 of 77" figure above is the empirical justification for conditioning at all, so it must be re-derivable rather than taken on trust — BIS republishes quarterly and the ratio will move. Against a live payload:
+
+```bash
+# How many premium-region countries hold that premium through <= 2 parents?
+redis-cli GET 'economic:bis-lbs:v1' | jq '
+  (.data // .).countries
+  | to_entries
+  | map(select(.value.totalXborderPctGdp != null and .value.parentCount != null))
+  # Premium region = the band ROUNDS above 75, so raw band >= 75.5 — which the
+  # two legs reach at 5.4% and 40.59% of GDP. Using the unrounded 5%/40.9%
+  # crossings instead pulls in 2 countries whose band rounds to exactly 75 and
+  # earns no premium, which is what makes this read 79/31 rather than 77/29.
+  | map(select(.value.totalXborderPctGdp >= 5.4 and .value.totalXborderPctGdp <= 40.59))
+  | {premium_region: length,
+     concentrated: map(select(.value.parentCount <= 2)) | length,
+     single_parent: map(select(.value.parentCount <= 1)) | length}'
+# 2026-08-12: { "premium_region": 77, "concentrated": 29, "single_parent": 11 }
+```
+
+If `concentrated` ever falls near zero, the conditioning has stopped doing work and the construct is worth re-examining — not because the transform broke, but because the concentration it corrects for would have disappeared from the data.
+
+**What the conditioning does not fix.** A `parentCount` that fails to parse caps the premium here but also nulls the Component 4 slot, and `weightedBlend` renormalises the freed weight onto the surviving legs — which *raises* the score when those legs read high (Albania: 70 → 80). That inflation is a property of the blend and predates this change; the same measurement against the raw band is 75 → 86, so conditioning strictly reduces it (+10 against +11). Tracked as issue #6528; the scorer cannot close it, because a component slot has no way to hold weight the blend has already freed. What the scorer *can* do, and now does, is report the shortfall: when the level resolves but breadth does not, the band slot carries a reduced `certaintyCoverage`, so the published coverage says the band was a substituted floor rather than a redundancy-scaled reading.
+
 A negative or non-finite reading is upstream corruption, not isolation, and falls back to a neutral 50 rather than to the isolation floor — a parser regression must not read as a sanctions verdict.
 
 **Coverage**: ~200 jurisdictions; effectively complete for the manifest.

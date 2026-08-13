@@ -2,8 +2,10 @@
 // gates (issue #6459 Phase A).
 //
 // Every component value below is a VERBATIM reading of the three production
-// seed envelopes on 2026-08-11, pulled read-only from Upstash:
-//   economic:wb-external-debt:v1  (119 countries)
+// seed envelopes, pulled read-only from Upstash. All 57 pinned values were
+// diffed against the live payloads on 2026-08-12 and matched exactly:
+//   economic:wb-external-debt:v1  (119 countries; nonDrsCountryCodes from the
+//                                  v2 seeder, 72 codes as of 2026-08-12)
 //   economic:bis-lbs:v1           (200 countries)
 //   economic:fatf-listing:v1      (FATF plenary publication 2026-06-01)
 //
@@ -30,7 +32,12 @@
 
 import type { ResilienceSeedReader } from '../../server/worldmonitor/resilience/v1/_dimension-scorers.ts';
 
-export const FINSYS_FIXTURE_CAPTURED_AT = '2026-08-11';
+// Capture date for the whole file — quoted verbatim in calibration failure
+// messages, so it must describe every row, not just the newest. When adding a
+// row, re-diff the existing rows against production and bump this together
+// with them; a stamp that describes only some rows sends the next debugger to
+// the wrong payload.
+export const FINSYS_FIXTURE_CAPTURED_AT = '2026-08-12';
 
 export interface FinSysDebtEntry {
   value: number;
@@ -51,7 +58,9 @@ export const FINSYS_DEBT_FIXTURE: Readonly<Record<string, FinSysDebtEntry>> = {
   SY: { value: 2.69, year: 2022 },
   TD: { value: 0.14, year: 2024 },
   MU: { value: 62.83, year: 2024 },
-  // KP, CU, VE, LY, LU, SG, CH, US, MC, DE: no DRS row in production.
+  // AL added 2026-08-12 for the concentrated-integration matched pairs.
+  AL: { value: 4.07, year: 2024 },
+  // KP, CU, VE, LY, LU, SG, CH, US, MC, DE, GB: no DRS row in production.
 };
 
 /** World Bank country-catalog records classified as lendingType=LNX. */
@@ -78,6 +87,12 @@ export const FINSYS_BIS_FIXTURE: Readonly<Record<string, FinSysBisEntry>> = {
   DE: { totalXborderPctGdp: 34.94, parentCount: 9 },
   TD: { totalXborderPctGdp: 1.11, parentCount: 0 },
   MU: { totalXborderPctGdp: 69.33, parentCount: 5 },
+  // AL / GB added 2026-08-12 (verbatim production readings) for the
+  // concentrated-integration matched pairs: Albania holds sweet-spot-level
+  // claims through 2 reporting parents (AT + IT dominate its parents map);
+  // the United Kingdom is the deep-hub contrast with 12.
+  AL: { totalXborderPctGdp: 17.6, parentCount: 2 },
+  GB: { totalXborderPctGdp: 64.2, parentCount: 12 },
   // KP, CU, SY, MC: no BIS CBS counterparty row in production.
 };
 
@@ -106,6 +121,14 @@ export interface FinSysFixtureOverrides {
   debt?: Record<string, FinSysDebtEntry>;
   bis?: Record<string, FinSysBisEntry>;
   fatf?: { listings: Record<string, 'black' | 'gray' | 'compliant'>; publicationDate: string };
+  /**
+   * Envelope-level BIS fields, as opposed to the per-country `bis` rows. The
+   * seeder publishes `successfulParents` against the `parentCountries` list it
+   * attempted; the scorer reads the ratio to tell a complete collection from a
+   * tolerated partial one (`MIN_SUCCESSFUL_PARENTS` lets 12 of 16 pass with only
+   * a warning). Pass `parentCountries` as the attempted COUNT.
+   */
+  bisEnvelope?: { successfulParents?: number; parentCountries?: number };
 }
 
 /**
@@ -126,7 +149,15 @@ export function createFinSysFixtureReader(
     countries: { ...FINSYS_DEBT_FIXTURE, ...(overrides.debt ?? {}) },
     nonDrsCountryCodes: FINSYS_NON_DRS_COUNTRY_CODES,
   };
-  const bis = { countries: { ...FINSYS_BIS_FIXTURE, ...(overrides.bis ?? {}) } };
+  // Default to a COMPLETE parent set (16 of 16, matching the seeder's
+  // PARENT_COUNTRIES) so the pinned calibration values describe a healthy
+  // collection; a test that wants the degraded case says so explicitly.
+  const attemptedParents = overrides.bisEnvelope?.parentCountries ?? 16;
+  const bis = {
+    countries: { ...FINSYS_BIS_FIXTURE, ...(overrides.bis ?? {}) },
+    parentCountries: Array.from({ length: attemptedParents }, (_, i) => `P${i}`),
+    successfulParents: overrides.bisEnvelope?.successfulParents ?? attemptedParents,
+  };
   const fatf = overrides.fatf ?? FINSYS_FATF_FIXTURE;
   return async (key: string) => {
     if (key.startsWith('seed-meta:')) return { status: 'ok', fetchedAt: nowMs };

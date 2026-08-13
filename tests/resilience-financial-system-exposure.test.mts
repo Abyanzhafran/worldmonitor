@@ -36,18 +36,82 @@ import {
   FIN_SYS_EXPOSURE_EMBARGO_POLICY_REVIEWED_ON,
   FIN_SYS_MARKET_ACCESS_LOW_CLAIMS_PCT_GDP_MAX,
   FIN_SYS_MARKET_ACCESS_LOW_DEBT_PCT_GNI_MAX,
+  FIN_SYS_BAND_WEIGHT,
+  FIN_SYS_DEBT_BEST_PCT_GNI,
+  FIN_SYS_DEBT_WORST_PCT_GNI,
+  FIN_SYS_FATF_WEIGHT,
+  FIN_SYS_REDUNDANCY_BEST_PARENTS,
+  FIN_SYS_REDUNDANCY_WEIGHT,
+  FIN_SYS_REDUNDANCY_WORST_PARENTS,
+  FIN_SYS_SHORT_TERM_DEBT_WEIGHT,
+  fatfStatusToScore,
   normalizeBandLowerBetter,
+  normalizeDiversityConditionedBand,
+  normalizeHigherBetter,
+  normalizeLowerBetter,
+  roundScore,
   scoreFinancialSystemExposure,
   ResilienceConfigurationError,
   type ResilienceSeedReader,
 } from '../server/worldmonitor/resilience/v1/_dimension-scorers.ts';
 import {
+  FINSYS_BIS_FIXTURE,
+  FINSYS_DEBT_FIXTURE,
   FINSYS_FIXTURE_CAPTURED_AT,
   FINSYS_NON_DRS_COUNTRY_CODES,
   createFinSysFixtureReader,
 } from './helpers/resilience-finsys-fixtures.mts';
 
 const TEST_ISO2 = 'XX';
+
+/**
+ * Albania's blend on a given band score, mirroring `weightedBlend`'s
+ * drop-and-renormalise semantics. Used only to measure the INHERITED
+ * inflation (the unconditioned band) as a baseline the conditioning is
+ * compared against — the conditioned side of that comparison always goes
+ * through the real `scoreFinancialSystemExposure`.
+ */
+function blendFinSys(band: number, parentCount: number | null): number {
+  // Every leg goes through the PRODUCTION transform at the PRODUCTION weight,
+  // imported rather than restated. The earlier version hand-rolled the debt
+  // normalization as `100 - value / 15 * 100` and the redundancy leg as
+  // `(parentCount - 1) / 9 * 100`, both unrounded — but production rounds each
+  // leg via `roundScore` before dividing by the surviving weight. Albania's debt
+  // leg is 73, not 72.8667, and that single point put the honest raw-band blend
+  // at 74.47 -> 74 where production lands on exactly 74.50 -> 75, which is how
+  // the inherited inflation came to be published as +12 when it is +11.
+  //
+  // Calling the real transforms is what makes that class of drift
+  // unrepresentable, rather than merely asserted against: there is no longer a
+  // second copy of the arithmetic to diverge. A guard proved insufficient here —
+  // reverting the rounding alone left the suite green, because Albania's
+  // CONDITIONED figures do not straddle a rounding boundary even though its
+  // raw-band figures do.
+  const debtNorm = normalizeLowerBetter(
+    FINSYS_DEBT_FIXTURE.AL.value,
+    FIN_SYS_DEBT_BEST_PCT_GNI,
+    FIN_SYS_DEBT_WORST_PCT_GNI,
+  );
+  const slots: Array<[number | null, number]> = [
+    [debtNorm, FIN_SYS_SHORT_TERM_DEBT_WEIGHT],
+    [band, FIN_SYS_BAND_WEIGHT],
+    [fatfStatusToScore('compliant'), FIN_SYS_FATF_WEIGHT],
+    [
+      parentCount == null
+        ? null
+        : normalizeHigherBetter(parentCount, FIN_SYS_REDUNDANCY_WORST_PARENTS, FIN_SYS_REDUNDANCY_BEST_PARENTS),
+      FIN_SYS_REDUNDANCY_WEIGHT,
+    ],
+  ];
+  let num = 0;
+  let den = 0;
+  for (const [score, weight] of slots) {
+    if (score == null) continue;
+    num += score * weight;
+    den += weight;
+  }
+  return Math.round(num / den);
+}
 const VALID_DEBT_CONTROL_COUNTRY = 'ZZ';
 const VALID_DEBT_SCHEMA_VERSION = 2;
 
@@ -531,6 +595,410 @@ describe('scoreFinancialSystemExposure — formula math', () => {
     for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
       assert.equal(normalizeBandLowerBetter(bad), 50, `malformed reading ${bad} must fall back to the neutral 50`);
     }
+  });
+
+  it('diversity conditioning: the premium above 75 is earned in proportion to parent breadth', () => {
+    // The Albania defect: 17.6% of GDP through TWO parents took the raw
+    // band's 91 — a "healthy diversified" premium with no diversity
+    // evidence — while the construct's own redundancy component scored the
+    // same fact 11/100. Tested against the exported function directly, for
+    // the same reason as the U-shape invariants above: through the blend a
+    // fixture that varies the band also moves the debt slot.
+
+    // Invariant 1: everything at or below the 75 boundary is untouched at
+    // EVERY parent count — both floors and the deep over-exposure legs are
+    // not this conditioning's business.
+    let belowBoundarySamples = 0;
+    for (const pct of [0, 1.45, 4.9, 43.67, 60, 80, 122, 1041.64]) {
+      const raw = normalizeBandLowerBetter(pct);
+      if (raw > 75) continue;
+      belowBoundarySamples++;
+      for (const parents of [null, 0, 1, 2, 5, 10, 14]) {
+        assert.equal(
+          normalizeDiversityConditionedBand(pct, parents),
+          raw,
+          `${pct}% (raw ${raw} ≤ 75) must be unchanged at parents=${parents}`,
+        );
+      }
+    }
+    // The `continue` above skips samples the band moved above 75. If a future
+    // retune lifted ALL of them, this invariant would pass while asserting
+    // nothing — the exact vacuity the #6459 lesson was about.
+    assert.ok(
+      belowBoundarySamples >= 4,
+      `only ${belowBoundarySamples} sampled readings landed at or below the boundary — `
+        + 're-anchor the sample set, this invariant is going vacuous',
+    );
+
+    // Invariant 2: full breadth (parents ≥ 10, the redundancy transform's
+    // best goalpost) earns the full raw premium everywhere.
+    for (const pct of [5, 10, 17.6, 25, 31.62, 40]) {
+      assert.equal(
+        normalizeDiversityConditionedBand(pct, 10),
+        normalizeBandLowerBetter(pct),
+        `${pct}% at 10 parents must equal the raw band`,
+      );
+    }
+
+    // Invariant 3: one parent or none — or a BIS row whose count failed to
+    // parse (null) — earns NO premium: the band caps at the 75 boundary.
+    // Absence of diversity evidence is not diversity.
+    for (const parents of [null, 0, 1]) {
+      for (const pct of [10, 17.6, 25, 31.62]) {
+        assert.equal(
+          normalizeDiversityConditionedBand(pct, parents),
+          75,
+          `${pct}% at parents=${parents} must cap at the 75 boundary`,
+        );
+      }
+    }
+
+    // Invariant 4: monotone in parents — more breadth never lowers the band.
+    for (const pct of [10, 17.6, 25]) {
+      let prev = -1;
+      for (let parents = 0; parents <= 14; parents++) {
+        const observed = normalizeDiversityConditionedBand(pct, parents);
+        assert.ok(
+          observed >= prev,
+          `${pct}% must be monotone in parents (parents=${parents}: ${observed} < ${prev})`,
+        );
+        prev = observed;
+      }
+    }
+
+    // Invariant 5: continuity in claims survives the conditioning — the #6459
+    // P1 cliff must not be reintroduced by the premium scaling.
+    //
+    // The named anchors sit at the ROUNDED band's real 75-crossings, 5.4%
+    // rising and 40.59% falling. The unrounded 5%/40.9% figures are the wrong
+    // probe points: the rounded band takes the SAME value on both sides of each
+    // of them, so a ±0.05 probe there compares a value to itself and cannot
+    // fail whatever the transform does. The parent count matters for the same
+    // reason — at parents ≤ 5 the premium is compressed hard enough that both
+    // samples still round together, so the probe only becomes discriminating
+    // once the premium term is live. `assert.notEqual` pins that: if a future
+    // retune flattens the crossing, this anchor fails loudly instead of
+    // quietly reverting to a self-comparison.
+    for (const boundary of [5.4, 40.59]) {
+      const below = normalizeDiversityConditionedBand(boundary - 0.05, 10);
+      const above = normalizeDiversityConditionedBand(boundary + 0.05, 10);
+      assert.ok(
+        Math.abs(above - below) <= 1,
+        `discontinuity at the ${boundary}% crossing (${below} → ${above})`,
+      );
+      assert.notEqual(
+        below,
+        above,
+        `the ${boundary}% anchor went flat (${below} on both sides) — it can no longer `
+          + 'detect a cliff; re-derive the crossing from the rounded band',
+      );
+    }
+    // The 25% peak is genuinely flat on both sides at every parent count (it is
+    // a maximum, not a crossing), so it is asserted as flat rather than as a
+    // discriminating probe.
+    for (const parents of [2, 5, 10]) {
+      assert.equal(
+        normalizeDiversityConditionedBand(25 - 0.05, parents),
+        normalizeDiversityConditionedBand(25 + 0.05, parents),
+        `parents=${parents}: the 25% peak must be flat, not a step`,
+      );
+    }
+
+    // Dense sweep, with a bound per region instead of one loose bound for all
+    // of them. The isolation leg legitimately climbs 9 points per 1% of GDP, so
+    // at 0.25% sampling it steps up to 3 — a uniform `<= 3` therefore constrains
+    // nothing in the premium region, where the true maximum is 1. Sweeping past
+    // 80% also carries it over the over-exposure floor knee, which the previous
+    // 70% ceiling never reached.
+    for (const parents of [null, 0, 1, 2, 5, 9, 10, 16]) {
+      let prev = normalizeDiversityConditionedBand(0, parents);
+      let maxStep = 0;
+      for (let pct = 0.25; pct <= 130; pct += 0.25) {
+        const observed = normalizeDiversityConditionedBand(pct, parents);
+        const step = Math.abs(observed - prev);
+        maxStep = Math.max(maxStep, step);
+        const bound = pct <= 5 ? 3 : 1;
+        assert.ok(
+          step <= bound,
+          `parents=${parents}: ${(observed - prev > 0 ? '+' : '')}${observed - prev}-point cliff `
+            + `between ${(pct - 0.25).toFixed(2)}% and ${pct.toFixed(2)}% (${prev} → ${observed}), `
+            + `bound ${bound}`,
+        );
+        prev = observed;
+      }
+      // Non-vacuity: a transform that returned a constant would sail through
+      // the step bound above.
+      assert.ok(maxStep > 0, `parents=${parents}: the band never moved across the sweep`);
+    }
+
+    // The concrete production anchor: Albania's exact reading. Raw band 91;
+    // at 2 parents the premium scales by 11% → 77.
+    assert.equal(normalizeBandLowerBetter(17.6), 91);
+    assert.equal(normalizeDiversityConditionedBand(17.6, 2), 77);
+  });
+
+  it('a non-finite parent count neutralises the premium instead of falling through NaN', () => {
+    // `normalizeHigherBetter` returns NaN for a non-finite count and
+    // `roundScore(NaN)` is 0 — which would drop a premium-region country
+    // BELOW the isolation floor (30) and re-invert the exact ranking this
+    // function exists to fix. The sibling band neutralises malformed input
+    // the same way rather than inventing a floor.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const observed = normalizeDiversityConditionedBand(17.6, bad);
+      assert.equal(
+        observed,
+        75,
+        `parentCount ${String(bad)} must cap at the premium floor, not fall through to ${observed}`,
+      );
+      assert.ok(
+        observed > FIN_SYS_BAND_ISOLATION_FLOOR,
+        `parentCount ${String(bad)} must never score below the isolation floor`,
+      );
+    }
+  });
+});
+
+describe('scoreFinancialSystemExposure — the blend consumes the CONDITIONED band', () => {
+  it('pins a country where conditioning moves the published score', async () => {
+    // Wiring guard. The unit invariants above test the transform in
+    // isolation, and the matched pairs catch a revert to the raw band — but
+    // only via Albania, whose two readings round to the same 70 under some
+    // mutations. Pin a country whose rounded dimension score DIFFERS between
+    // the raw and conditioned bands, so the call site is pinned in both
+    // directions rather than only against full reversion.
+    //
+    // US: claims 31.62% of GDP through 8 parents. Raw band 90; conditioned
+    // 75 + 15 x 0.78 = 87. That 3-point band difference survives the blend.
+    const reader = createFinSysFixtureReader();
+    const us = await scoreFinancialSystemExposure('US', reader);
+
+    assert.equal(normalizeBandLowerBetter(31.62), 90, 'raw band anchor');
+    assert.equal(normalizeDiversityConditionedBand(31.62, 8), 87, 'conditioned band anchor');
+    assert.equal(
+      us.score,
+      84,
+      'the US dimension score must reflect the conditioned band (87), not the raw band (90)',
+    );
+  });
+});
+
+describe('scoreFinancialSystemExposure — the band slot reports its own certainty', () => {
+  // Every other invariant in this file asserts on `.score`. These assert on
+  // `.coverage`, which is the field that says whether the published band was a
+  // redundancy-scaled READING or a floor substituted for absent evidence.
+  const AL_CLAIMS = FINSYS_BIS_FIXTURE.AL.totalXborderPctGdp;
+
+  it('withholding the premium for an absent parentCount reduces coverage, not just the score', async () => {
+    const honest = await scoreFinancialSystemExposure('AL', createFinSysFixtureReader());
+    const breadthAbsent = await scoreFinancialSystemExposure(
+      'AL',
+      createFinSysFixtureReader({
+        bis: { AL: { totalXborderPctGdp: AL_CLAIMS, parentCount: null as unknown as number } },
+      }),
+    );
+
+    // The band leg is still scored (the level resolved), so this is NOT the
+    // slot dropping out — it is the slot resolving half-observed.
+    assert.ok(
+      breadthAbsent.coverage < honest.coverage,
+      `absent breadth must lower coverage (honest ${honest.coverage}, absent ${breadthAbsent.coverage})`,
+    );
+    // Non-vacuity: the drop must exceed what Component 4 alone (0.15) explains,
+    // otherwise this passes on the pre-existing sibling drop and says nothing
+    // about the band slot's own certainty.
+    const componentFourOnly = honest.coverage - 0.15;
+    assert.ok(
+      breadthAbsent.coverage < componentFourOnly,
+      `coverage ${breadthAbsent.coverage} must fall below ${componentFourOnly.toFixed(2)} — the `
+        + 'band slot has to report its own reduced certainty, not merely inherit Component 4 dropping',
+    );
+  });
+
+  it('an OBSERVED parentCount of 0 is distinguished from an absent one', async () => {
+    // 0 means "no parent clears the 1%-of-GDP threshold" — an observation, not
+    // an absence. Both withhold the whole premium, so the BAND leg is identical:
+    assert.equal(normalizeDiversityConditionedBand(AL_CLAIMS, 0), 75);
+    assert.equal(normalizeDiversityConditionedBand(AL_CLAIMS, null), 75);
+
+    const observedZero = await scoreFinancialSystemExposure(
+      'AL',
+      createFinSysFixtureReader({ bis: { AL: { totalXborderPctGdp: AL_CLAIMS, parentCount: 0 } } }),
+    );
+    const breadthAbsent = await scoreFinancialSystemExposure(
+      'AL',
+      createFinSysFixtureReader({
+        bis: { AL: { totalXborderPctGdp: AL_CLAIMS, parentCount: null as unknown as number } },
+      }),
+    );
+
+    assert.ok(
+      observedZero.coverage > breadthAbsent.coverage,
+      `an observed 0 must report higher coverage than an absent count `
+        + `(observed ${observedZero.coverage}, absent ${breadthAbsent.coverage})`,
+    );
+
+    // ...and the uncomfortable half, pinned deliberately rather than left to be
+    // rediscovered: at the DIMENSION level the absent count scores HIGHER than
+    // the observed 0, because Component 4 scores an observed 0 as a real 0 that
+    // drags the blend down, while a null drops the slot and `weightedBlend`
+    // renormalises its 0.15 onto the high survivors. Measuring worse therefore
+    // scores worse than measuring nothing. That is issue #6528, not this
+    // conditioning — the band leg above is identical in both — and it is pinned
+    // here so a future blend fix shows up as this assertion flipping.
+    assert.ok(
+      breadthAbsent.score > observedZero.score,
+      'expected the #6528 renormalisation to favour the absent count '
+        + `(absent ${breadthAbsent.score}, observed-zero ${observedZero.score}) — if this flipped, `
+        + 'the blend was fixed: delete this assertion and close #6528',
+    );
+  });
+
+  it('an implausible parentCount reads as absent instead of as demonstrated breadth', async () => {
+    // A payload carrying an out-of-range or fractional count used to clamp to
+    // redundancy 100 and earn BOTH the full premium (0.30) and a perfect
+    // Component 4 (0.15) — 0.45 of the dimension bought by a corrupt field.
+    const honest = await scoreFinancialSystemExposure('AL', createFinSysFixtureReader());
+    const breadthAbsent = await scoreFinancialSystemExposure(
+      'AL',
+      createFinSysFixtureReader({
+        bis: { AL: { totalXborderPctGdp: AL_CLAIMS, parentCount: null as unknown as number } },
+      }),
+    );
+    // What a TRUSTED implausible count would have scored: an out-of-range count
+    // clamps the redundancy scale to its best goalpost, so the band takes its
+    // full raw premium AND Component 4 reads 100. This is the pre-fix behaviour,
+    // kept as the thing the fix has to beat.
+    const trustedBogus = blendFinSys(
+      normalizeBandLowerBetter(AL_CLAIMS),
+      FIN_SYS_REDUNDANCY_BEST_PARENTS,
+    );
+
+    for (const bogus of [500, -3, 2.5]) {
+      const corrupt = await scoreFinancialSystemExposure(
+        'AL',
+        createFinSysFixtureReader({
+          bis: { AL: { totalXborderPctGdp: AL_CLAIMS, parentCount: bogus } },
+        }),
+      );
+      assert.equal(
+        corrupt.score,
+        breadthAbsent.score,
+        `parentCount=${bogus} must score exactly like an absent count`,
+      );
+      assert.ok(
+        corrupt.score < trustedBogus,
+        `parentCount=${bogus} must score below the ${trustedBogus} a trusted bogus count would `
+          + `have earned (got ${corrupt.score})`,
+      );
+      assert.ok(
+        corrupt.coverage < honest.coverage,
+        `parentCount=${bogus} must lower coverage (${corrupt.coverage} vs ${honest.coverage})`,
+      );
+    }
+
+    // The residual, stated so nobody reads the above as "corruption now fails
+    // closed": the dimension score still rises above the honest reading, because
+    // the freed Component 4 weight renormalises onto the high survivors. This
+    // fix bounds the damage (the premium is no longer bought), it does not
+    // remove it — that is issue #6528.
+    assert.ok(
+      breadthAbsent.score > honest.score,
+      'residual #6528 inflation expected; if this flipped, the blend was fixed',
+    );
+  });
+
+  it('an incomplete BIS reporting-parent set lowers certainty on both BIS slots', async () => {
+    // seed-bis-lbs tolerates 12 of 16 parent fetches; a missing feed silently
+    // undercounts parentCount for every country. That now moves the 0.30 band
+    // slot as well as the 0.15 redundancy slot, so it must surface as reduced
+    // certainty rather than passing as an observation.
+    const complete = await scoreFinancialSystemExposure('AL', createFinSysFixtureReader());
+    const degraded = await scoreFinancialSystemExposure(
+      'AL',
+      createFinSysFixtureReader({ bisEnvelope: { successfulParents: 12, parentCountries: 16 } }),
+    );
+    assert.equal(degraded.score, complete.score, 'certainty is a coverage signal, not a score change');
+    assert.ok(
+      degraded.coverage < complete.coverage,
+      `a degraded parent set must lower coverage (complete ${complete.coverage}, degraded ${degraded.coverage})`,
+    );
+  });
+});
+
+describe('scoreFinancialSystemExposure — half-parsed BIS row (pre-existing blend inflation)', () => {
+  it('the conditioning must not widen the renormalisation inflation it inherited', async () => {
+    // A `parentCount` that fails to parse nulls the Component 4 slot, and
+    // `weightedBlend` renormalises its freed 0.15 onto the survivors. When the
+    // surviving legs read high, that RAISES the published score: Albania goes
+    // 70 -> 80 with its count unparseable. `readBisLbsCountry` requires a raw
+    // number, so a seeder publishing the count as a string is exactly this.
+    //
+    // This is a property of the blend and PREDATES the diversity conditioning
+    // — against the raw band the same measurement is 74 -> 86. The real fix is
+    // at the blend layer (issue #6528); conditioning cannot close it, because
+    // the band slot has no way to hold weight the blend has already freed.
+    //
+    // What this test pins is the part the conditioning DOES own: it must never
+    // make the inherited inflation worse. Coupling the two BIS slots so a
+    // half-parsed row resolves neither was tried and measured at 83 — worse,
+    // because it frees even more weight onto the high legs.
+    const real = FINSYS_BIS_FIXTURE.AL;
+    const honest = await scoreFinancialSystemExposure('AL', createFinSysFixtureReader());
+    const halfParsed = await scoreFinancialSystemExposure(
+      'AL',
+      createFinSysFixtureReader({
+        bis: { AL: { ...real, parentCount: String(real.parentCount) as unknown as number } },
+      }),
+    );
+
+    const conditionedInflation = halfParsed.score - honest.score;
+
+    // MIRROR FIDELITY. `blendFinSys` only means anything as a baseline if it
+    // reproduces production's arithmetic, and the way it silently stopped doing
+    // so was a missing `roundScore` on two legs — worth exactly one point, which
+    // was enough to publish "+12" for what is really +11. Feed the mirror the
+    // CONDITIONED band (the leg the live scorer actually consumes) and it must
+    // land on the real scorer's number, in both the honest and dropped states.
+    // If the weights, the debt transform, or the renormalisation drift apart
+    // again, this fails instead of the baseline quietly going wrong.
+    assert.equal(
+      blendFinSys(normalizeDiversityConditionedBand(real.totalXborderPctGdp, real.parentCount), real.parentCount),
+      honest.score,
+      'blendFinSys no longer reproduces the real scorer on the honest payload',
+    );
+    assert.equal(
+      blendFinSys(normalizeDiversityConditionedBand(real.totalXborderPctGdp, null), null),
+      halfParsed.score,
+      'blendFinSys no longer reproduces the real scorer on the half-parsed payload',
+    );
+
+    // The same country, same corruption, scored on the UNCONDITIONED band —
+    // the inflation this construct inherited rather than introduced.
+    const rawHonest = blendFinSys(normalizeBandLowerBetter(real.totalXborderPctGdp), real.parentCount);
+    const rawHalfParsed = blendFinSys(normalizeBandLowerBetter(real.totalXborderPctGdp), null);
+    const inheritedInflation = rawHalfParsed - rawHonest;
+
+    assert.ok(
+      conditionedInflation <= inheritedInflation,
+      `conditioning must not widen the inherited inflation `
+        + `(conditioned +${conditionedInflation} vs inherited +${inheritedInflation})`,
+    );
+    // Guard integrity, on the LIVE side. `inheritedInflation` comes entirely
+    // from the local mirror, so it keeps reporting a positive number even after
+    // the blend is fixed — it can only catch the mirror being neutered, never
+    // its own premise dying. This assertion reads the real scorer, so the day
+    // #6528 lands and `weightedBlend` stops inflating, this test goes RED and
+    // says so instead of passing vacuously.
+    assert.ok(
+      conditionedInflation > 0,
+      'the real blend no longer inflates on a half-parsed row — delete this test '
+        + 'and close #6528 rather than letting it pass vacuously',
+    );
+    assert.ok(
+      inheritedInflation > 0,
+      'mirror integrity: the unconditioned baseline stopped inflating, so the '
+        + 'fixture or the mirror no longer models the drop-and-renormalise path',
+    );
   });
 
   it('FATF empty listings dict (parser regression) does NOT default every country to compliant', async () => {
