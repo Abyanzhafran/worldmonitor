@@ -147,7 +147,7 @@ rejects every other host even if a workflow variable is misconfigured.
 | `ingestion-acceptance-production-watchdog` | Watchdog HMAC only; no Railway credential |
 | `ingestion-acceptance-production` | Mutation HMAC, `RAILWAY_RECONCILE_DEPLOY_TOKEN_V2`, and project ID |
 | `ingestion-acceptance-production-verification` | Verifier HMAC, `RAILWAY_RECONCILE_VIEWER_TOKEN`, project ID, and GitHub read evidence |
-| `ingestion-acceptance-production-breakglass` | Operator HMAC plus the same `RAILWAY_RECONCILE_VIEWER_TOKEN`; required reviewers gate the resolve job |
+| `ingestion-acceptance-production-breakglass` | Operator HMAC plus the same `RAILWAY_RECONCILE_VIEWER_TOKEN`; main-only secret boundary with no required reviewer |
 
 Both Railway tokens are distinct project tokens with identical capability; the
 names record intended use, not an enforced boundary. See the scope note below.
@@ -173,14 +173,14 @@ workflow contract tests, so treat any change to those guards as a change to a
 security boundary. Note also that `projectTokenCreate` rejects a CLI session
 with `Not Authorized`; both tokens must be created from the Railway dashboard.
 
-Breakglass approval is **one-person by deliberate choice.** The environment
-requires a reviewer, so `resolve` pauses until a human approves and GitHub
-records who did, but `prevent_self_review` is **off**: the operator who
-dispatches recovery may approve their own run. Turning it on with a single
-reviewer would deadlock the emergency path — the one person able to trigger
-recovery would be forbidden from approving it, exactly when it is needed. Real
-two-person control needs a second named reviewer added first; until then the
-`approver` workflow input stays an audit assertion, not a verified second party.
+Breakglass authorization is **one-person by deliberate choice.** The environment
+keeps its `main`-only branch policy and isolated secrets, but has no required
+reviewer. Requiring that same operator to review their own dispatch adds no
+independent authorization and sends one approval email for every recovery
+attempt. The `approver` workflow input records the delegated operator identity
+in the immutable controller audit and can equal the dispatch actor; it is not a
+verified second party. Real
+two-person control requires a second named operator and `prevent_self_review`.
 
 The protected resolver deliberately repeats the GitHub, convergence, and
 provider-inactivity reads after environment approval; the earlier proof is not
@@ -277,6 +277,13 @@ verified against that run's immutable manifest and exact incident head, while
 the protected resolution also records the separately revalidated current head.
 This separation keeps the convergence-acceptance route reachable after main
 moves, including when it must reset a full 64-run mutation lineage.
+
+The protected retry hold carries an immutable capability that is the only path
+that can replace a same-head Railway deployment in `FAILED`. Ordinary runs and
+watchdog-created recovery holds continue to report that failure without
+retrying it. A recovery still adopts any active same-head deployment, or a
+running same-head replacement newer than the failure, so the one-use controller
+hold cannot duplicate work that Railway already accepted.
 
 `retryEvidence` has exactly one of these forms. Its `evidenceId` must differ
 from the outer evidence ID:
