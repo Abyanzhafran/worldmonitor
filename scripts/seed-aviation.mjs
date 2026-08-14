@@ -262,6 +262,46 @@ const FAA_META = Object.fromEntries(
   AIRPORTS.filter(a => a.sources.includes('faa')).map(a => [a.iata, a]),
 );
 
+// Notification site fields. 0,0 is the FAA envelope placeholder, not a real
+// airport — omit it so proximity alerting never treats the Gulf of Guinea as
+// JFK. Alert rows carry location.{latitude,longitude}; registry rows carry lat/lon.
+export function airportNotifyLocation(row) {
+  if (!row || typeof row !== 'object') return {};
+  const city = typeof row.city === 'string' && row.city.trim() !== '' ? row.city : undefined;
+  const latRaw = row.lat ?? row.location?.latitude;
+  const lonRaw = row.lon ?? row.location?.longitude;
+  const lat = typeof latRaw === 'number' ? latRaw : Number(latRaw);
+  const lon = typeof lonRaw === 'number' ? lonRaw : Number(lonRaw);
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lon) && (lat !== 0 || lon !== 0);
+  return {
+    ...(city ? { city } : {}),
+    ...(hasCoords ? { lat, lon } : {}),
+  };
+}
+
+// One IATA/ICAO resolution for both closure publishers. Prefer the already-
+// found row (country lookup), then fill missing lat/lon from MONITORED_AIRPORTS
+// in src/config/airports.ts — the complete coord set, already parsed in this file.
+export function resolveAirportNotifyLocation({ iata, icao, row } = {}) {
+  const seeder = row
+    ?? AIRPORTS.find((a) => (iata && a.iata === iata) || (icao && a.icao === icao))
+    ?? null;
+  const fromSeeder = airportNotifyLocation(seeder);
+  if (fromSeeder.city && Number.isFinite(fromSeeder.lat) && Number.isFinite(fromSeeder.lon)) {
+    return fromSeeder;
+  }
+  const fill = loadMonitoredAirportsFromConfigFile().find((a) =>
+    (iata && a.iata === iata)
+    || (icao && a.icao === icao)
+    || (seeder && ((seeder.iata && a.iata === seeder.iata) || (seeder.icao && a.icao === seeder.icao))),
+  );
+  return airportNotifyLocation({
+    city: fromSeeder.city ?? fill?.city,
+    lat: fromSeeder.lat ?? fill?.lat,
+    lon: fromSeeder.lon ?? fill?.lon,
+  });
+}
+
 // Protobuf enum mappers (mirror ais-relay.cjs mappings; consumers parse strings)
 const REGION_MAP = {
   americas: 'AIRPORT_REGION_AMERICAS',
@@ -895,6 +935,7 @@ async function dispatchAviationNotifications(alerts) {
         title: `${a.iata}${a.city ? ` (${a.city})` : ''}: ${a.reason || 'Airport disruption'}`,
         source: 'AviationStack',
         ...(countryCode ? { countryCode } : {}),
+        ...resolveAirportNotifyLocation({ iata: a.iata, icao: a.icao, row: a }),
         // Coalesce by airport + severity band: repeated same-band disruptions
         // collapse, but a MAJOR->SEVERE escalation produces a distinct key — and
         // the prev-state diff above uses the SAME identity, so the escalation is
@@ -920,7 +961,8 @@ async function dispatchNotamNotifications(closedIcaos, reasons) {
     // NOTAM rows are keyed by ICAO; resolve country through the airport
     // registry so country-scoped rules can filter (#5359). Same miss-warn
     // rationale as dispatchAviationNotifications above.
-    const countryCode = countryNameToIso2(AIRPORTS.find(a => a.icao === icao)?.country);
+    const airport = AIRPORTS.find(a => a.icao === icao);
+    const countryCode = countryNameToIso2(airport?.country);
     if (!countryCode) console.warn(`[Notify] notam_closure ${icao}: no registry country normalized — publishing unattributed (invisible to country-scoped rules)`);
     await publishNotificationEvent({
       eventType: 'notam_closure',
@@ -929,6 +971,7 @@ async function dispatchNotamNotifications(closedIcaos, reasons) {
         source: 'ICAO NOTAM',
         coalesceKey: `notam:closure:${icao}`,
         ...(countryCode ? { countryCode } : {}),
+        ...resolveAirportNotifyLocation({ icao, row: airport }),
       },
       severity: 'high',
       variant: undefined,
