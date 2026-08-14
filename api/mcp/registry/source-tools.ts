@@ -1,0 +1,203 @@
+// U3 — `get_sources`: runtime discovery of what WorldMonitor actually covers.
+//
+// Two populations, deliberately NOT merged. They are keyed differently and
+// describe different things, and a joined list would be a fabricated one:
+//
+//   providers — shared/source-attribution-manifest.json, keyed by HOST
+//     ("acleddata.com"). Every upstream WorldMonitor fetches from: feeds,
+//     structured APIs, operational-status endpoints. Carries licensing and
+//     attribution obligations.
+//   outlets   — shared/source-tiers.json, keyed by DISPLAY NAME ("Reuters").
+//     Named news outlets carrying an editorial tier plus the propaganda-risk
+//     and source-type provenance the news tools attach to stories.
+//
+// Only 3 of 536 active provider records share a key with the outlet table, so
+// presenting one inventory would mean inventing attribution for the other 533.
+// Provenance honesty is the product's differentiator; faking the join here
+// would undercut the thing this tool exists to advertise.
+import sourceTiersData from '../../../shared/source-tiers.json';
+import attributionManifest from '../../../shared/source-attribution-manifest.json';
+import { getSourceProvenanceState } from '../../../shared/source-provenance';
+import { argNum, argStr, ciIncludes } from '../filters';
+import type { ToolDef } from '../types';
+
+const SOURCE_TIERS = sourceTiersData as Record<string, number>;
+
+interface ManifestEntry {
+  host: string;
+  provider?: string;
+  kind?: string;
+  status?: string;
+  license?: string;
+  observed?: boolean;
+}
+
+const MANIFEST_ENTRIES = (attributionManifest as { entries: ManifestEntry[] }).entries;
+const ACTIVE_PROVIDERS = MANIFEST_ENTRIES.filter((e) => e.status !== 'excluded');
+const EXCLUDED_COUNT = MANIFEST_ENTRIES.length - ACTIVE_PROVIDERS.length;
+
+const SOURCE_VIEWS = ['summary', 'providers', 'outlets'] as const;
+const DEFAULT_ROW_LIMIT = 50;
+const MAX_ROW_LIMIT = 200;
+
+function tally(values: Array<string | undefined>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const v of values) {
+    const key = v || 'unknown';
+    out[key] = (out[key] || 0) + 1;
+  }
+  return out;
+}
+
+// Exported for tests: the null-tier path is otherwise unobservable through
+// `get_sources`, because the outlets population IS the tier table's key set, so
+// every name it enumerates happens to carry a declared tier. A guard that can
+// only be exercised by a caller that cannot exist is a vacuous guard — this
+// export makes the undeclared-name branch directly testable.
+export function outletRecord(name: string) {
+  // SOURCE_TIERS is read directly rather than through getSourceTier(), which
+  // defaults an unknown name to tier 4. A defaulted number is indistinguishable
+  // from a declared one, and this tool's whole job is telling the caller what
+  // WorldMonitor actually knows versus what it is guessing.
+  const raw = SOURCE_TIERS[name];
+  const tier = typeof raw === 'number' ? raw : null;
+  return { name, tier, provenance: getSourceProvenanceState(name) };
+}
+
+export const SOURCE_TOOLS: ToolDef[] = [
+  {
+    name: 'get_sources',
+    _outputBudgetBytes: 65536,
+    description:
+      "WorldMonitor's live source inventory, for deciding whether and how far to trust what the other tools return. Two separate populations: `providers` are the upstream hosts data is fetched from (with licence and attribution status), and `outlets` are named news organisations carrying an editorial tier plus propaganda-risk and source-type provenance. They are keyed differently and are not merged — a provider is a host, an outlet is a masthead. Defaults to `summary` (counts only); pass a view to enumerate. Static registry read — no network, no cache, always current with the deployed build.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        view: {
+          type: 'string',
+          enum: [...SOURCE_VIEWS],
+          description: 'summary (default) returns counts only and is small. providers enumerates upstream hosts; outlets enumerates named news organisations with tier and provenance.',
+        },
+        kind: { type: 'string', description: 'providers view only: restrict to one kind — feed, structured, feed+structured, or operational-status.' },
+        tier: { type: 'integer', minimum: 1, maximum: 4, description: 'outlets view only: restrict to one editorial tier. 1 is a wire or primary outlet. Outlets with no declared tier are never returned by this filter, because their tier is unknown rather than 4.' },
+        risk: { type: 'string', enum: ['low', 'medium', 'high', 'unknown'], description: 'outlets view only: restrict to one declared propaganda-risk band.' },
+        query: { type: 'string', description: 'Case-insensitive substring match — against host and provider in the providers view, against outlet name in the outlets view. Applied before limit.' },
+        limit: { type: 'integer', minimum: 1, maximum: MAX_ROW_LIMIT, description: `Maximum rows in an enumerated view. Defaults to ${DEFAULT_ROW_LIMIT}, capped at ${MAX_ROW_LIMIT}. Ignored by the summary view. The full provider inventory does not fit one response, so a truncated result sets returned < matched.` },
+      },
+      required: [],
+    },
+    outputSchema: {
+      type: 'object',
+      required: ['view', 'summary'],
+      properties: {
+        view: { type: 'string', enum: [...SOURCE_VIEWS] },
+        summary: {
+          type: 'object',
+          description: 'Always present, in every view, so counts are available without a second call.',
+          required: ['providerCount', 'outletCount', 'excludedProviderCount'],
+          properties: {
+            providerCount: { type: 'number', description: 'Active upstream hosts. Excludes the excluded-status rows counted separately.' },
+            excludedProviderCount: { type: 'number', description: 'Manifest rows deliberately excluded from the provider count (local transports and development-only URLs). Reported rather than silently dropped.' },
+            outletCount: { type: 'number', description: 'Named news organisations carrying a declared editorial tier.' },
+            providersByKind: { type: 'object', description: 'Active provider counts keyed by kind.' },
+            providersByStatus: { type: 'object', description: 'Active provider counts keyed by attribution-review status.' },
+            outletsByTier: { type: 'object', description: 'Outlet counts keyed by declared tier.' },
+            outletsByRisk: { type: 'object', description: 'Outlet counts keyed by propaganda-risk band.' },
+          },
+        },
+        providers: {
+          type: 'array',
+          description: 'Present only in the providers view.',
+          items: {
+            type: 'object',
+            properties: {
+              host: { type: 'string' },
+              provider: { type: 'string' },
+              kind: { type: 'string' },
+              status: { type: 'string' },
+              license: { type: 'string' },
+            },
+          },
+        },
+        outlets: {
+          type: 'array',
+          description: 'Present only in the outlets view.',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              tier: { type: ['number', 'null'], description: 'Declared editorial tier, or null when WorldMonitor has not declared one. Never defaulted to a number.' },
+              provenance: { type: 'object', description: 'Same provenance shape the news tools attach to stories.' },
+            },
+          },
+        },
+        matched: { type: 'number', description: 'Rows matching the filters before the limit was applied. Present in enumerated views.' },
+        returned: { type: 'number', description: 'Rows actually returned. Less than matched means the limit truncated the result.' },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _execute: async (params) => {
+      const view = (argStr(params.view) || 'summary') as (typeof SOURCE_VIEWS)[number];
+      if (!SOURCE_VIEWS.includes(view)) {
+        return { view: 'summary', error: `view must be one of: ${SOURCE_VIEWS.join(', ')}` };
+      }
+
+      const outletNames = Object.keys(SOURCE_TIERS);
+      const summary = {
+        providerCount: ACTIVE_PROVIDERS.length,
+        excludedProviderCount: EXCLUDED_COUNT,
+        outletCount: outletNames.length,
+        providersByKind: tally(ACTIVE_PROVIDERS.map((e) => e.kind)),
+        providersByStatus: tally(ACTIVE_PROVIDERS.map((e) => e.status)),
+        outletsByTier: tally(outletNames.map((n) => String(SOURCE_TIERS[n]))),
+        outletsByRisk: tally(outletNames.map((n) => getSourceProvenanceState(n).risk)),
+      };
+
+      if (view === 'summary') return { view, summary };
+
+      const query = argStr(params.query);
+      const limit = Math.min(argNum(params.limit) ?? DEFAULT_ROW_LIMIT, MAX_ROW_LIMIT);
+
+      if (view === 'providers') {
+        const kind = argStr(params.kind);
+        const matches = ACTIVE_PROVIDERS.filter((e) => (
+          (!kind || argStr(e.kind) === kind)
+          && (!query || ciIncludes(e.host, query) || ciIncludes(e.provider, query))
+        ));
+        return {
+          view,
+          summary,
+          matched: matches.length,
+          returned: Math.min(matches.length, limit),
+          providers: matches.slice(0, limit).map((e) => ({
+            host: e.host,
+            provider: e.provider,
+            kind: e.kind,
+            status: e.status,
+            license: e.license,
+          })),
+        };
+      }
+
+      const tier = argNum(params.tier);
+      const risk = argStr(params.risk);
+      const matches = outletNames
+        .map(outletRecord)
+        .filter((o) => (
+          (tier === null || o.tier === tier)
+          && (!risk || o.provenance.risk === risk)
+          && (!query || ciIncludes(o.name, query))
+        ));
+      return {
+        view,
+        summary,
+        matched: matches.length,
+        returned: Math.min(matches.length, limit),
+        outlets: matches.slice(0, limit),
+      };
+    },
+    // Static registry read — no HTTP endpoint. Same shape as get_commodity_geo,
+    // which the RpcToolDef contract names as the valid empty-_apiPaths case.
+    _apiPaths: [],
+  },
+];

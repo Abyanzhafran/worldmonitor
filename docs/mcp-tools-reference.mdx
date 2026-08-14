@@ -2148,6 +2148,34 @@ curl -s https://worldmonitor.app/mcp \
 
 ## Meta
 
+### `get_sources`
+
+WorldMonitor's live source inventory — what the data is drawn from and how far to trust it. Reads the committed attribution manifest and source-tier registry, so it is always current with the deployed build; no network call, no cache.
+
+Two **separate** populations, deliberately not merged:
+
+- **`providers`** — upstream hosts data is fetched from, keyed by host (`acleddata.com`), carrying `kind` (feed / structured / feed+structured / operational-status), attribution-review `status`, and `license`.
+- **`outlets`** — named news organisations, keyed by masthead (`Reuters`), carrying an editorial `tier` and the same `provenance` block the news tools attach to stories (propaganda risk, source type, whether each was declared or reviewed, state affiliation).
+
+A provider is a host; an outlet is a masthead. Only 3 of 536 active provider records share a key with the outlet table, so a single merged list would mean inventing attribution for the other 533.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `view` | string (enum) | `summary` (default) returns counts only and is small. `providers` and `outlets` enumerate. |
+| `kind` | string | `providers` view only — restrict to one kind. |
+| `tier` | integer 1-4 | `outlets` view only — restrict to one editorial tier. Outlets with no declared tier are never returned by this filter. |
+| `risk` | string (enum) | `outlets` view only — `low` / `medium` / `high` / `unknown`. |
+| `query` | string | Case-insensitive substring: host and provider in the providers view, outlet name in the outlets view. Applied before `limit`. |
+| `limit` | integer | Rows in an enumerated view. Defaults to 50, capped at 200. Ignored by `summary`. |
+
+- **`tier: null` means undeclared, never "tier 4."** WorldMonitor's internal tier helper defaults unknown names to 4; this tool does not, so a caller can distinguish a declared low-tier outlet from one that was never rated.
+- **Excluded manifest rows are reported, not dropped.** `summary.excludedProviderCount` counts local transports and development-only URLs kept out of the provider count.
+- **Truncation is visible.** Enumerated views return `matched` alongside `returned`; the full provider inventory does not fit one response.
+- **API endpoints:** none — committed-registry read, no upstream call.
+- **Kind:** deterministic local compute. No LLM, no freshness budget.
+
+---
+
 ### `describe_tool`
 
 Returns the full uncompressed definition of any other tool by name. Use when the compressed `tools/list` entry is ambiguous about behaviour or argument semantics — since v1.5.0, `tools/list` returns each tool's `description` truncated to the first sentence (≤120 UTF-8 bytes); `describe_tool` returns the full long-form text plus the same `inputSchema` (every property's full description).

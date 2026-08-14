@@ -5,14 +5,15 @@ import { compressDescription, utf8ByteLength } from '../utils';
 import { CACHE_TOOLS } from './cache-tools';
 import { NLP_TOOLS } from './nlp-tools';
 import { RPC_TOOLS } from './rpc-tools';
+import { SOURCE_TOOLS } from './source-tools';
 
 // Merged tool registry — cache tools first (no `_execute`), then RPC tools
 // (with `_execute`), then the NLP utilities. Order is observable: `tools/list`
 // emits tools in this same order, and `describe_tool({tool_name: 'nonexistent'})`
 // returns the available-list sorted before responding. NLP_TOOLS is appended
 // last so extracting it from rpc-tools.ts left every other tool's position
-// unchanged.
-export const TOOL_REGISTRY: ToolDef[] = [...CACHE_TOOLS, ...RPC_TOOLS, ...NLP_TOOLS];
+// unchanged. SOURCE_TOOLS is appended after it for the same reason.
+export const TOOL_REGISTRY: ToolDef[] = [...CACHE_TOOLS, ...RPC_TOOLS, ...NLP_TOOLS, ...SOURCE_TOOLS];
 
 // Public shape for tools/list — strips internal _-prefixed fields, adds MCP
 // annotations, and injects the universal `summary` flag (issue #3678) into
