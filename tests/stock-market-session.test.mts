@@ -423,7 +423,12 @@ describe('headline session alignment', () => {
     assert.equal(alignUsEquityNewsTimestamp(0), null);
     assert.equal(alignUsEquityNewsTimestamp(Number.NaN), null);
     const raw = [{ title: 'X', source: 'Y', link: 'https://example.com', publishedAt: Date.parse('2026-08-14T16:00:00.000Z') }];
-    assert.deepEqual(alignStockHeadlines(raw, false), raw);
+    assert.deepEqual(alignStockHeadlines(raw, false), [{
+      ...raw[0],
+      marketSessionAtPublish: '',
+      alignedTradingDate: '',
+      alignmentRule: '',
+    }]);
     const aligned = alignStockHeadlines(raw, true);
     assert.equal(aligned[0]?.alignedTradingDate, '2026-08-14');
   });
