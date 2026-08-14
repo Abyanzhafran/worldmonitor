@@ -21,8 +21,8 @@ World Monitor is a real-time global intelligence dashboard: 500+ news feeds, 56 
 
 ## Authentication
 
-- **Anonymous** works for discovery endpoints, `tools/list`, and public data (world brief, product catalog, story pages).
-- **API key:** header `X-WorldMonitor-Key: wm_<40-hex>` for REST and MCP data calls — issue one at https://worldmonitor.app/pro. Full agent walkthrough: https://worldmonitor.app/auth.md
+- **Anonymous** works for discovery endpoints, `tools/list`, and public data (world brief, product catalog, story pages). For MCP data tools, `get_sources` is the sole credential-free, daily-quota-free exception and has a separate fail-closed limit of 10 anonymous calls/minute/IP.
+- **API key:** header `X-WorldMonitor-Key: wm_<40-hex>` for subscription-gated REST and MCP data calls — issue one at https://worldmonitor.app/pro. All MCP data tools other than `get_sources` require subscription access. Full agent walkthrough: https://worldmonitor.app/auth.md
 - **OAuth2** for MCP (`scope=mcp`), with dynamic client registration at `/oauth/register`. Details in auth.md.
 
 ## Crawl & content-usage policy

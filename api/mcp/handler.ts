@@ -7,6 +7,7 @@ import {
   PRODUCTION_DEPS,
   resolveAuthContext,
   runContextPreChecks,
+  validateProMcpAuthorization,
   wwwAuthHeader,
 } from './auth';
 import {
@@ -667,13 +668,31 @@ async function mcpHandlerInner(
       // Credentials presented on a public method are still validated so a
       // present-but-invalid key surfaces a 401 instead of a silent anon
       // downgrade; a valid principal is attributed for telemetry + limits.
-      const auth = await resolveAuthContext(req, deps, resourceMetadataUrl, corsHeaders);
+      const auth = await resolveAuthContext(req, deps, resourceMetadataUrl, corsHeaders, id);
       if (!auth.ok) {
         usage.phase = 'auth';
         return auth.response;
       }
       context = auth.context;
       setUsageContext(usage, context);
+      // A bearer-derived Pro context is not authoritative revocation proof.
+      // Validate the durable grant before assigning the larger credentialed
+      // per-user bucket on any public method. Free tools and metadata methods
+      // remain entitlement- and daily-quota-exempt after this identity check.
+      if (context.kind === 'pro') {
+        const validation = await validateProMcpAuthorization(
+          context,
+          deps,
+          resourceMetadataUrl,
+          corsHeaders,
+          ctx,
+          id,
+        );
+        if (!validation.ok) {
+          usage.phase = 'precheck';
+          return validation.response;
+        }
+      }
       const limited = await applyPerMinuteLimit(context, corsHeaders);
       if (limited) {
         usage.phase = 'limit';
@@ -685,7 +704,7 @@ async function mcpHandlerInner(
       // is justified only by carrying no data. Metadata methods keep the
       // existing limiter unchanged.
       const anonLimited = isFreeTierToolCall
-        ? await applyFreeTierLimit(req, corsHeaders)
+        ? await applyFreeTierLimit(req, corsHeaders, id)
         : await applyAnonDiscoveryLimit(req, corsHeaders);
       if (anonLimited) {
         usage.phase = 'limit';
@@ -700,14 +719,14 @@ async function mcpHandlerInner(
       }
     }
   } else {
-    const auth = await resolveAuthContext(req, deps, resourceMetadataUrl, corsHeaders);
+    const auth = await resolveAuthContext(req, deps, resourceMetadataUrl, corsHeaders, id);
     if (!auth.ok) {
       usage.phase = 'auth';
       return auth.response;
     }
     context = auth.context;
     setUsageContext(usage, context);
-    const preCheck = await runContextPreChecks(context, deps, resourceMetadataUrl, corsHeaders, ctx);
+    const preCheck = await runContextPreChecks(context, deps, resourceMetadataUrl, corsHeaders, ctx, id);
     if (!preCheck.ok) {
       usage.phase = preCheck.response.headers.get('X-Billing-Verification') ? 'billing' : 'precheck';
       return preCheck.response;

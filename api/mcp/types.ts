@@ -283,13 +283,14 @@ export interface PublicToolShape {
   //     `ui.resourceUri` (current form) and the flat `ui/resourceUri`
   //     (deprecated legacy alias ext-apps normalizes) are emitted so hosts on
   //     either revision resolve the app shell.
-  //   - `worldmonitor/access` (U7 / R6), present on EVERY tool: `free` when the
-  //     tool is servable without credentials, `subscription` otherwise. A
+  //   - `worldmonitor/access` (U7 / R6), present ONLY when the tool is servable
+  //     without credentials, with value `free`. Omission means the tool is
+  //     subscription-gated; we do not repeat that default on every entry. A
   //     namespaced vendor key, so it cannot collide with a future spec field.
   _meta?: {
     ui?: { resourceUri: string };
     'ui/resourceUri'?: string;
-    'worldmonitor/access'?: 'free' | 'subscription';
+    'worldmonitor/access'?: 'free';
   };
 }
 
@@ -328,7 +329,13 @@ export type QuotaRejected =
 // ---------------------------------------------------------------------------
 export interface McpHandlerDeps {
   resolveBearerToContext: (token: string) => Promise<McpAuthContext | null>;
-  validateProMcpToken: (tokenId: string) => Promise<{ userId: string } | null>;
+  validateProMcpToken: (tokenId: string) => Promise<
+    | { userId: string }
+    | { ok: 'valid'; userId: string }
+    | { ok: 'revoked' }
+    | { ok: 'transient' }
+    | null
+  >;
   getEntitlements: (userId: string) => Promise<{
     planKey?: string;
     features: {

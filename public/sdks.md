@@ -22,6 +22,7 @@ All four clients expose the same surface with language-native naming:
 - **Any MCP tool** via `call_tool` / `CallTool` with named arguments; the result is the unwrapped JSON-RPC `result`.
 - **Curated helpers** for the highest-traffic tools: world brief, country brief/risk, markets, conflicts, cyber, news, disasters, sanctions, forecasts, maritime.
 - **Public listings** — `list_tools`, `list_prompts`, `list_resources` — need no key.
+- **Free source inventory** — `get_sources` is the sole credential-free, daily-quota-free data tool. Its anonymous path has a separate fail-closed ceiling of 10 calls/minute/IP; all other data tools are subscription-gated.
 - **REST escape hatch** — `get("/api/…")` and `health()` against `https://api.worldmonitor.app`.
 - **Configuration** via constructor arguments or the `WORLDMONITOR_API_KEY` (alias `WM_API_KEY`), `WORLDMONITOR_BASE_URL`, and `WORLDMONITOR_MCP_URL` environment variables.
 - Every tool accepts an optional `jmespath` argument for [server-side projection](https://www.worldmonitor.app/docs/mcp-jmespath) — typically an 80–95% response-size cut.

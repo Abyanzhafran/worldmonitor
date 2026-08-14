@@ -853,7 +853,7 @@ Classify a supplied news headline or short text into a threat category and sever
 
 - **API endpoint:** `GET /api/intelligence/v1/classify-event`
 - **Kind:** bounded canonical-route proxy over an LLM classifier. This op was previously parity-excluded as `llm-passthrough`; the 24h per-title cache absorbs repeats and the classifier is capped at 50 output tokens.
-- **Quota:** standard — every call consumes the MCP daily reservation for OAuth (Pro) and dashboard-key contexts (50/UTC day). Environment API-key (`wm_…`) callers are not subject to that daily reservation; they remain bounded by the 60 requests/minute/key limiter, as with every other MCP tool.
+- **Quota:** standard — every call consumes the MCP daily reservation for OAuth and dashboard-issued `wm_…` key contexts (50/UTC day by default). Only legacy operator keys explicitly allowlisted by the deployment skip that daily reservation; every authenticated context remains bounded by the 60 requests/minute limiter.
 
 <CodeGroup>
 

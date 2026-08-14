@@ -2,8 +2,10 @@
 
 How agents authenticate with the WorldMonitor API and MCP server
 (`https://worldmonitor.app/mcp`), per the WorkOS **auth.md** spec:
-<https://workos.com/auth-md>. Discovery is open; data calls need a bearer token
-or API key.
+<https://workos.com/auth-md>. Discovery is open. `get_sources` is the sole
+credential-free, daily-quota-free MCP data tool; its anonymous path has a
+separate fail-closed ceiling of 10 calls/minute/IP. All other MCP data tools
+need a subscription bearer token or API key.
 
 **Before anything else — send a descriptive `User-Agent`** (e.g.
 `mytool/1.0 (+https://yoursite.example)`). Default HTTP-library UAs (`curl/*`,
@@ -16,7 +18,8 @@ endpoint is missing or your credentials are wrong.
 Learn the auth requirements from one unauthenticated request, then follow the
 chain:
 
-1. Call any data method without credentials; read the `WWW-Authenticate` header:
+1. Call any subscription-gated data method without credentials; read the
+   `WWW-Authenticate` header. (`get_sources` succeeds anonymously instead.)
 
    ```
    401 Unauthorized
@@ -89,7 +92,8 @@ API keys the claim is implicit — the key belongs to its dashboard creator.
 
 ## Use the credential
 
-Exchange the code for a bearer token, then send it on every request:
+Exchange the code for a bearer token, then send it on every subscription-gated
+request:
 
 ```
 POST /oauth/token  grant_type=authorization_code&code=…&code_verifier=…&client_id=…

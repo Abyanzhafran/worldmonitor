@@ -13,9 +13,14 @@ import assert from 'node:assert/strict';
 
 import { SOURCE_TOOLS, outletRecord } from '../api/mcp/registry/source-tools.ts';
 import { TOOL_REGISTRY } from '../api/mcp/registry/index.ts';
+import { validate } from './helpers/json-schema-mini.mjs';
 
 const tool = SOURCE_TOOLS.find((t) => t.name === 'get_sources');
 const run = (params = {}) => tool._execute(params, '', {}, undefined);
+const assertOutputSchema = (result) => {
+  const errors = validate(tool.outputSchema, result);
+  assert.deepEqual(errors, [], `response fails outputSchema:\n  ${errors.join('\n  ')}`);
+};
 
 describe('get_sources — registration', () => {
   it('is present in the merged tool registry', () => {
@@ -153,13 +158,46 @@ describe('get_sources — outlets view', () => {
 });
 
 describe('get_sources — input handling', () => {
-  it('rejects an unknown view rather than silently defaulting', async () => {
+  it('rejects an unknown view with a schema-valid error envelope', async () => {
     const result = await run({ view: 'nonsense' });
     assert.ok(result.error, 'an unknown view must be an explicit error');
+    assertOutputSchema(result);
   });
 
-  it('caps limit at the declared maximum', async () => {
+  it('rejects negative, zero, and fractional limits without bypassing the row cap', async () => {
+    for (const view of ['providers', 'outlets']) {
+      for (const limit of [-1, 0, 1.5]) {
+        const result = await run({ view, limit });
+        assert.match(result.error, /limit must be an integer of at least 1/i);
+        assert.equal(result[view], undefined, `invalid ${view} limit ${limit} must not return uncapped rows`);
+        assertOutputSchema(result);
+      }
+    }
+  });
+
+  it('honors the valid lower and upper limit edges and reports the actual row count', async () => {
+    for (const view of ['providers', 'outlets']) {
+      for (const limit of [1, 200]) {
+        const result = await run({ view, limit });
+        const rows = result[view];
+        assert.equal(rows.length, Math.min(limit, result.matched));
+        assert.equal(result.returned, rows.length);
+        assertOutputSchema(result);
+      }
+    }
+  });
+
+  it('accepts the official CLI numeric-string limit form', async () => {
+    const result = await run({ view: 'providers', limit: '5' });
+    assert.equal(result.providers.length, 5);
+    assert.equal(result.returned, 5);
+    assertOutputSchema(result);
+  });
+
+  it('caps oversized integer limits at the declared maximum and reports the actual row count', async () => {
     const result = await run({ view: 'providers', limit: 9999 });
-    assert.ok(result.returned <= 200, 'limit must be capped, not honoured verbatim');
+    assert.equal(result.providers.length, 200, 'limit must be capped, not honoured verbatim');
+    assert.equal(result.returned, result.providers.length);
+    assertOutputSchema(result);
   });
 });

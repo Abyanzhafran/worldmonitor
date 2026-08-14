@@ -40,6 +40,21 @@ const SOURCE_VIEWS = ['summary', 'providers', 'outlets'] as const;
 const DEFAULT_ROW_LIMIT = 50;
 const MAX_ROW_LIMIT = 200;
 
+function resolveRowLimit(value: unknown): { limit: number } | { error: string } {
+  if (value === undefined) return { limit: DEFAULT_ROW_LIMIT };
+  // The MCP schema carries integers, while the official CLI's generic
+  // `--key value` path carries values as strings. Accept only the canonical
+  // positive-integer string form so `--limit 5` works without widening the
+  // contract to decimals, exponents, or whitespace-only values.
+  const parsed = typeof value === 'string' && /^\d+$/.test(value.trim())
+    ? Number(value.trim())
+    : value;
+  if (typeof parsed !== 'number' || !Number.isSafeInteger(parsed) || parsed < 1) {
+    return { error: 'limit must be an integer of at least 1' };
+  }
+  return { limit: Math.min(parsed, MAX_ROW_LIMIT) };
+}
+
 function tally(values: Array<string | undefined>): Record<string, number> {
   const out: Record<string, number> = {};
   for (const v of values) {
@@ -144,15 +159,12 @@ export const SOURCE_TOOLS: ToolDef[] = [
         },
         matched: { type: 'number', description: 'Rows matching the filters before the limit was applied. Present in enumerated views.' },
         returned: { type: 'number', description: 'Rows actually returned. Less than matched means the limit truncated the result.' },
+        error: { type: 'string', description: 'Present when input validation fails. Required summary counts remain available.' },
       },
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _execute: async (params) => {
       const view = (argStr(params.view) || 'summary') as (typeof SOURCE_VIEWS)[number];
-      if (!SOURCE_VIEWS.includes(view)) {
-        return { view: 'summary', error: `view must be one of: ${SOURCE_VIEWS.join(', ')}` };
-      }
-
       const outletNames = Object.keys(SOURCE_TIERS);
       const summary = {
         providerCount: ACTIVE_PROVIDERS.length,
@@ -164,10 +176,16 @@ export const SOURCE_TOOLS: ToolDef[] = [
         outletsByRisk: tally(outletNames.map((n) => getSourceProvenanceState(n).risk)),
       };
 
+      if (!SOURCE_VIEWS.includes(view)) {
+        return { view: 'summary', summary, error: `view must be one of: ${SOURCE_VIEWS.join(', ')}` };
+      }
+
       if (view === 'summary') return { view, summary };
 
       const query = argStr(params.query);
-      const limit = Math.min(argNum(params.limit) ?? DEFAULT_ROW_LIMIT, MAX_ROW_LIMIT);
+      const resolvedLimit = resolveRowLimit(params.limit);
+      if ('error' in resolvedLimit) return { view, summary, error: resolvedLimit.error };
+      const { limit } = resolvedLimit;
 
       if (view === 'providers') {
         const kind = argStr(params.kind);
@@ -175,18 +193,19 @@ export const SOURCE_TOOLS: ToolDef[] = [
           (!kind || argStr(e.kind) === kind)
           && (!query || ciIncludes(e.host, query) || ciIncludes(e.provider, query))
         ));
+        const providers = matches.slice(0, limit).map((e) => ({
+          host: e.host,
+          provider: e.provider,
+          kind: e.kind,
+          status: e.status,
+          license: e.license,
+        }));
         return {
           view,
           summary,
           matched: matches.length,
-          returned: Math.min(matches.length, limit),
-          providers: matches.slice(0, limit).map((e) => ({
-            host: e.host,
-            provider: e.provider,
-            kind: e.kind,
-            status: e.status,
-            license: e.license,
-          })),
+          returned: providers.length,
+          providers,
         };
       }
 
@@ -199,12 +218,13 @@ export const SOURCE_TOOLS: ToolDef[] = [
           && (!risk || o.provenance.risk === risk)
           && (!query || ciIncludes(o.name, query))
         ));
+      const outlets = matches.slice(0, limit);
       return {
         view,
         summary,
         matched: matches.length,
-        returned: Math.min(matches.length, limit),
-        outlets: matches.slice(0, limit),
+        returned: outlets.length,
+        outlets,
       };
     },
     // Static registry read — no HTTP endpoint. Same shape as get_commodity_geo,

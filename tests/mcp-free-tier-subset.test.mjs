@@ -15,14 +15,51 @@
 //     it whose fail-open is justified only by carrying no data.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { Ratelimit } from '@upstash/ratelimit';
 
 import { TOOL_REGISTRY, TOOL_LIST_RESPONSE } from '../api/mcp/registry/index.ts';
-import { buildAuthHeaders, applyFreeTierLimit } from '../api/mcp/auth.ts';
+import { buildAuthHeaders } from '../api/mcp/auth.ts';
 import { setUsageContext, createMcpUsage } from '../api/mcp/usage.ts';
 import { principalIdForLog } from '../api/mcp/telemetry.ts';
 import { dispatchToolsCall } from '../api/mcp/dispatch.ts';
+import { mcpHandler } from '../api/mcp/handler.ts';
 
 const freeTools = TOOL_REGISTRY.filter((t) => t._freeTier === true);
+const ORIGINAL_SLIDING_WINDOW = Ratelimit.slidingWindow;
+let limiterImportNonce = 0;
+
+async function withFreeTierLimiterStub({ success = true, throws = false, reason }, fn) {
+  const savedUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const savedToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const calls = [];
+  process.env.UPSTASH_REDIS_REST_URL = 'https://stub.upstash.invalid';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'stub-token';
+  Ratelimit.slidingWindow = (tokens, window) => () => ({
+    async limit(_ctx, key) {
+      calls.push({ key, tokens, window });
+      if (throws) throw new Error('upstash unreachable');
+      return {
+        success,
+        ...(reason === undefined ? {} : { reason }),
+        limit: tokens,
+        remaining: success ? tokens - 1 : 0,
+        reset: Date.now() + 60_000,
+        pending: Promise.resolve(),
+      };
+    },
+  });
+  try {
+    limiterImportNonce += 1;
+    const mod = await import(`../api/mcp/auth.ts?free-tier=${limiterImportNonce}-${Date.now()}`);
+    return await fn(mod, calls);
+  } finally {
+    Ratelimit.slidingWindow = ORIGINAL_SLIDING_WINDOW;
+    if (savedUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL;
+    else process.env.UPSTASH_REDIS_REST_URL = savedUrl;
+    if (savedToken === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    else process.env.UPSTASH_REDIS_REST_TOKEN = savedToken;
+  }
+}
 
 describe('free-tier roster', () => {
   it('is non-empty and declared on the registry entries themselves', () => {
@@ -102,6 +139,31 @@ describe('dispatch refuses a free principal on a gated tool', () => {
     assert.ok(!body.error, `get_sources must be servable to a free caller: ${JSON.stringify(body.error)}`);
   });
 
+  for (const context of [
+    { kind: 'pro', userId: 'user_pro', mcpTokenId: 'token_pro' },
+    { kind: 'user_key', userId: 'user_key_owner', apiKey: `wm_${'ab12'.repeat(10)}` },
+  ]) {
+    it(`does not reserve daily quota for a free-tier tool used by ${context.kind}`, async () => {
+      let quotaCalls = 0;
+      const res = await dispatchToolsCall(
+        new Request('https://worldmonitor.app/mcp', { method: 'POST' }),
+        context,
+        {
+          redisPipeline: async () => {
+            quotaCalls += 1;
+            throw new Error('free-tier tools must not reach daily quota');
+          },
+        },
+        { id: 71, params: { name: 'get_sources', arguments: {} } },
+        {},
+      );
+      const body = await res.json();
+      assert.equal(body.error, undefined, JSON.stringify(body.error));
+      assert.equal(body.id, 71);
+      assert.equal(quotaCalls, 0, 'free-tier tools are quota-exempt for credentialed callers too');
+    });
+  }
+
   it('refuses a gated tool even though the caller reached dispatch', async () => {
     // The handler only mints a `free` context after matching `_freeTier`, so
     // this state should be unreachable — which is exactly why it is guarded.
@@ -129,22 +191,153 @@ describe('free-tier ceiling fails closed', () => {
     headers: { 'x-forwarded-for': '203.0.113.7' },
   });
 
-  it('refuses when no limiter is configured, rather than serving unbounded free data', async () => {
+  it('allows a verified under-limit decision and uses the trusted per-IP key', async () => {
+    await withFreeTierLimiterStub({ success: true }, async (auth, calls) => {
+      const res = await auth.applyFreeTierLimit(req, {}, 71);
+      assert.equal(res, null);
+      assert.equal(calls.length, 1);
+      assert.deepEqual(calls[0], {
+        key: 'rl:mcp:free:ip:unknown',
+        tokens: 10,
+        window: '60 s',
+      });
+    });
+  });
+
+  it('fails closed when Cloudflare client identity arrives without transit proof', async () => {
+    const savedProof = process.env.CF_EDGE_PROOF_SECRET;
+    delete process.env.CF_EDGE_PROOF_SECRET;
+    const originalConsoleError = console.error;
+    const logLines = [];
+    console.error = (...args) => logLines.push(args.join(' '));
+    try {
+      await withFreeTierLimiterStub({ success: true }, async (auth, calls) => {
+        const request = () => new Request('https://worldmonitor.app/mcp', {
+          headers: {
+            'cf-connecting-ip': '203.0.113.9',
+            'x-real-ip': '104.16.0.1',
+          },
+        });
+        const res = await auth.applyFreeTierLimit(request(), {}, 76);
+        assert.equal(res?.status, 503);
+        assert.equal(res.headers.get('X-RateLimit-Mode'), 'degraded');
+        const body = await res.json();
+        assert.equal(body.id, 76);
+        assert.equal(body.error?.code, -32603);
+        assert.equal((await auth.applyFreeTierLimit(request(), {}, 77))?.status, 503);
+        assert.equal(calls.length, 0, 'a shared Cloudflare-PoP bucket must never be consumed');
+        assert.equal(
+          logLines.filter((line) => line.includes('mcpFreeTierRateLimit:edge-proof')).length,
+          1,
+          'caller-controlled proof failures must not amplify provider logs',
+        );
+      });
+    } finally {
+      console.error = originalConsoleError;
+      if (savedProof === undefined) delete process.env.CF_EDGE_PROOF_SECRET;
+      else process.env.CF_EDGE_PROOF_SECRET = savedProof;
+    }
+  });
+
+  it('uses the proven Cloudflare client IP when the edge proof matches', async () => {
+    const savedProof = process.env.CF_EDGE_PROOF_SECRET;
+    process.env.CF_EDGE_PROOF_SECRET = 'free-tier-edge-proof';
+    try {
+      await withFreeTierLimiterStub({ success: true }, async (auth, calls) => {
+        const res = await auth.applyFreeTierLimit(new Request('https://worldmonitor.app/mcp', {
+          headers: {
+            'cf-connecting-ip': '203.0.113.10',
+            'x-real-ip': '104.16.0.1',
+            'x-wm-edge-proof': 'free-tier-edge-proof',
+          },
+        }), {}, 77);
+        assert.equal(res, null);
+        assert.equal(calls[0]?.key, 'rl:mcp:free:ip:203.0.113.10');
+      });
+    } finally {
+      if (savedProof === undefined) delete process.env.CF_EDGE_PROOF_SECRET;
+      else process.env.CF_EDGE_PROOF_SECRET = savedProof;
+    }
+  });
+
+  it('returns a correlated degraded 503 when no limiter is configured', async () => {
     const url = process.env.UPSTASH_REDIS_REST_URL;
     const token = process.env.UPSTASH_REDIS_REST_TOKEN;
     delete process.env.UPSTASH_REDIS_REST_URL;
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
     try {
-      const res = await applyFreeTierLimit(req, {});
+      const res = await mcpHandler(new Request('https://worldmonitor.app/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '203.0.113.7' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 72,
+          method: 'tools/call',
+          params: { name: 'get_sources', arguments: {} },
+        }),
+      }));
       assert.ok(res, 'an unconfigured limiter must refuse, not return null');
-      assert.equal(res.status, 200, 'refusal rides the JSON-RPC envelope');
+      assert.equal(res.status, 503);
+      assert.equal(res.headers.get('X-RateLimit-Mode'), 'degraded');
+      assert.equal(res.headers.get('Retry-After'), '5');
       const body = await res.json();
-      assert.equal(body.error.code, -32029);
-      assert.match(body.error.message, /Free-tier rate limit/);
+      assert.equal(body.id, 72, 'limiter denials must preserve the request JSON-RPC id');
+      assert.equal(body.error.code, -32603);
+      assert.match(body.error.message, /temporarily unavailable/i);
     } finally {
       if (url) process.env.UPSTASH_REDIS_REST_URL = url;
       if (token) process.env.UPSTASH_REDIS_REST_TOKEN = token;
     }
+  });
+
+  it('returns a correlated 429 only for a real exhausted bucket', async () => {
+    await withFreeTierLimiterStub({ success: false }, async (auth, calls) => {
+      const res = await auth.applyFreeTierLimit(req, {}, 'free-limit-73');
+      assert.equal(res?.status, 429);
+      assert.equal(res.headers.get('X-RateLimit-Mode'), null);
+      assert.ok(Number(res.headers.get('Retry-After')) >= 1);
+      const body = await res.json();
+      assert.equal(body.id, 'free-limit-73');
+      assert.equal(body.error?.code, -32029);
+      assert.match(body.error?.message ?? '', /Free-tier rate limit/);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].tokens, 10);
+      assert.equal(calls[0].window, '60 s');
+    });
+  });
+
+  it('returns a correlated degraded 503 when the limiter throws', async () => {
+    await withFreeTierLimiterStub({ throws: true }, async (auth, calls) => {
+      const res = await auth.applyFreeTierLimit(req, {}, 74);
+      assert.equal(res?.status, 503);
+      assert.equal(res.headers.get('X-RateLimit-Mode'), 'degraded');
+      assert.equal(res.headers.get('Retry-After'), '5');
+      const body = await res.json();
+      assert.equal(body.id, 74);
+      assert.equal(body.error?.code, -32603);
+      assert.match(body.error?.message ?? '', /temporarily unavailable/i);
+      assert.equal(calls.length, 1);
+    });
+  });
+
+  it('returns a correlated degraded 503 when Upstash resolves a timeout', async () => {
+    await withFreeTierLimiterStub({ reason: 'timeout' }, async (auth, calls) => {
+      const res = await auth.applyFreeTierLimit(req, {}, 75);
+      assert.equal(res?.status, 503);
+      assert.equal(res.headers.get('X-RateLimit-Mode'), 'degraded');
+      assert.equal(res.headers.get('Retry-After'), '5');
+      const body = await res.json();
+      assert.equal(body.id, 75);
+      assert.equal(body.error?.code, -32603);
+      assert.match(body.error?.message ?? '', /temporarily unavailable/i);
+      assert.equal(calls.length, 1);
+    });
+  });
+
+  it('classifies a limiter outage separately from an exhausted bucket in usage telemetry', async () => {
+    const { mcpReasonFor } = await import('../api/mcp/usage.ts');
+    assert.equal(mcpReasonFor('limit', 429), 'rate_limit_429');
+    assert.equal(mcpReasonFor('limit', 503), 'rate_limit_degraded');
   });
 
   it('is a tighter budget than the 60/min discovery limiter it sits beside', async () => {
