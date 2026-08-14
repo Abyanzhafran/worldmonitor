@@ -273,13 +273,44 @@ describe('GdeltIntelPanel', () => {
 
     panel.destroy();
   });
+
+  /**
+   * `renderTopicSummary` is the one write #6678 deliberately did NOT migrate: it
+   * inserts a SIBLING before `this.content`, so the wiping helpers would destroy
+   * the articles it sits above. Staying off the helper costs the `_locked` bail,
+   * and `showLocked` only sweeps siblings once — at lock time — so a summary
+   * inserted afterwards would paint above the upgrade CTA. The panel honours the
+   * lock by hand instead; this pins that, because nothing else does.
+   */
+  it('does not show the topic summary over a locked panel', async () => {
+    const timeline = {
+      tone: [{ value: -2 }, { value: -1 }, { value: 0.5 }],
+      vol: [{ value: 10 }, { value: 20 }, { value: 30 }],
+    };
+    const panel = await newPanel();
+    const render = (panel as unknown as { renderTopicSummary(t: unknown): void });
+    const summary = () => internals(panel).element.querySelector<HTMLElement>('.gdelt-topic-summary');
+
+    // Non-vacuity: unlocked, this timeline really does paint a visible summary.
+    render.renderTopicSummary(timeline);
+    expect(summary()).not.toBeNull();
+    expect(summary()!.style.display).not.toBe('none');
+
+    (panel as unknown as { showLocked(f?: string[]): void }).showLocked(['Premium feature']);
+    expect(lockedCta(panel)).not.toBeNull();
+
+    // A refresh landing while locked must not paint a sparkline over the CTA.
+    render.renderTopicSummary(timeline);
+    expect(summary()?.style.display).toBe('none');
+
+    // ...and unlocking must not strand it hidden.
+    (panel as unknown as { unlockPanel(): void }).unlockPanel();
+    expect(summary()!.style.display).not.toBe('none');
+
+    panel.destroy();
+  });
 });
 
-/**
- * GivingPanel is the `setTrustedContent` case — it builds its own markup string
- * through `giving-renderer` rather than DOM nodes, so it is the only one of the
- * five that cannot use `setContentNodes`.
- */
 /**
  * The hazard #6678 CREATES, and the reason these two cases live here rather
  * than beside the success cases above.
@@ -319,9 +350,15 @@ describe('loading branches keep the backoff rung after the success migration', (
     return countdownText(panel);
   }
 
-  function driveLoading(panel: object): void {
+  /**
+   * `loadingSelector` is non-vacuity, not decoration: without it, DELETING the
+   * loading branch outright leaves both cases below green — the rung would
+   * survive a render that painted nothing at all, which is not the invariant.
+   */
+  function driveLoading(panel: object, loadingSelector: string): void {
     flags(panel).loading = true;
     (panel as unknown as { render(): void }).render();
+    expect(internals(panel).content.querySelector(loadingSelector)).not.toBeNull();
   }
 
   it('ServiceStatusPanel keeps the rung across its loading render', () => {
@@ -329,7 +366,7 @@ describe('loading branches keep the backoff rung after the success migration', (
     mount(panel);
 
     driveFirstFailure(panel);
-    driveLoading(panel);
+    driveLoading(panel, '.service-status-loading');
 
     // 30s, not 15s: the loading render must not have reset the backoff.
     expect(driveSecondFailure(panel)).toMatch(/\(30s\)/);
@@ -347,7 +384,7 @@ describe('loading branches keep the backoff rung after the success migration', (
     mount(panel);
 
     driveFirstFailure(panel);
-    driveLoading(panel);
+    driveLoading(panel, '.defense-patents-loading');
 
     expect(driveSecondFailure(panel)).toMatch(/\(30s\)/);
 
@@ -355,6 +392,11 @@ describe('loading branches keep the backoff rung after the success migration', (
   });
 });
 
+/**
+ * GivingPanel is the `setTrustedContent` case — it builds its own markup string
+ * through `giving-renderer` rather than DOM nodes, so it is the only one of the
+ * five that cannot use `setContentNodes`.
+ */
 describe('GivingPanel', () => {
   it('does not paint the summary over a locked panel', async () => {
     mockAvailableGivingTabs.mockReturnValue(['platforms']);

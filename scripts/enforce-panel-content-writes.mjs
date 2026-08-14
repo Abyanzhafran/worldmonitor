@@ -326,7 +326,8 @@ function main() {
 
   if (result.stale.length > 0) {
     problems.push(
-      'These recorded writes no longer match the tree. Update LEGACY_DIRECT_CONTENT_WRITES in scripts/enforce-panel-content-writes.mjs (lower the count, or delete the line) so the inventory keeps matching reality:',
+      'These recorded writes no longer match the tree. Update LEGACY_DIRECT_CONTENT_WRITES in scripts/enforce-panel-content-writes.mjs (lower the count, or delete the line) so the inventory keeps matching reality.',
+      'FIRST, though: if the write that vanished was a LOADING branch, check it did not move to setContentNodes — that clears through clearErrorState() and flattens the retry ladder to its 15s floor. tests/dom/panel-content-write-6678.test.mts and tests/dom/panel-error-latch-6577.test.mts red if it did. Routing a loading branch through the inherited showLoading() is fine and legitimately zeroes the entry.',
       ...result.stale.map((pair) => `  - ${pair}`),
     );
   }

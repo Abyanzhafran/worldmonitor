@@ -51,6 +51,7 @@ async function loadGivingPanel(): Promise<GivingPanelConstructor> {
             querySelectorAll() { return []; },
           };
           this.testState = { count: 0, destroyed: false, error: false };
+          this._locked = false;
         }
         showLoading() {}
         showError() {
@@ -65,9 +66,14 @@ async function loadGivingPanel(): Promise<GivingPanelConstructor> {
         // Mirrors Panel.setTrustedContent (#6678). GivingPanel's success render
         // now commits through this helper instead of calling setTrustedHtml on
         // this.content itself, so the clear is part of the WRITE — which is why
-        // the panel no longer calls clearErrorState() separately. Keep the two
-        // together here or the stub stops modelling the contract under test.
+        // the panel no longer calls clearErrorState() separately. Keep the bail,
+        // the clear and the write together, in that order, or the stub stops
+        // modelling the contract under test: the real helper returns on _locked
+        // BEFORE writing, and a stub that always writes would stay green on a
+        // build that paints donation data over the upgrade CTA.
+        // (No backticks in this comment -- it lives inside a template literal.)
         setTrustedContent(value) {
+          if (this._locked) return;
           this.clearErrorState();
           this.content.innerHTML = String(value);
         }
