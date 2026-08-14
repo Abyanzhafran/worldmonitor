@@ -30,6 +30,25 @@ export function calculateCentroid(coords) {
   return [sum[0] / coords.length, sum[1] / coords.length];
 }
 
+/**
+ * Map a normalized alert's GeoJSON-order centroid [lon, lat] onto the
+ * notification payload. Omits everything when the centroid is missing so
+ * consumers never see 0,0 from a no-geometry alert.
+ */
+export function weatherAlertNotifyLocation(alert) {
+  const centroid = alert?.centroid;
+  if (!Array.isArray(centroid) || centroid.length < 2) return {};
+  const lon = Number(centroid[0]);
+  const lat = Number(centroid[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return {};
+  const location = { lat, lon };
+  const ring = alert?.coordinates;
+  if (Array.isArray(ring) && ring.length >= 3) {
+    location.geometry = { type: 'Polygon', coordinates: [ring] };
+  }
+  return location;
+}
+
 // NWS severity vocabulary, most dangerous first. Anything outside this list —
 // including a literal 'Unknown' and an absent severity property — is ineligible.
 const SEVERITY_RANK = Object.freeze({ Extreme: 0, Severe: 1, Moderate: 2, Minor: 3 });

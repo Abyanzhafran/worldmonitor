@@ -49,6 +49,7 @@ const { maintainClosedMarketEquityKeys: maintainClosedMarketEquityKeysWithDeps }
 const { getUsEquitySession, isMultiMarketEquityTradingDay } = require('./shared/market-hours.cjs');
 const { mergeLastGoodQuotes, planYahooRefresh } = require('./shared/market-quote-refresh.cjs');
 const chinaCountryStockIndexHelpersPromise = import('./_country-stock-index.mjs');
+const weatherAlertSelectPromise = import('./_weather-alert-select.mjs');
 const parseProxyUrl = parseProxyConfig;
 
 const httpsKeepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 6, timeout: 60_000 });
@@ -4954,6 +4955,7 @@ async function seedWeatherAlerts() {
       distinctFamilyAlerts.push(a);
       if (distinctFamilyAlerts.length >= 3) break;
     }
+    const { weatherAlertNotifyLocation } = await weatherAlertSelectPromise;
     for (const a of distinctFamilyAlerts) {
       // Slot B: derive a coalesceKey from the NWS VTEC string (when present)
       // so adjacent-zone bulletins for the same logical event collapse to one
@@ -4967,6 +4969,7 @@ async function seedWeatherAlerts() {
           source: 'NWS',
           countryCode: 'US',
           ...(coalesceKey ? { coalesceKey } : {}),
+          ...weatherAlertNotifyLocation(a),
         },
         severity: a.severity === 'Extreme' ? 'critical' : 'high',
         variant: undefined,

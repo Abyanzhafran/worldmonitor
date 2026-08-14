@@ -11,6 +11,7 @@ import {
   requireAlertFeatures,
   selectAlerts,
   validateSelectedAlerts,
+  weatherAlertNotifyLocation,
 } from '../scripts/_weather-alert-select.mjs';
 
 const SEEDER_SOURCE = readFileSync(
@@ -179,5 +180,53 @@ describe('weather alert selection', () => {
 
   it('returns undefined centroid for an empty ring', () => {
     assert.equal(calculateCentroid([]), undefined);
+  });
+});
+
+const AIS_RELAY_SOURCE = readFileSync(
+  new URL('../scripts/ais-relay.cjs', import.meta.url),
+  'utf8',
+);
+
+describe('weather_alert notification location payload', () => {
+  it('maps a GeoJSON-order centroid onto lat/lon and carries the polygon', () => {
+    const [alert] = selectAlerts([feature('Severe', 1)]);
+    const location = weatherAlertNotifyLocation(alert);
+
+    assert.equal(location.lat, 40.4);
+    assert.equal(location.lon, -99.6);
+    assert.deepEqual(location.geometry, {
+      type: 'Polygon',
+      coordinates: [alert.coordinates],
+    });
+  });
+
+  it('omits lat/lon and geometry when the alert has no centroid', () => {
+    assert.deepEqual(
+      weatherAlertNotifyLocation({ coordinates: [], centroid: undefined }),
+      {},
+    );
+  });
+
+  it('omits geometry when only a centroid exists', () => {
+    assert.deepEqual(
+      weatherAlertNotifyLocation({ centroid: [-99.6, 40.4], coordinates: [] }),
+      { lat: 40.4, lon: -99.6 },
+    );
+  });
+
+  it('rejects a non-finite centroid so consumers never see 0,0 from missing geo', () => {
+    assert.deepEqual(
+      weatherAlertNotifyLocation({ centroid: [Number.NaN, 40], coordinates: POLYGON.coordinates[0] }),
+      {},
+    );
+  });
+
+  it('threads weatherAlertNotifyLocation into the weather_alert publish payload', () => {
+    assert.match(
+      AIS_RELAY_SOURCE,
+      /eventType:\s*'weather_alert'[\s\S]*?\.\.\.weatherAlertNotifyLocation\(/,
+      'ais-relay must spread weatherAlertNotifyLocation(...) into the weather_alert payload so the already-computed centroid is published',
+    );
   });
 });
