@@ -743,6 +743,9 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.comtradeBody.replaceChildren();
     if (!flows || flows.length === 0) {
       this.comtradeBody.append(this.makeEmpty('No data available'));
+      const emptyScope = this.el('p', 'cdp-comtrade-scope', 'UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.');
+      emptyScope.dataset.comtradeScope = 'national';
+      this.comtradeBody.append(emptyScope);
       return;
     }
     const table = this.el('table', 'cdp-pro-flow-table');
@@ -769,6 +772,9 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     }
     table.append(tbody);
     this.comtradeBody.append(table);
+    const scope = this.el('p', 'cdp-comtrade-scope', 'UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.');
+    scope.dataset.comtradeScope = 'national';
+    this.comtradeBody.append(scope);
   }
 
   public updateTariffTrends(data: { currentRate: number; trend: string; datapoints: Array<{ year: number; tariffRate: number }> } | null): void {

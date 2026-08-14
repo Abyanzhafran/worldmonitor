@@ -13,6 +13,7 @@ import {
   type ChinaLogisticsCorridorId,
 } from '../../shared/china-logistics-corridors';
 import { escapeHtml, sanitizeUrl, unsafeRawHtml } from '@/utils/sanitize';
+import { CHINA_COMTRADE_NATIONAL_CAPTION } from '../../shared/china-factory-clusters';
 
 const FAMILY_LABELS: Record<ChinaCorridorSignalFamily, string> = {
   port: 'Ports',
@@ -242,6 +243,9 @@ export class ChinaCorridorPanel extends Panel {
           </div>
           ${this.showRendererHint
             ? `<p class="china-corridor-renderer-hint" role="status">${escapeHtml(RENDERER_HINT)}</p>`
+            : ''}
+          ${this.selectedFamilies.has('trade')
+            ? `<p class="china-corridor-comtrade-scope" data-comtrade-scope="national">${escapeHtml(CHINA_COMTRADE_NATIONAL_CAPTION)}</p>`
             : ''}
           <div class="china-corridor-conditions">${conditions || '<p class="china-corridor-missing">Select at least one signal family.</p>'}</div>
         </section>

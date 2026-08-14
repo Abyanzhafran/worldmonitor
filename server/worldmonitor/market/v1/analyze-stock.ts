@@ -772,6 +772,75 @@ export function usEquityHoursApply(symbol: string, currency: string): boolean {
   return currency === 'USD' && !/\.[A-Za-z]+$/.test(symbol);
 }
 
+export type NewsAlignment = {
+  marketSessionAtPublish: UsEquitySession;
+  alignedTradingDate: string;
+  alignmentRule: string;
+};
+
+function nyCalendarDate(date: Date): string {
+  const parts: Record<string, string> = {};
+  for (const part of ET_PARTS_FMT.formatToParts(date)) parts[part.type] = part.value;
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function addUtcDays(isoDate: string, days: number): string {
+  const next = new Date(`${isoDate}T12:00:00.000Z`);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next.toISOString().slice(0, 10);
+}
+
+/** Next NYSE/Nasdaq regular session date after `fromDate` (YYYY-MM-DD). */
+export function nextUsEquityTradingDate(fromDate: string): string {
+  let candidate = fromDate;
+  for (let attempt = 0; attempt < 14; attempt += 1) {
+    candidate = addUtcDays(candidate, 1);
+    if (getUsEquitySessionAt(new Date(`${candidate}T16:00:00.000Z`)) === 'regular') return candidate;
+  }
+  return addUtcDays(fromDate, 1);
+}
+
+/**
+ * Map a headline timestamp onto the US equity session it belongs to.
+ * Bookkeeping only — not a claim that the article caused a later move.
+ */
+export function alignUsEquityNewsTimestamp(publishedAt: number): NewsAlignment | null {
+  if (!Number.isFinite(publishedAt) || publishedAt <= 0) return null;
+  const published = new Date(publishedAt);
+  if (Number.isNaN(published.getTime())) return null;
+  const localDate = nyCalendarDate(published);
+  const session = getUsEquitySessionAt(published);
+  if (session === 'post' || session === 'closed') {
+    return {
+      marketSessionAtPublish: session,
+      alignedTradingDate: nextUsEquityTradingDate(localDate),
+      alignmentRule: session === 'post' ? 'AFTER_HOURS_NEXT_TRADING_DAY' : 'NON_SESSION_NEXT_TRADING_DAY',
+    };
+  }
+  return {
+    marketSessionAtPublish: session,
+    alignedTradingDate: localDate,
+    alignmentRule: session === 'regular' ? 'REGULAR_SESSION_SAME_TRADING_DAY' : 'PREMARKET_SAME_TRADING_DAY',
+  };
+}
+
+export function alignStockHeadlines(
+  headlines: StockAnalysisHeadline[],
+  applyUsHours: boolean,
+): StockAnalysisHeadline[] {
+  if (!applyUsHours) return headlines;
+  return headlines.map((headline) => {
+    const alignment = alignUsEquityNewsTimestamp(headline.publishedAt);
+    if (!alignment) return headline;
+    return {
+      ...headline,
+      marketSessionAtPublish: alignment.marketSessionAtPublish,
+      alignedTradingDate: alignment.alignedTradingDate,
+      alignmentRule: alignment.alignmentRule,
+    };
+  });
+}
+
 export type ExtendedHoursQuote = { price: number; changePercent: number };
 
 /**
@@ -1523,7 +1592,7 @@ async function buildAiOverlay(
     messages: [
       {
         role: 'system',
-        content: 'You are a disciplined stock analyst. Return strict JSON only with top-level keys technical, rating, and newsSentiment. technical and rating must each contain summary, action, confidence, whyNow, technicalSummary, newsSummary, bullishFactors, and riskFactors. The technical narrative must remain paired with technical.signal and technical.signalScore; do not change its stated rating, action, or confidence based on fundamentals. The rating narrative must remain paired with rating.signal and rating.compositeScore and weigh fundamentals alongside technicals and news. All margin, return, growth, and debtToEquity values are decimal ratios (0.25 means 25%; debtToEquity 1.5 means debt is 1.5x equity). totalCash, totalDebt, freeCashflow, and ebitda are denominated in fundamentals.financialCurrency. Treat missing values as unknown. newsSentiment is a signed number from -1 to 1 scoring how bullish the supplied news headlines are for the stock (-1 very bearish, 0 neutral or no material news, 1 very bullish); base it only on the supplied headlines. Keep both narratives concise, factual, and free of disclaimers.',
+        content: 'You are a disciplined stock analyst. Return strict JSON only with top-level keys technical, rating, and newsSentiment. technical and rating must each contain summary, action, confidence, whyNow, technicalSummary, newsSummary, bullishFactors, and riskFactors. The technical narrative must remain paired with technical.signal and technical.signalScore; do not change its stated rating, action, or confidence based on fundamentals. The rating narrative must remain paired with rating.signal and rating.compositeScore and weigh fundamentals alongside technicals and news. All margin, return, growth, and debtToEquity values are decimal ratios (0.25 means 25%; debtToEquity 1.5 means debt is 1.5x equity). totalCash, totalDebt, freeCashflow, and ebitda are denominated in fundamentals.financialCurrency. Treat missing values as unknown. newsSentiment is a signed number from -1 to 1 scoring how bullish the supplied news headlines are for the stock (-1 very bearish, 0 neutral or no material news, 1 very bullish); base it only on the supplied headlines. newsSentiment is a model overlay, not a cause of any price move; do not claim a headline drove or caused the tape. Keep both narratives concise, factual, and free of disclaimers.',
       },
       {
         role: 'user',
@@ -1887,7 +1956,7 @@ export async function analyzeStock(
     const marketSession = usEquityHoursApply(symbol, history.currency || 'USD')
       ? getUsEquitySessionAt(options.now)
       : '';
-    const [headlines, dividend, extendedQuote, earningsCalendar] = await Promise.all([
+    const [rawHeadlines, dividend, extendedQuote, earningsCalendar] = await Promise.all([
       includeNews ? searchRecentStockHeadlines(symbol, name, NEWS_LIMIT).then((r) => r.headlines) : Promise.resolve([]),
       fetchDividendProfile(symbol, technical.currentPrice),
       (marketSession === 'pre' || marketSession === 'post')
@@ -1895,6 +1964,7 @@ export async function analyzeStock(
         : Promise.resolve(null),
       fetchUpcomingEarnings(),
     ]);
+    const headlines = alignStockHeadlines(rawHeadlines, marketSession !== '');
     const overlays = await buildAiOverlay(
       symbol,
       name,

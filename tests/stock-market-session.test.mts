@@ -11,10 +11,13 @@ import { fileURLToPath } from 'node:url';
 
 import {
   analyzeStock,
+  alignStockHeadlines,
+  alignUsEquityNewsTimestamp,
   buildAnalysisResponse,
   buildTechnicalSnapshot,
   getFallbackOverlay,
   fetchExtendedHoursQuote,
+  nextUsEquityTradingDate,
   usEquityHoursApply,
   type Candle,
   type AnalystData,
@@ -391,5 +394,37 @@ describe('source contracts (#4922d)', () => {
       analyzeStockSrc,
       /marketSession === 'pre' \|\| marketSession === 'post'\)\s*\? fetchExtendedHoursQuote\(/,
     );
+  });
+});
+
+describe('headline session alignment', () => {
+  it('aligns a regular-session publish to the same trading date', () => {
+    const alignment = alignUsEquityNewsTimestamp(Date.parse('2026-08-14T16:00:00.000Z'));
+    assert.ok(alignment);
+    assert.equal(alignment.marketSessionAtPublish, 'regular');
+    assert.equal(alignment.alignedTradingDate, '2026-08-14');
+    assert.equal(alignment.alignmentRule, 'REGULAR_SESSION_SAME_TRADING_DAY');
+  });
+
+  it('aligns after-hours and weekends to the next trading date', () => {
+    const afterHours = alignUsEquityNewsTimestamp(Date.parse('2026-08-14T21:00:00.000Z'));
+    assert.ok(afterHours);
+    assert.equal(afterHours.marketSessionAtPublish, 'post');
+    assert.equal(afterHours.alignedTradingDate, '2026-08-17');
+    assert.equal(afterHours.alignmentRule, 'AFTER_HOURS_NEXT_TRADING_DAY');
+
+    const weekend = alignUsEquityNewsTimestamp(Date.parse('2026-08-15T18:00:00.000Z'));
+    assert.ok(weekend);
+    assert.equal(weekend.marketSessionAtPublish, 'closed');
+    assert.equal(weekend.alignedTradingDate, nextUsEquityTradingDate('2026-08-15'));
+  });
+
+  it('omits alignment for invalid timestamps and leaves non-US headlines untouched', () => {
+    assert.equal(alignUsEquityNewsTimestamp(0), null);
+    assert.equal(alignUsEquityNewsTimestamp(Number.NaN), null);
+    const raw = [{ title: 'X', source: 'Y', link: 'https://example.com', publishedAt: Date.parse('2026-08-14T16:00:00.000Z') }];
+    assert.deepEqual(alignStockHeadlines(raw, false), raw);
+    const aligned = alignStockHeadlines(raw, true);
+    assert.equal(aligned[0]?.alignedTradingDate, '2026-08-14');
   });
 });

@@ -1,5 +1,10 @@
 import type { Monitor, PanelConfig, MapLayers } from '@/types';
 import { WEB_APP_ORIGIN } from '@/config/web-origin';
+import {
+  isStockResearchPath,
+  stockResearchSymbolFromPath,
+} from '@/features/stock-research/stock-research-route';
+import { openStockResearchOverlay } from '@/features/stock-research/stock-research-overlay';
 import { openExternalUrl } from '@/services/external-navigation';
 import { normalizeExclusiveChoropleths } from '@/components/resilience-choropleth-utils';
 import type { AppContext } from '@/app/app-context';
@@ -2946,6 +2951,17 @@ export class App {
     // Check for country brief deep link: ?c=IR (captured early before URL sync)
     const storyCode = this.pendingDeepLinkStoryCode ?? url.searchParams.get('c');
     this.pendingDeepLinkStoryCode = null;
+    if (isStockResearchPath(url.pathname)) {
+      const stockSymbol = stockResearchSymbolFromPath(url.pathname);
+      if (stockSymbol) {
+        trackDeeplinkOpened('stock', stockSymbol);
+        setTimeout(() => {
+          void openStockResearchOverlay(stockSymbol);
+        }, DEEP_LINK_INITIAL_DELAY_MS);
+      }
+      return;
+    }
+
     if (url.pathname === '/story' || storyCode) {
       const countryCode = storyCode;
       if (countryCode) {

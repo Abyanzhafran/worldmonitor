@@ -19,7 +19,7 @@ import type {
   MarketQuoteUnavailable,
   MarketQuoteUnavailableReason,
 } from '@/generated/client/worldmonitor/market/v1/service_client';
-import { openMarketChartModal } from './market-chart-modal';
+import { navigateToStockResearch } from '@/features/stock-research/stock-research-overlay';
 import {
   bindMarketChartActivation,
   getMarketChartRowAttributes,
@@ -61,7 +61,9 @@ export class MarketPanel extends Panel {
 
     // Delegated once on the persistent content element (each render only swaps
     // innerHTML): click or Enter/Space on a plottable ticker opens its terminal chart.
-    bindMarketChartActivation(this.content, () => this._markets, openMarketChartModal);
+    bindMarketChartActivation(this.content, () => this._markets, (stock) => {
+      navigateToStockResearch(stock.symbol, stock);
+    });
   }
 
   public renderMarkets(

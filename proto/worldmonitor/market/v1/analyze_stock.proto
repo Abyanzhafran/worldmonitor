@@ -10,6 +10,13 @@ message StockAnalysisHeadline {
   string source = 2;
   string link = 3;
   int64 published_at = 4 [(sebuf.http.int64_encoding) = INT64_ENCODING_NUMBER];
+  // US equity session at publish time: "regular", "pre", "post", or "closed".
+  // Empty when published_at is invalid or US hours do not apply.
+  string market_session_at_publish = 5;
+  // NYSE/Nasdaq trading date this headline aligns to (YYYY-MM-DD). Empty when unaligned.
+  string aligned_trading_date = 6;
+  // Bookkeeping rule only. Never a causal claim.
+  string alignment_rule = 7;
 }
 
 message AnalyzeStockRequest {
