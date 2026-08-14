@@ -363,7 +363,11 @@ for (const [path, groups] of applicationJsonLdGroups) {
 // so adding tools cannot leave a syntactically valid but incomplete card.
 transform('public/.well-known/mcp/server-card.json', (source) => {
   const card = JSON.parse(source);
-  card.tools = TOOL_REGISTRY.map(({ name, description }) => ({ name, description }));
+  card.tools = TOOL_REGISTRY.map(({ name, description, _freeTier }) => ({
+    name,
+    description,
+    ...(_freeTier === true ? { _meta: { 'worldmonitor/access': 'free' } } : {}),
+  }));
   return json(card);
 });
 
