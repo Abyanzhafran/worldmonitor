@@ -399,6 +399,8 @@ describe('loading renders preserve the backoff rung', () => {
     flags(panel).loading = true;
     (panel as unknown as { render(): void }).render();
 
+    expect(internals(panel).content.querySelector('.tech-events-loading')).not.toBeNull();
+
     // 30s, not 15s: the loading render must not have reset the backoff.
     expect(driveSecondFailure(panel)).toMatch(/\(30s\)/);
 
