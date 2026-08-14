@@ -283,6 +283,10 @@
     {
       "name": "get_keyword_spikes",
       "description": "Trending keyword, CVE, and APT/FIN threat-group spikes versus baseline, using the same term-candidacy and spike-decision math as the dashboard. Baseline derives from the 48-hour story accumulator (per-window story rate), not the dashboard's incremental 7-day client history. Results are cached for 10 minutes. Deterministic — no LLM."
+    },
+    {
+      "name": "get_sources",
+      "description": "WorldMonitor's live source inventory, for deciding whether and how far to trust what the other tools return. Two separate populations: `providers` are the upstream hosts data is fetched from (with licence and attribution status), and `outlets` are named news organisations carrying an editorial tier plus propaganda-risk and source-type provenance. They are keyed differently and are not merged — a provider is a host, an outlet is a masthead. Defaults to `summary` (counts only); pass a view to enumerate. Static registry read — no network, no cache, always current with the deployed build."
     }
   ],
   "toolCategories": [
