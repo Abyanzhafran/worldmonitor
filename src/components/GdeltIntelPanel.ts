@@ -1,7 +1,7 @@
 import { Panel } from './Panel';
 import { sanitizeUrl } from '@/utils/sanitize';
 import { t } from '@/services/i18n';
-import { h, replaceChildren, setTrustedHtml, trustedHtml } from '@/utils/dom-utils';
+import { h, setTrustedHtml, trustedHtml } from '@/utils/dom-utils';
 import { miniSparkline } from '@/utils/sparkline';
 import {
   getIntelTopics,
@@ -120,17 +120,22 @@ export class GdeltIntelPanel extends Panel {
     }
 
     this.summaryEl = h('div', { className: 'gdelt-topic-summary' }, toneGroup, volGroup);
+    // Deliberately NOT migrated to a Panel content helper (#6678). This inserts a
+    // SIBLING before `this.content`, never a child of it, so it cannot latch the
+    // header chip and the sanctioned helpers — which WIPE content — would destroy
+    // the articles it is meant to sit above. The guard tracks it as `positional`
+    // for inventory completeness only; see scripts/enforce-panel-content-writes.mjs
+    // (DIRECT_WRITE_PATTERNS doc). Its allowlist entry stays for the same reason.
     this.content.insertAdjacentElement('beforebegin', this.summaryEl);
   }
 
   private renderArticles(articles: GdeltArticle[]): void {
-    this.clearErrorState();
     if (articles.length === 0) {
-      replaceChildren(this.content, h('div', { className: 'empty-state' }, t('components.gdelt.empty')));
+      this.setContentNodes(h('div', { className: 'empty-state' }, t('components.gdelt.empty')));
       return;
     }
 
-    replaceChildren(this.content,
+    this.setContentNodes(
       h('div', { className: 'gdelt-intel-articles' },
         ...articles.map(article => this.buildArticle(article)),
       ),
