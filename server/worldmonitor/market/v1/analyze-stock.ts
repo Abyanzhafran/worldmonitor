@@ -828,15 +828,13 @@ export function alignStockHeadlines(
   headlines: StockAnalysisHeadline[],
   applyUsHours: boolean,
 ): StockAnalysisHeadline[] {
-  if (!applyUsHours) return headlines;
   return headlines.map((headline) => {
-    const alignment = alignUsEquityNewsTimestamp(headline.publishedAt);
-    if (!alignment) return headline;
+    const alignment = applyUsHours ? alignUsEquityNewsTimestamp(headline.publishedAt) : null;
     return {
       ...headline,
-      marketSessionAtPublish: alignment.marketSessionAtPublish,
-      alignedTradingDate: alignment.alignedTradingDate,
-      alignmentRule: alignment.alignmentRule,
+      marketSessionAtPublish: alignment?.marketSessionAtPublish ?? '',
+      alignedTradingDate: alignment?.alignedTradingDate ?? '',
+      alignmentRule: alignment?.alignmentRule ?? '',
     };
   });
 }

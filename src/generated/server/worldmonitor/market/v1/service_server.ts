@@ -270,9 +270,9 @@ export interface StockAnalysisHeadline {
   source: string;
   link: string;
   publishedAt: number;
-  marketSessionAtPublish?: string;
-  alignedTradingDate?: string;
-  alignmentRule?: string;
+  marketSessionAtPublish: string;
+  alignedTradingDate: string;
+  alignmentRule: string;
 }
 
 export interface AnalystConsensus {
