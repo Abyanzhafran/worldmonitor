@@ -1661,6 +1661,66 @@ describe('collector latch release is module-owned (#6288)', () => {
     }
   });
 
+  // sendCollectorHealthReport races its own deadline for the same reason the
+  // collector write does — the same fetch wrappers sit in front of this POST.
+  // The existing #6086 test only proves a signal is ATTACHED and lets the stub
+  // resolve immediately, so nothing exercised the case the race exists for: an
+  // aggregate endpoint that never answers. Without the race the reporting
+  // promise stays pending forever and the Sentry fallback that reads its result
+  // is stranded — a silent loss of the alert, not a visible failure.
+  it('bounds the health-report POST when the aggregate endpoint discards its signal', { timeout: 10_000 }, async () => {
+    const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+    Object.defineProperty(AbortSignal, 'timeout', { configurable: true, value: undefined });
+    const originalGlobalFetch = globalThis.fetch;
+    const fakeTimers = installFakeTimers();
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    // COLLECTOR_HEALTH_REPORT_TIMEOUT_MS (2s) + LATCH_RELEASE_GRACE_MS (5s).
+    const healthDeadlineMs = 7_000;
+    const noiseFloor = 5;
+    let healthCalls = 0;
+    const stub = ((input: RequestInfo | URL) => {
+      if (String(input).includes('/api/analytics-health')) {
+        healthCalls += 1;
+        return parkForever();
+      }
+      return Promise.reject(new TypeError('Failed to fetch'));
+    }) as typeof window.fetch;
+    // sendCollectorHealthReport dispatches through globalThis.fetch, a DIFFERENT
+    // binding from window.fetch here — stubbing only one misses the POST.
+    window.fetch = stub;
+    globalThis.fetch = stub;
+    installCollectorFetchGate();
+
+    try {
+      for (let index = 0; index < noiseFloor; index += 1) {
+        await window.fetch(UMAMI_SEND_URL, collectorEventInit()).catch(() => {});
+      }
+      await drainPromiseHandlers(() => healthCalls > 0, 'the aggregate report is attempted');
+      assert.equal(
+        getCollectorHealthForTesting().reportedFailureSignatures,
+        0,
+        'the fallback correctly defers while the aggregate has not answered',
+      );
+
+      const healthDeadlines = fakeTimers.timers.filter(
+        (timer) => timer.delay === healthDeadlineMs && !timer.cancelled,
+      );
+      assert.ok(healthDeadlines.length > 0, 'the health POST must own a latch deadline of its own');
+      for (const timer of healthDeadlines) timer.callback();
+
+      await drainPromiseHandlers(
+        () => getCollectorHealthForTesting().reportedFailureSignatures > 0,
+        'an unanswered aggregate falls back to Sentry instead of hanging forever',
+      );
+    } finally {
+      console.warn = originalWarn;
+      fakeTimers.restore();
+      globalThis.fetch = originalGlobalFetch;
+      if (timeoutDescriptor) Object.defineProperty(AbortSignal, 'timeout', timeoutDescriptor);
+    }
+  });
+
   it('refuses to re-send a raced-out conversion but still replays a raced-out identity snapshot', () => {
     assert.equal(
       isRetryableCollectorFailure({ kind: 'timeout' }),
