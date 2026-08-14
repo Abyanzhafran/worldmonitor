@@ -1032,6 +1032,7 @@
       "noComtradeData": "Nincs stratégiai folyamat adat",
       "comtradeUnavailable": "UN Comtrade adatai ideiglenesen nem érhetők el",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.",
       "anomalyBadge": "Anomália",
       "colReporter": "Ország",
       "colCommodity": "Áru",

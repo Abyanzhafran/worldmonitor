@@ -935,6 +935,7 @@
       "noComtradeData": "Данные стратегических потоков недоступны",
       "comtradeUnavailable": "Данные UN Comtrade временно недоступны",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade репортёр 156 — официальная статистика на уровне Китая, а не экспорт города, коридора, завода, порта или партии.",
       "anomalyBadge": "Аномалия",
       "colReporter": "Страна",
       "colCommodity": "Товар",

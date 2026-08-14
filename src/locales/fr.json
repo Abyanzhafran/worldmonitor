@@ -885,6 +885,7 @@
       "noComtradeData": "Aucune donnée de flux stratégique disponible",
       "comtradeUnavailable": "Données UN Comtrade temporairement indisponibles",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade déclarant 156 sont des statistiques officielles au niveau de la Chine, pas les exportations d’une ville, d’un corridor, d’une usine, d’un port ou d’un envoi.",
       "anomalyBadge": "Anomalie",
       "colReporter": "Pays",
       "colCommodity": "Marchandise",

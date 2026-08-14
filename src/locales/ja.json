@@ -931,6 +931,7 @@
       "noComtradeData": "戦略的フロー数据が利用できません",
       "comtradeUnavailable": "UN Comtradeデータは一時的に利用できません",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade 報告国156は中国レベルの公式統計であり、町・回廊・工場・港・船荷の輸出ではありません。",
       "anomalyBadge": "異常",
       "colReporter": "国",
       "colCommodity": "商品",

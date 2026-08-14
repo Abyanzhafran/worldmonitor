@@ -931,6 +931,7 @@
       "noComtradeData": "Không có dữ liệu dòng chảy chiến lược",
       "comtradeUnavailable": "Dữ liệu UN Comtrade tạm thời không có sẵn",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.",
       "anomalyBadge": "Bất thường",
       "colReporter": "Quốc gia",
       "colCommodity": "Hàng hóa",

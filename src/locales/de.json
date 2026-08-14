@@ -919,6 +919,7 @@
       "noComtradeData": "Keine Daten zu strategischen Flüssen verfügbar",
       "comtradeUnavailable": "UN Comtrade-Daten vorübergehend nicht verfügbar",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN-Comtrade-Melder 156 sind offizielle Statistiken auf China-Ebene, keine Exporte einer Stadt, eines Korridors, einer Fabrik, eines Hafens oder einer Sendung.",
       "anomalyBadge": "Anomalie",
       "colReporter": "Land",
       "colCommodity": "Rohstoff",

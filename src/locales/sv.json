@@ -1030,6 +1030,7 @@
       "noComtradeData": "Ingen strategisk flödesdata tillgänglig",
       "comtradeUnavailable": "UN Comtrade-data är tillfälligt otillgänglig",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.",
       "anomalyBadge": "Anomali",
       "colReporter": "Land",
       "colCommodity": "Råvara",

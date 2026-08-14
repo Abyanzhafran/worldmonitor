@@ -931,6 +931,7 @@
       "noComtradeData": "전략적 흐름 데이터 미제공",
       "comtradeUnavailable": "UN Comtrade 데이터 일시 미제공",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade 보고국 156은 중국 단위 공식 통계이며 마을·회랑·공장·항구·선적의 수출이 아닙니다.",
       "anomalyBadge": "이상",
       "colReporter": "국가",
       "colCommodity": "상품",

@@ -931,6 +931,7 @@
       "noComtradeData": "無戰略流動資料",
       "comtradeUnavailable": "聯合國貿易資料庫資料暫時不可用",
       "sourceComtrade": "聯合國貿易資料庫",
+      "comtradeNationalScope": "聯合國 Comtrade 報告國 156 是中國國家級官方統計，不是某鎮、走廊、工廠、港口或船貨的出口。",
       "anomalyBadge": "異常",
       "colReporter": "國家",
       "colCommodity": "商品",

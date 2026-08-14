@@ -1109,6 +1109,7 @@
       "noComtradeData": "Nema dostupnih podataka o strateških tokovima",
       "comtradeUnavailable": "UN Comtrade podaci privremeno nisu dostupni",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.",
       "anomalyBadge": "Anomalija",
       "colReporter": "Država",
       "colCommodity": "Roba",

@@ -931,6 +931,7 @@
       "noComtradeData": "ไม่มีข้อมูลการไหลเวียนเชิงกลยุทธ์",
       "comtradeUnavailable": "ข้อมูล UN Comtrade ไม่พร้อมใช้งานชั่วคราว",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.",
       "anomalyBadge": "ความผิดปกติ",
       "colReporter": "ประเทศ",
       "colCommodity": "สินค้า",

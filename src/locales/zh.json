@@ -931,6 +931,7 @@
       "noComtradeData": "无战略流动数据",
       "comtradeUnavailable": "联合国贸易数据库数据暂时不可用",
       "sourceComtrade": "联合国贸易数据库",
+      "comtradeNationalScope": "联合国 Comtrade 报告国 156 是中国国家级官方统计，不是某镇、走廊、工厂、港口或船货的出口。",
       "anomalyBadge": "异常",
       "colReporter": "国家",
       "colCommodity": "商品",

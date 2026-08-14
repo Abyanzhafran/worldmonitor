@@ -1042,6 +1042,7 @@
       "noComtradeData": "Hakuna data ya mtiririko wa kimkakati inayopatikana",
       "comtradeUnavailable": "Data ya UN Comtrade haipatikani kwa muda",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.",
       "anomalyBadge": "Anomaly",
       "colReporter": "Nchi",
       "colCommodity": "Bidhaa",

@@ -931,6 +931,7 @@
       "noComtradeData": "Δεν υπάρχουν διαθέσιμα δεδομένα στρατηγικής ροής",
       "comtradeUnavailable": "Δεδομένα UN Comtrade προσωρινά μη διαθέσιμα",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.",
       "anomalyBadge": "Ανωμαλία",
       "colReporter": "Χώρα",
       "colCommodity": "Εμπόρευμα",

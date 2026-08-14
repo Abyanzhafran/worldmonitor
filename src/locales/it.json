@@ -921,6 +921,7 @@
       "noComtradeData": "Nessun dato flusso strategico disponibile",
       "comtradeUnavailable": "Dati UN Comtrade temporaneamente non disponibili",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 sono statistiche ufficiali a livello Cina, non le esportazioni di una città, un corridoio, una fabbrica, un porto o una spedizione.",
       "anomalyBadge": "Anomalia",
       "colReporter": "Paese",
       "colCommodity": "Merce",

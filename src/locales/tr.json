@@ -931,6 +931,7 @@
       "noComtradeData": "Stratejik akış verisi yok",
       "comtradeUnavailable": "BM Comtrade verileri geçici olarak kullanılamıyor",
       "sourceComtrade": "BM Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.",
       "anomalyBadge": "Anomali",
       "colReporter": "Ülke",
       "colCommodity": "Mal",

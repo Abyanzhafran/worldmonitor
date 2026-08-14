@@ -933,6 +933,7 @@
       "noComtradeData": "Nu sunt disponibile date privind fluxurile strategice",
       "comtradeUnavailable": "Datele ONU Comtrade sunt temporar indisponibile",
       "sourceComtrade": "ONU Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.",
       "anomalyBadge": "Anomalie",
       "colReporter": "Țară",
       "colCommodity": "Materie primă",

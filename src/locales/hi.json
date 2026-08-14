@@ -1032,6 +1032,7 @@
       "noComtradeData": "कोई रणनीतिक प्रवाह डेटा उपलब्ध नहीं",
       "comtradeUnavailable": "UN Comtrade डेटा अस्थायी रूप से अनुपलब्ध",
       "sourceComtrade": "UN Comtrade",
+      "comtradeNationalScope": "UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.",
       "anomalyBadge": "असामान्यता",
       "colReporter": "देश",
       "colCommodity": "वस्तु",

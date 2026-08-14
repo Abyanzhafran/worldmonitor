@@ -891,6 +891,7 @@
       "noComtradeData": "لا توجد بيانات تدفق استراتيجي متاحة",
       "comtradeUnavailable": "بيانات الأمم المتحدة Comtrade غير متاحة مؤقتًا",
       "sourceComtrade": "الأمم المتحدة Comtrade",
+      "comtradeNationalScope": "إحصاءات كومتريد الرسمية للأمم المتحدة (المُبلّغ 156) هي على مستوى الصين، وليست صادرات بلدة أو ممر أو مصنع أو ميناء أو شحنة.",
       "anomalyBadge": "شذوذ",
       "colReporter": "الدولة",
       "colCommodity": "السلعة",
