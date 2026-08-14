@@ -15,6 +15,7 @@ Real-time global intelligence dashboard. TypeScript SPA (Vite + Preact) with 186
 │   ├── bootstrap/          # Startup/recovery (chunk reload, deferred Sentry, SW update)
 │   ├── components/         # 186 top-level TypeScript component files
 │   ├── config/             # Variant configs, panel/layer definitions, market symbols
+│   ├── features/           # Self-contained feature surfaces (stock research room)
 │   ├── services/           # Business logic (234 service modules and domain directories)
 │   ├── shared/             # Cross-cutting helpers (premium paths, registries, staleness)
 │   ├── embed/              # Embeddable widget loader

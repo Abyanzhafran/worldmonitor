@@ -263,6 +263,7 @@ export class App {
   private pendingDeepLinkStoryCode: string | null = null;
   private pendingDeepLinkChokepoint: string | null = null;
   private chokepointDeepLinkTimer: number | null = null;
+  private stockDeepLinkTimer: number | null = null;
 
   private panelLayout: PanelLayoutManager;
   private dataLoader: DataLoaderManager;
@@ -2777,6 +2778,10 @@ export class App {
       window.clearTimeout(this.chokepointDeepLinkTimer);
       this.chokepointDeepLinkTimer = null;
     }
+    if (this.stockDeepLinkTimer !== null) {
+      window.clearTimeout(this.stockDeepLinkTimer);
+      this.stockDeepLinkTimer = null;
+    }
 
     // Destroy all modules in reverse order
     for (let i = this.modules.length - 1; i >= 0; i--) {
@@ -2953,13 +2958,19 @@ export class App {
     this.pendingDeepLinkStoryCode = null;
     if (isStockResearchPath(url.pathname)) {
       const stockSymbol = stockResearchSymbolFromPath(url.pathname);
+      // Return only when the overlay actually takes the navigation. The path
+      // regex accepts a leading digit that the symbol pattern rejects, so
+      // /stocks/0700.HK parses to null — returning there would open nothing
+      // AND cancel the ?c= / ?country= / ?chokepoint= deep links below.
       if (stockSymbol) {
         trackDeeplinkOpened('stock', stockSymbol);
-        setTimeout(() => {
+        this.stockDeepLinkTimer = window.setTimeout(() => {
+          this.stockDeepLinkTimer = null;
+          if (this.state.isDestroyed) return;
           void openStockResearchOverlay(stockSymbol);
         }, DEEP_LINK_INITIAL_DELAY_MS);
+        return;
       }
-      return;
     }
 
     if (url.pathname === '/story' || storyCode) {

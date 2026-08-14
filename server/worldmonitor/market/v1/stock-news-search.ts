@@ -126,7 +126,7 @@ function dedupeHeadlines(
     ...item,
     marketSessionAtPublish: '',
     alignedTradingDate: '',
-    alignmentRule: '',
+    alignmentRule: 'HEADLINE_ALIGNMENT_RULE_UNSPECIFIED',
   }));
 }
 

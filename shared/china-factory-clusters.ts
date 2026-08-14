@@ -86,25 +86,54 @@ export function chinaFactoryClusterById(id: string): ChinaFactoryCluster | undef
   return CHINA_FACTORY_CLUSTERS.find((cluster) => cluster.id === id);
 }
 
+/**
+ * A Comtrade row is per-flow and per-partner. `flowCode` and `partnerCode` are
+ * required because without them a caller that sums `tradeValueUsd` would add
+ * imports to exports and every bilateral partner on top of the world-total row,
+ * then present the inflated figure under an OBSERVED_OFFICIAL label.
+ */
 export type ChinaFactoryTradeRecord = {
   reporterCode: string;
   cmdCode: string;
   year: number;
   tradeValueUsd: number;
+  /** Comtrade flow: 'X'/'2' export, 'M'/'1' import. */
+  flowCode: string;
+  /** Comtrade partner; '0'/'000' is the world aggregate. */
+  partnerCode: string;
 };
+
+export type ChinaFactoryTradeQuery = {
+  year?: number;
+  /** Restrict to one direction. Omit to accept either, still world-total only. */
+  flowCode?: string;
+};
+
+/** Two-digit HS chapter for a Comtrade commodity code, or '' when not derivable. */
+function hsChapterOf(cmdCode: string): string {
+  const digits = String(cmdCode).replace(/\D/g, '');
+  if (!digits) return '';
+  // A 1-digit code is an unpadded chapter (Comtrade emits '4' as well as '04').
+  return digits.length === 1 ? digits.padStart(2, '0') : digits.slice(0, 2);
+}
 
 export function selectObservedChinaFactoryTrade(
   records: readonly ChinaFactoryTradeRecord[],
   cluster: ChinaFactoryCluster,
-  year?: number,
+  query: ChinaFactoryTradeQuery | number = {},
 ): ChinaFactoryTradeRecord[] {
   if (!cluster.statisticsEligible) return [];
+  const { year, flowCode } = typeof query === 'number' ? { year: query, flowCode: undefined } : query;
   const allowed = new Set(cluster.hsMappings.map((item) => item.hs2));
   return records.filter((record) => {
     const reporter = String(record.reporterCode);
     if (reporter !== '156' && reporter !== 'CHN') return false;
-    const hs = String(record.cmdCode).replace(/\D/g, '').slice(0, 2);
-    if (!allowed.has(hs)) return false;
+    if (!allowed.has(hsChapterOf(record.cmdCode))) return false;
+    // World-total rows only: the same rule TradePolicyPanel already applies
+    // when deduping Comtrade flows for display.
+    const partner = String(record.partnerCode);
+    if (partner !== '0' && partner !== '000') return false;
+    if (flowCode != null && String(record.flowCode) !== flowCode) return false;
     if (year != null && record.year !== year) return false;
     return Number.isFinite(record.tradeValueUsd);
   });

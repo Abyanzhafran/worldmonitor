@@ -3977,7 +3977,16 @@ components:
                     description: NYSE/Nasdaq trading date this headline aligns to (YYYY-MM-DD). Empty when unaligned.
                 alignmentRule:
                     type: string
-                    description: Bookkeeping rule only. Never a causal claim.
+                    enum:
+                        - HEADLINE_ALIGNMENT_RULE_UNSPECIFIED
+                        - HEADLINE_ALIGNMENT_RULE_REGULAR_SESSION_SAME_TRADING_DAY
+                        - HEADLINE_ALIGNMENT_RULE_PREMARKET_SAME_TRADING_DAY
+                        - HEADLINE_ALIGNMENT_RULE_AFTER_HOURS_NEXT_TRADING_DAY
+                        - HEADLINE_ALIGNMENT_RULE_NON_SESSION_NEXT_TRADING_DAY
+                        - HEADLINE_ALIGNMENT_RULE_OVERNIGHT_SAME_TRADING_DAY
+                    description: |-
+                        How a headline's publish time was mapped onto a US equity trading date.
+                         Bookkeeping only — never a claim that the headline moved the tape.
         AnalystConsensus:
             type: object
             properties:

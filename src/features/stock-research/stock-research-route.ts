@@ -1,7 +1,5 @@
 /** URL contract for the stock research overlay. DOM-free for node tests. */
 
-export const DEFAULT_STOCK_RESEARCH_SYMBOL = 'AAPL';
-
 const STOCK_SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,14}$/;
 
 export function normalizeStockResearchSymbol(raw: string | null | undefined): string | null {

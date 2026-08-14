@@ -3,6 +3,7 @@ import type {
   AnalyzeStockResponse,
   AnalystConsensus,
   EarningsEntry,
+  HeadlineAlignmentRule,
   PriceTarget,
   UpgradeDowngrade,
   ServerContext,
@@ -775,7 +776,7 @@ export function usEquityHoursApply(symbol: string, currency: string): boolean {
 export type NewsAlignment = {
   marketSessionAtPublish: UsEquitySession;
   alignedTradingDate: string;
-  alignmentRule: string;
+  alignmentRule: HeadlineAlignmentRule;
 };
 
 function nyCalendarDate(date: Date): string {
@@ -788,6 +789,18 @@ function addUtcDays(isoDate: string, days: number): string {
   const next = new Date(`${isoDate}T12:00:00.000Z`);
   next.setUTCDate(next.getUTCDate() + days);
   return next.toISOString().slice(0, 10);
+}
+
+/** Minutes since ET midnight for `date`. */
+function etMinutesOfDay(date: Date): number {
+  const parts: Record<string, string> = {};
+  for (const part of ET_PARTS_FMT.formatToParts(date)) parts[part.type] = part.value;
+  return Number(parts.hour) * 60 + Number(parts.minute);
+}
+
+/** True when `isoDate` (YYYY-MM-DD) is itself an NYSE/Nasdaq regular session date. */
+export function isUsEquityTradingDate(isoDate: string): boolean {
+  return getUsEquitySessionAt(new Date(`${isoDate}T16:00:00.000Z`)) === 'regular';
 }
 
 /** Next NYSE/Nasdaq regular session date after `fromDate` (YYYY-MM-DD). */
@@ -810,17 +823,33 @@ export function alignUsEquityNewsTimestamp(publishedAt: number): NewsAlignment |
   if (Number.isNaN(published.getTime())) return null;
   const localDate = nyCalendarDate(published);
   const session = getUsEquitySessionAt(published);
+  // getUsEquitySessionAt reports 'closed' for two structurally different
+  // windows: after the post session ends (20:00-24:00 ET) and before pre-market
+  // opens (00:00-04:00 ET). Only the first belongs to the next trading day. An
+  // overnight publish precedes that same day's 04:00 pre-market by hours, so
+  // rolling it forward would skip the session it actually leads into — and
+  // nextUsEquityTradingDate can never return fromDate, since it increments
+  // before its first probe.
+  if (session === 'closed'
+    && etMinutesOfDay(published) < 4 * 60
+    && isUsEquityTradingDate(localDate)) {
+    return {
+      marketSessionAtPublish: session,
+      alignedTradingDate: localDate,
+      alignmentRule: 'HEADLINE_ALIGNMENT_RULE_OVERNIGHT_SAME_TRADING_DAY',
+    };
+  }
   if (session === 'post' || session === 'closed') {
     return {
       marketSessionAtPublish: session,
       alignedTradingDate: nextUsEquityTradingDate(localDate),
-      alignmentRule: session === 'post' ? 'AFTER_HOURS_NEXT_TRADING_DAY' : 'NON_SESSION_NEXT_TRADING_DAY',
+      alignmentRule: session === 'post' ? 'HEADLINE_ALIGNMENT_RULE_AFTER_HOURS_NEXT_TRADING_DAY' : 'HEADLINE_ALIGNMENT_RULE_NON_SESSION_NEXT_TRADING_DAY',
     };
   }
   return {
     marketSessionAtPublish: session,
     alignedTradingDate: localDate,
-    alignmentRule: session === 'regular' ? 'REGULAR_SESSION_SAME_TRADING_DAY' : 'PREMARKET_SAME_TRADING_DAY',
+    alignmentRule: session === 'regular' ? 'HEADLINE_ALIGNMENT_RULE_REGULAR_SESSION_SAME_TRADING_DAY' : 'HEADLINE_ALIGNMENT_RULE_PREMARKET_SAME_TRADING_DAY',
   };
 }
 
@@ -834,7 +863,7 @@ export function alignStockHeadlines(
       ...headline,
       marketSessionAtPublish: alignment?.marketSessionAtPublish ?? '',
       alignedTradingDate: alignment?.alignedTradingDate ?? '',
-      alignmentRule: alignment?.alignmentRule ?? '',
+      alignmentRule: alignment?.alignmentRule ?? 'HEADLINE_ALIGNMENT_RULE_UNSPECIFIED',
     };
   });
 }

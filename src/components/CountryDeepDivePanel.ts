@@ -743,7 +743,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.comtradeBody.replaceChildren();
     if (!flows || flows.length === 0) {
       this.comtradeBody.append(this.makeEmpty('No data available'));
-      const emptyScope = this.el('p', 'cdp-comtrade-scope', 'UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.');
+      const emptyScope = this.el('p', 'cdp-comtrade-scope', t('components.tradePolicy.comtradeNationalScope'));
       emptyScope.dataset.comtradeScope = 'national';
       this.comtradeBody.append(emptyScope);
       return;
@@ -772,7 +772,10 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     }
     table.append(tbody);
     this.comtradeBody.append(table);
-    const scope = this.el('p', 'cdp-comtrade-scope', 'UN Comtrade reporter 156 is China-level official statistics. It is not a town, corridor, factory, port, or shipment export ledger.');
+    // Reporter-neutral: this panel renders whichever country the user opened
+    // (country-intel.ts resolves iso2ToComtradeReporterCode per country), so a
+    // caption naming reporter 156 would be false for every country but CN.
+    const scope = this.el('p', 'cdp-comtrade-scope', t('components.tradePolicy.comtradeNationalScope'));
     scope.dataset.comtradeScope = 'national';
     this.comtradeBody.append(scope);
   }
