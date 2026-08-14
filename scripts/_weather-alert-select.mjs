@@ -1,4 +1,7 @@
-// Alert selection + normalisation for scripts/seed-weather-alerts.mjs.
+// Alert selection + normalisation for scripts/seed-weather-alerts.mjs, plus
+// weatherAlertNotifyLocation() which scripts/ais-relay.cjs dynamically imports
+// to attach location to weather_alert notification payloads (see the COPY entry
+// in Dockerfile.relay — the relay cannot boot without this file).
 // Kept in its own module so the selection rules are unit-testable without
 // importing the seeder (which runs runSeed() at import time).
 

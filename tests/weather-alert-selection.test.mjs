@@ -222,11 +222,29 @@ describe('weather_alert notification location payload', () => {
     );
   });
 
+  // centroid is GeoJSON order [lon, lat], so the case above only drives `lon`
+  // non-finite. Without this second case, weakening the guard to check just one
+  // operand (`!Number.isFinite(lon)`) still passes every other test here, and a
+  // NaN latitude would serialize onto the wire as `lat: null` — the opposite of
+  // the omit-entirely contract.
+  it('rejects a non-finite latitude even when longitude is finite', () => {
+    assert.deepEqual(
+      weatherAlertNotifyLocation({ centroid: [-99.6, Number.NaN], coordinates: POLYGON.coordinates[0] }),
+      {},
+    );
+  });
+
   it('threads weatherAlertNotifyLocation into the weather_alert publish payload', () => {
     assert.match(
       AIS_RELAY_SOURCE,
-      /eventType:\s*'weather_alert'[\s\S]*?\.\.\.weatherAlertNotifyLocation\(/,
-      'ais-relay must spread weatherAlertNotifyLocation(...) into the weather_alert payload so the already-computed centroid is published',
+      // Bounded to the weather_alert payload object literal. An unbounded
+      // `[\s\S]*?` gap passes as long as the token appears ANYWHERE later in
+      // this 12k-line file, so deleting the spread from the payload while any
+      // other reference survives keeps the guard green. The inner alternation
+      // permits the one nested `{ coalesceKey }` / `{}` pair already present
+      // but cannot cross the payload's closing brace.
+      /eventType:\s*'weather_alert',\s*payload:\s*\{(?:[^{}]|\{[^{}]*\})*\.\.\.weatherAlertNotifyLocation\(a\),/,
+      'ais-relay must spread weatherAlertNotifyLocation(a) INSIDE the weather_alert payload object so the already-computed centroid is published',
     );
   });
 });
