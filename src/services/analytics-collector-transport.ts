@@ -68,11 +68,22 @@ export type CollectorFailure = {
    * this module's deadline sets the marker.
    *
    * A MARKER rather than a `kind`, for the same reason as `botFiltered`: the
-   * failure taxonomy, the Sentry fingerprint and the health cohorts all keep
-   * treating it as the timeout it is. What it changes is exactly the two places
-   * that can RE-SEND the write — `isRetryableCollectorFailure` and the durable
-   * checkout marker — because re-sending an append-only conversion whose
-   * original may still commit double-counts it.
+   * delivery classification and the health cohorts keep treating it as the
+   * timeout it is, so no `kind`-consuming arm has to be re-audited. Unlike
+   * `botFiltered`, it is read in two categories of place, and both are
+   * deliberate:
+   *
+   *  - RE-SEND (the reason the marker exists): `isRetryableCollectorFailure`
+   *    and the durable checkout marker in `analytics.ts` both refuse to replay
+   *    it, because re-sending an append-only conversion whose original may
+   *    still commit double-counts it. `isRetryableIdentityFailure` still
+   *    replays — an idempotent overwrite has no such hazard.
+   *  - ALERTING: it is exempt from the environment-noise floors, skips the
+   *    once-per-cohort noise latch, reports without waiting on the cross-user
+   *    aggregate's verdict, and carries its own Sentry fingerprint segment.
+   *    Not gold-plating — this fix REMOVES `queue-overflow`, the parked page's
+   *    only other symptom, so without these the population goes dark exactly
+   *    when the bug is fixed (#6288).
    */
   raced?: boolean;
 };
@@ -292,9 +303,12 @@ function createCollectorHealthWindow(startedAt = 0): CollectorHealthWindow {
 }
 
 function collectorFailureSignature(failure: CollectorFailure): string {
-  // `raced` is part of the signature so an ordinary timeout earlier in the
-  // window cannot suppress the report for a parked transport, which is the
-  // higher-signal of the two and the one #6288 exists to surface.
+  // `raced` is part of the signature because a parked transport and an honored
+  // abort share `kind` AND `status`, so without it the two would collapse to one
+  // entry and whichever landed first in the window would silence the other.
+  // (What stops the cohort-level noise latch pre-empting a raced report is the
+  // separate `!failure.raced` guard in emitCollectorFailureToSentry — this
+  // segment only keeps the two apart once they reach the dedup.)
   return [
     failure.kind,
     failure.status ?? 'none',
