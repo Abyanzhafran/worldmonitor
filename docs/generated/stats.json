@@ -81,6 +81,7 @@
     "publish-go.yml",
     "publish-python.yml",
     "publish-ruby.yml",
+    "railway-deploy-drift.yml",
     "railway-deploy-trigger-watchdog.yml",
     "railway-deploy-trigger.yml",
     "railway-reconcile-manual-recovery.yml",
@@ -91,7 +92,7 @@
     "typecheck.yml",
     "umami-storage-monitor.yml"
   ],
-  "workflowCount": 33,
+  "workflowCount": 34,
   "freshnessSources": 35,
   "freshnessRequiredForRisk": 2,
   "feedDefinitions": 658,
