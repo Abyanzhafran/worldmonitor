@@ -55,7 +55,12 @@ const RATE_LIMIT_RESET_EPOCH_SECONDS_CEILING = 1e12;
 function retryAfterHeaderToMs(raw: string | null): number | null {
   if (raw === null) return null;
   const seconds = Number.parseFloat(raw);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  // Anything that parses as a number is delta-seconds and is decided here.
+  // Falling through to Date.parse would launder an invalid negative delta into
+  // a stale date — V8 reads "-5" as May 2001 — which then clamps to 0 and
+  // reports "wait zero" where nothing was validly advertised. Every RFC 9110
+  // date form begins with a day name, so no real date is numeric-leading.
+  if (Number.isFinite(seconds)) return seconds >= 0 ? seconds * 1000 : null;
   const resetAtMs = Date.parse(raw);
   if (!Number.isFinite(resetAtMs)) return null;
   return Math.max(0, resetAtMs - checkoutRetryClock.now());

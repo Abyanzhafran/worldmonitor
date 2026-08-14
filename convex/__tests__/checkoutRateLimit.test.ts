@@ -157,6 +157,28 @@ describe("checkout rate-limit classification", () => {
   });
 
   /**
+   * A numeric Retry-After must never reach the HTTP-date branch. V8 parses
+   * "-5" as a real date (May 2001), so falling through would launder a
+   * negative delta into a stale timestamp and clamp it to 0 — reporting "wait
+   * zero" where the header was simply invalid and no floor was advertised.
+   * Every RFC 9110 date form starts with a day name, so no valid date is lost.
+   */
+  test("rejects a negative numeric Retry-After instead of reading it as a date", () => {
+    pinRetryClockNow();
+
+    expect(
+      retryAfterMsFromError(sdkRateLimitError({ "retry-after": "-5" })),
+    ).toBeNull();
+    expect(
+      retryAfterMsFromError(sdkRateLimitError({ "retry-after": "-0.5" })),
+    ).toBeNull();
+    // A zero delta is advertised, not invalid — it stays 0, not null.
+    expect(
+      retryAfterMsFromError(sdkRateLimitError({ "retry-after": "0" })),
+    ).toBe(0);
+  });
+
+  /**
    * Dodo advertises X-RateLimit-Reset on a limited response but does not
    * publish its unit, and the header is genuinely ambiguous in the wild — this
    * repo's own API emits it as epoch-MILLISECONDS

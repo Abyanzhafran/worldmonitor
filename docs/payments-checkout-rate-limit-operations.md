@@ -151,6 +151,12 @@ headers, strongest signal first:
 `Retry-After` wins over `X-RateLimit-Reset` deliberately: the first is a
 directive to wait, the second only reports when the window resets.
 
+A numeric `Retry-After` is always read as delta-seconds and never retried as a
+date — a negative value is rejected outright rather than falling through to the
+date branch, where V8 would read `-5` as May 2001 and clamp it to "wait zero".
+No real HTTP-date is lost to this: all three RFC 9110 date forms begin with a
+day name.
+
 Originally the ladder read only the two `Retry-After` forms. Dodo's API
 reference documents neither on a 429 — it documents `X-RateLimit-Reset` — so if
 Dodo does not also send `Retry-After`, the "honor the advertised provider floor"
