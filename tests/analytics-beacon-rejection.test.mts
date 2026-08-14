@@ -1721,6 +1721,67 @@ describe('collector latch release is module-owned (#6288)', () => {
     }
   });
 
+  // A parked transport and an honored abort produce the SAME `kind` and the SAME
+  // `status`, so the per-window signature dedup would collapse them into one
+  // entry and let whichever landed first silence the other. The `raced` segment
+  // in collectorFailureSignature is what keeps them apart — and only a fixture
+  // where the two failures differ in NOTHING ELSE can prove it. (The blocked-then-
+  // raced test above differs in `kind` as well, so it passes either way.)
+  it('keeps a raced timeout from deduping against an honored-abort timeout in one window', { timeout: 10_000 }, async () => {
+    const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+    Object.defineProperty(AbortSignal, 'timeout', { configurable: true, value: undefined });
+    const fakeTimers = installFakeTimers();
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    // Aggregate declines, so the honored-abort timeout reaches the Sentry
+    // fallback and lands a signature of its own.
+    _setCollectorHealthReporterForTesting(async () => false);
+    const noiseFloor = 5;
+    let calls = 0;
+    window.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      return calls <= noiseFloor ? rejectWhenAborted(init?.signal) : parkForever();
+    }) as typeof window.fetch;
+    installCollectorFetchGate();
+
+    try {
+      // A cooperative transport that honors every abort: `timeout`, NOT raced.
+      for (let index = 0; index < noiseFloor; index += 1) {
+        const write = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+        void write.catch(() => {});
+        await drainPromiseHandlers(() => calls === index + 1, `write ${index + 1} dispatches`);
+        const requestBound = fakeTimers.timers.find(
+          (timer) => timer.delay === 20_000 && !timer.cancelled,
+        );
+        assert.ok(requestBound, `write ${index + 1} must carry a request bound`);
+        requestBound.callback();
+        await assert.rejects(write, { name: 'TimeoutError' });
+      }
+      await drainPromiseHandlers(
+        () => getCollectorHealthForTesting().reportedFailureSignatures === 1,
+        'the honored-abort timeout reports once for the window',
+      );
+
+      // Same kind, same status — only `raced` differs.
+      const parked = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+      void parked.catch(() => {});
+      await drainPromiseHandlers();
+      const latchDeadline = findLatchDeadline(fakeTimers.timers);
+      assert.ok(latchDeadline, 'the parked write must own a latch deadline');
+      latchDeadline.callback();
+      await assert.rejects(parked, { name: 'TimeoutError' });
+
+      await drainPromiseHandlers(
+        () => getCollectorHealthForTesting().reportedFailureSignatures === 2,
+        'the raced timeout must not dedupe against the honored one',
+      );
+    } finally {
+      console.warn = originalWarn;
+      fakeTimers.restore();
+      if (timeoutDescriptor) Object.defineProperty(AbortSignal, 'timeout', timeoutDescriptor);
+    }
+  });
+
   it('refuses to re-send a raced-out conversion but still replays a raced-out identity snapshot', () => {
     assert.equal(
       isRetryableCollectorFailure({ kind: 'timeout' }),
