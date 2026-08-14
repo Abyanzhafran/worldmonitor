@@ -115,6 +115,22 @@ export function buildPublicTool(
     };
   }
 
+  // U7 / R6: per-tool access level. Stating the tiers only in the server
+  // instructions helps a client that reads prose; a client that reads schemas
+  // otherwise sees 64 tools with no way to tell which it can call without
+  // credentials. Emitted under the same spec-reserved `_meta` as the UI hint,
+  // and derived from the SAME `_freeTier` flag the handler authorises on, so
+  // the advertisement cannot drift from the behaviour.
+  //
+  // Emitted ONLY on free-tier tools. Marking all 64 would add a key to every
+  // tool's public shape — breaking the deliberate "no `_meta` unless the tool
+  // has something to say" contract, and paying wire bytes on a session-init
+  // payload to restate the default. Absence means subscription-gated, which
+  // the server instructions state once.
+  if (tool._freeTier === true) {
+    publicTool._meta = { ...(publicTool._meta ?? {}), 'worldmonitor/access': 'free' };
+  }
+
   return publicTool;
 }
 

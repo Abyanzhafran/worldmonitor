@@ -68,6 +68,17 @@ export const SOURCE_TOOLS: ToolDef[] = [
   {
     name: 'get_sources',
     _outputBudgetBytes: 65536,
+    // U7 roster (R7). The selection criterion is cheap to serve, cacheable,
+    // low value to bulk-scrape, AND reliably fresh. This tool satisfies all
+    // four trivially: it is a committed-registry read with no network call, no
+    // cache, and therefore no staleness mode at all — a data tool whose seed
+    // runs late would hand an uncredentialed caller an empty envelope, which
+    // reads as a dead server and defeats the point of having a free tier.
+    //
+    // The roster is deliberately one tool. Widening it needs per-tool
+    // freshness evidence from production, not an assumption; the mechanism is
+    // generic, so adding a screened tool later is this one line.
+    _freeTier: true,
     description:
       "WorldMonitor's live source inventory, for deciding whether and how far to trust what the other tools return. Two separate populations: `providers` are the upstream hosts data is fetched from (with licence and attribution status), and `outlets` are named news organisations carrying an editorial tier plus propaganda-risk and source-type provenance. They are keyed differently and are not merged — a provider is a host, an outlet is a masthead. Defaults to `summary` (counts only); pass a view to enumerate. Static registry read — no network, no cache, always current with the deployed build.",
     inputSchema: {

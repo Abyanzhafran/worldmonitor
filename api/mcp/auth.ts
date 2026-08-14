@@ -118,6 +118,16 @@ export async function buildAuthHeaders(
     // REST call — no internal-HMAC identity smuggling needed.
     return { 'X-WorldMonitor-Key': context.apiKey };
   }
+  if (context.kind === 'free') {
+    // U7: a free-tier context has no principal to authenticate as, so there is
+    // nothing honest to sign. Throwing is the fail-closed choice — the
+    // alternative (falling through to the `pro` HMAC branch below) would mint
+    // an internally-trusted signature for an anonymous caller, which is the
+    // one outcome the free tier must never produce. A free-tier tool that
+    // reaches here is misconfigured: it declared `_freeTier` while calling a
+    // credentialed downstream.
+    throw new Error('buildAuthHeaders: free-tier context has no credentials — a free-tier tool must not call a credentialed downstream');
+  }
   // context.kind === 'pro'
   const secret = process.env.MCP_INTERNAL_HMAC_SECRET ?? '';
   if (!secret) {
@@ -516,6 +526,13 @@ export async function runContextPreChecks(
   if (context.kind === 'user_key') {
     return runUserKeyPreChecks(context, deps, resourceMetadataUrl, corsHeaders, ctx);
   }
+  if (context.kind === 'free') {
+    // U7: no entitlement to check — admission was already decided by the
+    // free-tier roster in the handler, and the abuse ceiling there is what
+    // bounds this caller. Reaching the entitlement gate would fail closed on a
+    // caller who correctly has no entitlement.
+    return { ok: true };
+  }
   // env_key: operator-owned, ungated, and never metered by the daily counter.
   return { ok: true };
 }
@@ -541,6 +558,15 @@ export async function applyPerMinuteLimit(context: McpAuthContext, headers: Reco
         return rpcError(null, -32029, 'Rate limit exceeded. Max 60 requests per minute per API key.', headers);
       }
     } catch { /* graceful degradation */ }
+    return null;
+  }
+  if (context.kind === 'free') {
+    // U7: a free principal has no per-user bucket to key on — its ceiling is
+    // `applyFreeTierLimit`, applied by IP on the anon branch before the context
+    // is minted. Returning null here is not a bypass: this function is only
+    // reached on the credentialed branch, and the free caller was already
+    // bounded. Keying an anonymous caller into the per-USER limiter would be
+    // worse than useless — every free caller would share one bucket.
     return null;
   }
   const rl = getMcpProMinRatelimit();
@@ -573,5 +599,56 @@ export async function applyAnonDiscoveryLimit(req: Request, headers: Record<stri
     const { success } = await rl.limit(`ip:${getClientIp(req)}`);
     if (!success) return rpcError(null, -32029, 'Rate limit exceeded. Max 60 unauthenticated discovery requests per minute per IP.', headers);
   } catch { /* graceful degradation */ }
+  return null;
+}
+
+// U7 (R15): the always-free tool subset's own ceiling, deliberately separate
+// from the discovery limiter above.
+//
+// The discovery limiter's fail-OPEN is justified in its own comment by the
+// response carrying no data — that justification does not survive contact with
+// a tool that returns real data, so this one fails CLOSED: an unreachable
+// limiter refuses the call rather than serving unlimited free data. The
+// budget is also far tighter than 60/min, because 60/min sustained is ~86k
+// free calls a day from a single IP.
+const FREE_TIER_LIMIT_PER_MINUTE = 10;
+let mcpFreeTierRatelimit: Ratelimit | null = null;
+
+function getMcpFreeTierRatelimit(): Ratelimit | null {
+  if (mcpFreeTierRatelimit) return mcpFreeTierRatelimit;
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  mcpFreeTierRatelimit = new Ratelimit({
+    redis: new Redis({ url, token, retry: false }),
+    limiter: Ratelimit.slidingWindow(FREE_TIER_LIMIT_PER_MINUTE, '60 s'),
+    prefix: 'rl:mcp:free',
+    analytics: false,
+  });
+  return mcpFreeTierRatelimit;
+}
+
+/**
+ * Fail-CLOSED ceiling for uncredentialed calls to the always-free tool subset.
+ * Returns null when the call may proceed, a Response when it must not — and a
+ * Response (never null) when the limiter itself cannot be reached or errors.
+ */
+export async function applyFreeTierLimit(req: Request, headers: Record<string, string> = {}): Promise<Response | null> {
+  const refusal = () => rpcError(
+    null,
+    -32029,
+    `Free-tier rate limit. Max ${FREE_TIER_LIMIT_PER_MINUTE} unauthenticated tool calls per minute per IP.`,
+    headers,
+  );
+  const rl = getMcpFreeTierRatelimit();
+  // No limiter configured is an UNBOUNDED free-data path, not a green light.
+  if (!rl) return refusal();
+  try {
+    const { success } = await rl.limit(`ip:${getClientIp(req)}`);
+    if (!success) return refusal();
+  } catch {
+    // Fail closed: an unreachable counter must not serve free data.
+    return refusal();
+  }
   return null;
 }

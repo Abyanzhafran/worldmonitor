@@ -70,6 +70,16 @@ export function setUsageContext(usage: McpUsage, context: McpAuthContext): void 
     usage.principalId = context.userId;
     return;
   }
+  if (context.kind === 'free') {
+    // U7: a free-tier caller is anonymous — no customer, no principal. Without
+    // this arm it would fall through to `enterprise_api_key` below and every
+    // free call would report as enterprise traffic in Axiom, corrupting the
+    // one dataset the free tier is supposed to be measured by.
+    usage.authKind = 'anon';
+    usage.customerId = null;
+    usage.principalId = null;
+    return;
+  }
   usage.authKind = 'enterprise_api_key';
 }
 

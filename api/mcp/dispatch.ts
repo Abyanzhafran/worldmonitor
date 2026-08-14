@@ -206,6 +206,17 @@ export async function dispatchToolsCall(
     return rpcError(id, -32602, `Unknown tool: ${p.name}`, corsHeaders);
   }
 
+  // U7 fail-closed guard (defence in depth). A `free` principal is minted in
+  // exactly one place — the handler's free-tier branch, after matching this
+  // same `_freeTier` flag — but a free context reaching any other tool would be
+  // an unauthenticated, unquota'd read of gated data. Re-checking here means
+  // the promotion and the authorisation are not the same line of code, so a
+  // future edit to the handler's matching cannot silently widen what a free
+  // caller can reach.
+  if (context.kind === 'free' && tool._freeTier !== true) {
+    return rpcError(id, -32001, 'Subscription not active.', corsHeaders);
+  }
+
   // Pro-only INCR-first reservation. Both cache-only AND RPC tools count
   // toward the caller's daily cap — EXCEPT `describe_tool` (v1.5.0), which
   // is metadata-only and is actively encouraged by SERVER_INSTRUCTIONS
