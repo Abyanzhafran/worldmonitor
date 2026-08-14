@@ -1600,6 +1600,67 @@ describe('collector latch release is module-owned (#6288)', () => {
     }
   });
 
+  // `flushCollectorQueueForUnload` dispatches the WHOLE backlog at once, outside
+  // the single-slot serialization, so those writes never pass through the latch
+  // that the deadline normally guards. visibilitychange fires this on a tab
+  // switch too — and that page can come back — so "the page is going away
+  // anyway" does not cover it: an unbounded flushed write would hang forever on
+  // a live page, holding whatever the wrapper retains.
+  it('bounds every write the unload flush dispatches, not just the queued one', { timeout: 10_000 }, async () => {
+    const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+    Object.defineProperty(AbortSignal, 'timeout', { configurable: true, value: undefined });
+    const fakeTimers = installFakeTimers();
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    const windowRecord = globalThis.window as Record<string, unknown>;
+    const savedAdd = windowRecord.addEventListener;
+    const savedRemove = windowRecord.removeEventListener;
+    const listeners: Record<string, Array<() => void>> = {};
+    windowRecord.addEventListener = (type: string, handler: () => void) => {
+      (listeners[type] ??= []).push(handler);
+    };
+    windowRecord.removeEventListener = () => {};
+    let calls = 0;
+    window.fetch = (() => {
+      calls += 1;
+      return parkForever();
+    }) as typeof window.fetch;
+    installCollectorFetchGate();
+
+    try {
+      const inFlight = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+      const queuedA = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+      const queuedB = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+      for (const pending of [inFlight, queuedA, queuedB]) void pending.catch(() => {});
+      await drainPromiseHandlers();
+      assert.equal(calls, 1, 'only the in-flight write reached the transport');
+
+      assert.ok((listeners.pagehide ?? []).length > 0, 'the gate registered a pagehide flush');
+      for (const handler of listeners.pagehide ?? []) handler();
+      await drainPromiseHandlers(() => calls === 3, 'the flush dispatches the whole backlog');
+
+      const live = fakeTimers.timers.filter(
+        (timer) => timer.delay === LATCH_DEADLINE_MS && !timer.cancelled,
+      );
+      assert.equal(live.length, 3, 'every flushed write carries its own latch deadline');
+
+      for (const timer of live) timer.callback();
+      await assert.rejects(inFlight, { name: 'TimeoutError' });
+      await assert.rejects(queuedA, { name: 'TimeoutError' });
+      await assert.rejects(queuedB, { name: 'TimeoutError' });
+      assert.ok(
+        fakeTimers.timers.every((timer) => timer.cancelled),
+        'and each one cleans up its timers rather than dangling past navigation',
+      );
+    } finally {
+      console.warn = originalWarn;
+      fakeTimers.restore();
+      windowRecord.addEventListener = savedAdd;
+      windowRecord.removeEventListener = savedRemove;
+      if (timeoutDescriptor) Object.defineProperty(AbortSignal, 'timeout', timeoutDescriptor);
+    }
+  });
+
   it('refuses to re-send a raced-out conversion but still replays a raced-out identity snapshot', () => {
     assert.equal(
       isRetryableCollectorFailure({ kind: 'timeout' }),
