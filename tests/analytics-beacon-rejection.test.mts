@@ -172,7 +172,7 @@ function installFakeTimers(): {
  * than being silently filtered away. If either constant above moves, these
  * tests go red instead of quietly losing their teeth.
  */
-const TRANSPORT_DEADLINE_DELAYS = new Set([21_000, 3_000]);
+const TRANSPORT_DEADLINE_DELAYS = new Set([25_000, 7_000]);
 
 /** The timers that represent an in-page re-send, in scheduling order. */
 function retryTimers(timers: ScheduledTimer[]): ScheduledTimer[] {
@@ -1149,10 +1149,14 @@ function parkForever(): Promise<Response> {
  * `REQUEST_TIMEOUT_MS + LATCH_RELEASE_GRACE_MS` are pinned — moving either one
  * turns these tests red instead of quietly widening the bound.
  */
-const LATCH_DEADLINE_MS = 21_000;
+const LATCH_DEADLINE_MS = 25_000;
 
 function findLatchDeadline(timers: ScheduledTimer[]): ScheduledTimer | undefined {
-  return timers.find((timer) => timer.delay === LATCH_DEADLINE_MS);
+  // `!cancelled` matters once a test issues more than one write: earlier
+  // requests leave their own cleared deadlines in the array, and firing one of
+  // those is a no-op that hangs the test on a request whose real deadline is
+  // still pending.
+  return timers.find((timer) => timer.delay === LATCH_DEADLINE_MS && !timer.cancelled);
 }
 
 /**
@@ -1358,6 +1362,236 @@ describe('collector latch release is module-owned (#6288)', () => {
         collectorFailureFromError(error),
         { kind: 'timeout', raced: true },
         'the latch was released while the request was still outstanding, and the failure must say so',
+      );
+    } finally {
+      console.warn = originalWarn;
+      fakeTimers.restore();
+      if (timeoutDescriptor) Object.defineProperty(AbortSignal, 'timeout', timeoutDescriptor);
+    }
+  });
+
+  // `fetch` resolves the moment response HEADERS arrive; the body is a separate
+  // stream that `inspectCollectorResponse` reads with `response.text()`. Racing
+  // only the headers leaves the wedge intact one line later — the queue parks on
+  // the body read instead, with the same symptom and the same cause. This is the
+  // shape a wrapper produces when it proxies headers through but stalls or never
+  // closes the body stream.
+  it('releases the queue when the transport answers headers and then stalls the body', { timeout: 10_000 }, async () => {
+    const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+    Object.defineProperty(AbortSignal, 'timeout', { configurable: true, value: undefined });
+    const fakeTimers = installFakeTimers();
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    let calls = 0;
+    // 200 with a receipt-shaped status, but `text()` never settles.
+    const headersThenStall = {
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+      text: () => new Promise<string>(() => {}),
+      clone: () => headersThenStall,
+    } as unknown as Response;
+    window.fetch = (() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve(headersThenStall)
+        : Promise.resolve(collectorResponse(true, 200));
+    }) as typeof window.fetch;
+    installCollectorFetchGate();
+
+    try {
+      const stalledBody = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+      void stalledBody.catch(() => {});
+      const queued = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+      await drainPromiseHandlers();
+      assert.equal(calls, 1, 'the second write waits behind the stalled body read');
+
+      const latchDeadline = findLatchDeadline(fakeTimers.timers);
+      assert.ok(latchDeadline, 'the deadline must still be live across the body read');
+      latchDeadline.callback();
+
+      await drainPromiseHandlers(() => calls === 2, 'the queued write reaches the network');
+      assert.equal((await queued).status, 200, 'a stalled body must not wedge the queue');
+    } finally {
+      console.warn = originalWarn;
+      fakeTimers.restore();
+      if (timeoutDescriptor) Object.defineProperty(AbortSignal, 'timeout', timeoutDescriptor);
+    }
+  });
+
+  // The `raced` doc comment's premise is that the abandoned request is still on
+  // the wire and "may yet commit" — so it CAN settle after losing the race. The
+  // queue has moved on by then, and nothing may re-resolve the settled deferred,
+  // double-count the health window, or leak an unhandled rejection.
+  it('ignores a transport that settles after losing the race', { timeout: 10_000 }, async () => {
+    const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+    Object.defineProperty(AbortSignal, 'timeout', { configurable: true, value: undefined });
+    const fakeTimers = installFakeTimers();
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    const leaked: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { leaked.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    let settleLate: ((response: Response) => void) | undefined;
+    let failLate: ((error: unknown) => void) | undefined;
+    let calls = 0;
+    window.fetch = (() => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise<Response>((resolve, reject) => { settleLate = resolve; failLate = reject; });
+      }
+      return Promise.resolve(collectorResponse(true, 200));
+    }) as typeof window.fetch;
+    installCollectorFetchGate();
+
+    try {
+      const abandoned = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+      void abandoned.catch(() => {});
+      await drainPromiseHandlers();
+
+      const latchDeadline = findLatchDeadline(fakeTimers.timers);
+      assert.ok(latchDeadline, 'the module must own a latch deadline');
+      latchDeadline.callback();
+      await assert.rejects(abandoned, { name: 'TimeoutError' });
+
+      const afterRace = getCollectorHealthForTesting().writes;
+
+      // The abandoned request now completes, exactly as a live request would.
+      settleLate?.(collectorResponse(true, 200));
+      await drainPromiseHandlers();
+      assert.equal(
+        getCollectorHealthForTesting().writes,
+        afterRace,
+        'a late success must not be counted a second time',
+      );
+
+      // And the other shape: a late REJECTION must not escape as an unhandled
+      // rejection just because the race already settled.
+      const secondAbandoned = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+      void secondAbandoned.catch(() => {});
+      await drainPromiseHandlers();
+      failLate?.(new TypeError('Failed to fetch'));
+      await drainPromiseHandlers();
+      await new Promise((resolve) => globalThis.queueMicrotask(() => resolve(null)));
+
+      assert.deepEqual(leaked, [], `late settlement leaked: ${leaked.map(String).join(', ')}`);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      console.warn = originalWarn;
+      fakeTimers.restore();
+      if (timeoutDescriptor) Object.defineProperty(AbortSignal, 'timeout', timeoutDescriptor);
+    }
+  });
+
+  // The whole point of #6288 is that the parked-transport incident is currently
+  // invisible. Fixing the queue REMOVES its only outward symptom (queue-overflow),
+  // so if the raced timeout inherits the ordinary environment-noise gating the
+  // population goes dark: the module abandons ~2 writes per 60s window against a
+  // 5-write floor, and the aggregate-first path only reports to Sentry when the
+  // aggregate DECLINES.
+  it('alerts on a raced timeout despite the environment-noise floors', () => {
+    assert.equal(
+      isAlertWorthyCollectorFailure({ kind: 'timeout' }, { writes: 2, failures: 2 }),
+      false,
+      'baseline: an ordinary timeout below the sample floor stays silent',
+    );
+    assert.equal(
+      isAlertWorthyCollectorFailure({ kind: 'timeout', raced: true }, { writes: 2, failures: 2 }),
+      true,
+      'a raced timeout can never clear a 5-write floor at one abandoned write per ~25s',
+    );
+    assert.equal(
+      isAlertWorthyCollectorFailure({ kind: 'timeout', raced: true }, { writes: 1, failures: 1, noiseReported: true }),
+      true,
+      'and an earlier blocked request in the same window must not latch it silent',
+    );
+  });
+
+  it('reports a raced timeout to Sentry even when the aggregate accepts the report', async () => {
+    const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+    Object.defineProperty(AbortSignal, 'timeout', { configurable: true, value: undefined });
+    const fakeTimers = installFakeTimers();
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    const reports: unknown[] = [];
+    // `true` = the cross-user aggregate accepted it. On the ordinary
+    // environment-noise path that RETURNS before Sentry, which is exactly how a
+    // healthy aggregate would hide this incident.
+    _setCollectorHealthReporterForTesting(async (report) => { reports.push(report); return true; });
+    window.fetch = (() => parkForever()) as typeof window.fetch;
+    installCollectorFetchGate();
+
+    try {
+      const parked = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+      void parked.catch(() => {});
+      await drainPromiseHandlers();
+
+      const latchDeadline = findLatchDeadline(fakeTimers.timers);
+      assert.ok(latchDeadline, 'the module must own a latch deadline');
+      latchDeadline.callback();
+      await assert.rejects(parked, { name: 'TimeoutError' });
+      await drainPromiseHandlers();
+
+      assert.equal(reports.length, 1, 'the raced write still feeds the cross-user aggregate');
+      assert.equal(
+        getCollectorHealthForTesting().reportedFailureSignatures,
+        1,
+        'and it emits its own Sentry event rather than deferring to the aggregate verdict',
+      );
+    } finally {
+      console.warn = originalWarn;
+      fakeTimers.restore();
+      if (timeoutDescriptor) Object.defineProperty(AbortSignal, 'timeout', timeoutDescriptor);
+    }
+  });
+
+  // The cohort's once-per-window noise latch is checked BEFORE the per-signature
+  // dedup, so an ordinary blocked request earlier in the same window would
+  // otherwise return first and suppress the raced report — leaving the signature
+  // split inert for the one failure it exists for. A fresh-window test cannot
+  // see this: the latch is only load-bearing once something else has tripped it.
+  it('still reports a raced timeout after an ordinary blocked request latched the window', { timeout: 10_000 }, async () => {
+    const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+    Object.defineProperty(AbortSignal, 'timeout', { configurable: true, value: undefined });
+    const fakeTimers = installFakeTimers();
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    // The aggregate declines, so the per-page Sentry fallback is the live path.
+    _setCollectorHealthReporterForTesting(async () => false);
+    // ENVIRONMENT_NOISE_MIN_WRITES — the sample floor an ad-blocker baseline
+    // must cross before it is allowed to report even once.
+    const noiseFloor = 5;
+    let calls = 0;
+    window.fetch = (() => {
+      calls += 1;
+      return calls <= noiseFloor
+        ? Promise.reject(new TypeError('Failed to fetch'))
+        : parkForever();
+    }) as typeof window.fetch;
+    installCollectorFetchGate();
+
+    try {
+      for (let index = 0; index < noiseFloor; index += 1) {
+        await window.fetch(UMAMI_SEND_URL, collectorEventInit()).catch(() => {});
+      }
+      await drainPromiseHandlers(
+        () => getCollectorHealthForTesting().cohorts.event.noiseReported,
+        'the ordinary blocked requests trip the once-per-window noise latch',
+      );
+      const afterNoise = getCollectorHealthForTesting().reportedFailureSignatures;
+      assert.equal(afterNoise, 1, 'the ad-blocker baseline reported exactly once');
+
+      const parked = window.fetch(UMAMI_SEND_URL, collectorEventInit());
+      void parked.catch(() => {});
+      await drainPromiseHandlers();
+      const latchDeadline = findLatchDeadline(fakeTimers.timers);
+      assert.ok(latchDeadline, 'the module must own a latch deadline');
+      latchDeadline.callback();
+      await assert.rejects(parked, { name: 'TimeoutError' });
+
+      await drainPromiseHandlers(
+        () => getCollectorHealthForTesting().reportedFailureSignatures > afterNoise,
+        'the raced timeout reports despite the already-latched window',
       );
     } finally {
       console.warn = originalWarn;
