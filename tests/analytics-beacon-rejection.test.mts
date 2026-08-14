@@ -1344,7 +1344,14 @@ describe('collector latch release is module-owned (#6288)', () => {
     Object.defineProperty(AbortSignal, 'timeout', { configurable: true, value: undefined });
     const fakeTimers = installFakeTimers();
     const originalWarn = console.warn;
-    console.warn = () => {};
+    // This object is the SAME one that rides into Sentry as `extra`, so
+    // capturing the console warning is how the reporting payload is observed
+    // without standing up the deferred Sentry queue and a stub SDK.
+    const diagnostics: Array<Record<string, unknown>> = [];
+    console.warn = (...args: unknown[]) => {
+      const detail = args[1];
+      if (detail && typeof detail === 'object') diagnostics.push(detail as Record<string, unknown>);
+    };
     window.fetch = (() => parkForever()) as typeof window.fetch;
     installCollectorFetchGate();
 
@@ -1363,6 +1370,15 @@ describe('collector latch release is module-owned (#6288)', () => {
         { kind: 'timeout', raced: true },
         'the latch was released while the request was still outstanding, and the failure must say so',
       );
+
+      await drainPromiseHandlers(() => diagnostics.length > 0, 'the failure is reported');
+      assert.equal(
+        diagnostics[0]?.raced,
+        true,
+        'the reporting payload must carry the marker — an operator triaging a timeout '
+        + 'needs to know whether the request is still on the wire',
+      );
+      assert.equal(diagnostics[0]?.failureKind, 'timeout', 'and it stays a timeout, not a new kind');
     } finally {
       console.warn = originalWarn;
       fakeTimers.restore();
