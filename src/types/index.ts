@@ -663,6 +663,8 @@ export interface MapLayers {
   weather: boolean;
   /** Official Canada road events and conditions from Ontario, Alberta, Toronto, and British Columbia. */
   canadaRoads: boolean;
+  /** Alberta Emergency Alert (and later provincial siblings) (#6610). */
+  canadaAlerts: boolean;
   economic: boolean;
   waterways: boolean;
   outages: boolean;

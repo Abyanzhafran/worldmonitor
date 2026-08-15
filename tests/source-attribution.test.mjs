@@ -94,14 +94,20 @@ test('source inventory has complete metadata and matches the generated catalog',
   }
 
   const stats = sourceAttributionStats(inventory, manifest);
-  // Hardcoded on purpose: comparing these against docs/generated/stats.json
-  // makes the gate agree with itself, because both sides come from the same
-  // generator — a regeneration moves the expectation in lockstep with the value
-  // and the assert can never fail. 550/548/669 on main (Ontario #6663, Alberta
-  // #6666, Toronto #6665) + api.open511.gov.bc.ca from this PR.
-  assert.equal(stats.activeHosts, 551);
-  assert.equal(stats.providerCount, 549);
-  assert.equal(stats.observedHosts, 670);
+  // Hardcoded on purpose, and this DELIBERATELY OVERRIDES the lockstep-with-
+  // docs/generated/stats.json version that arrived on the #6610 branch.
+  // buildSourceAttributionStats (scripts/source-attribution.mjs:1090) is a thin
+  // wrapper that calls this exact sourceAttributionStats(inventory, manifest) on
+  // the same inputs, and that is what writes stats.json. So the lockstep form
+  // compares a value against a serialized snapshot of itself: it cannot fail on
+  // an unintended host-count change, only on a stale snapshot — which docs:check
+  // already gates. Hardcoding is what makes an accidental source drop go red.
+  // Yes, these numbers go stale; that is the tripwire working, and the fix is a
+  // conscious one-line bump. 550/548/669 on main (Ontario #6663, Alberta #6666,
+  // Toronto #6665) + api.open511.gov.bc.ca from this PR.
+  assert.equal(stats.activeHosts, 552);
+  assert.equal(stats.providerCount, 550);
+  assert.equal(stats.observedHosts, 671);
   assert.ok(stats.reviewNeeded > 0, 'terms-review rows must remain visible until a license audit is complete');
 });
 

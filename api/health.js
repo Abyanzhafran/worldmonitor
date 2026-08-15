@@ -223,6 +223,7 @@ const BOOTSTRAP_KEYS = {
   albertaRoads:      'infra:alberta-511:v1',
   torontoRoads:      'infra:toronto-roads:v1',
   bcOpen511:         'infra:bc-open511:v1',
+  canadaAlerts:      'alerts:alberta-aea:v1',
   spending:          'economic:spending:v1',
   techEvents:        'research:tech-events-bootstrap:v1',
   gdeltIntel:        'intelligence:gdelt-intel:v1',
@@ -721,6 +722,16 @@ const SEED_META = {
       mode: 'expiring-ack',
       fromKey: null,
       issue: 6611,
+      status: 'EMPTY',
+    },
+  },
+  canadaAlerts:     {
+    key: 'seed-meta:alerts:alberta-aea',
+    maxStaleMin: 45, // seed-alberta-emergency-alert cron */15; 45 = 3× interval
+    cutover: {
+      mode: 'expiring-ack',
+      fromKey: null,
+      issue: 6610,
       status: 'EMPTY',
     },
   },
@@ -1322,7 +1333,7 @@ function parseFredRatesRolloutUntil(results) {
 }
 
 const EMPTY_DATA_OK_KEYS = new Set([
-  'notamClosures', 'faaDelays', 'intlDelays', 'gpsjam', 'positiveGeoEvents', 'weatherAlerts', 'canadaRoads', 'albertaRoads', 'torontoRoads', 'bcOpen511',
+  'notamClosures', 'faaDelays', 'intlDelays', 'gpsjam', 'positiveGeoEvents', 'weatherAlerts', 'canadaRoads', 'albertaRoads', 'torontoRoads', 'bcOpen511', 'canadaAlerts',
   'earningsCalendar', 'econCalendar', 'cotPositioning',
   'usniFleet', // usniFleetStale covers the fallback; relay outages → WARN not CRIT
   'newsThreatSummary', // only written when classify produces country matches; quiet news periods = 0 countries, no write
@@ -1371,6 +1382,10 @@ const MISSING_DATA_IS_FAILURE_KEYS = new Set([
   'albertaRoads',
   'torontoRoads',
   'bcOpen511',
+  // Same contract, and the highest-stakes member of it: seed-alberta-emergency-alert
+  // runs with zeroIsValid, so a quiet province still writes {alerts: []}. Reading
+  // OK while an EMERGENCY ALERT payload has vanished is the worst failure in this set.
+  'canadaAlerts',
 ]);
 
 // Keys where a present payload with meta recordCount=0 is valid, but the data
