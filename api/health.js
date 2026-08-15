@@ -711,7 +711,7 @@ const SEED_META = {
   },
   torontoRoads:     {
     key: 'seed-meta:infra:toronto-roads',
-    maxStaleMin: 45, // seed-toronto-road-restrictions cron */15; 45 = 3× interval
+    maxStaleMin: 360, // seed-bundle-canada member interval 2h; 360 = 3× interval. At the old 45 (sized for a */15 cron) a healthy 2h publisher read STALE_SEED permanently, because normal data age reaches 120min.
     cutover: {
       mode: 'expiring-ack',
       fromKey: null,
@@ -721,7 +721,7 @@ const SEED_META = {
   },
   bcOpen511:        {
     key: 'seed-meta:infra:bc-open511',
-    maxStaleMin: 45, // seed-open511 cron */15; 45 = 3× interval
+    maxStaleMin: 90, // seed-bundle-canada member interval 30min; 90 = 3× interval, and matches this seeder's own 5400s TTL. At the old 45 a single missed tick tripped STALE_SEED.
     cutover: {
       mode: 'expiring-ack',
       fromKey: null,
