@@ -2,7 +2,7 @@
 
 WorldMonitor root instructions. Use this file for task routing, authority, and universal safety rules. Follow the linked references for subsystem detail.
 
-Real-time global intelligence dashboard. TypeScript SPA (Vite + Preact) with 186 top-level TypeScript component files, 80+ Vercel Edge API endpoint entries, a Tauri desktop app with Node.js sidecar, and a Railway relay service. Aggregates geopolitics, military, finance, climate, cyber, maritime, and aviation data across 39 freshness-tracked source groups.
+Real-time global intelligence dashboard with a TypeScript browser app, Vercel Edge APIs, a Tauri desktop app and Node.js sidecar, and Railway services. It aggregates geopolitics, military, finance, climate, cyber, maritime, and aviation data.
 
 ## Task Mode and Authority
 
