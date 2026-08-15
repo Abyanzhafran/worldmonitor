@@ -135,7 +135,7 @@ export const LEGACY_DIRECT_CONTENT_WRITES = [
   'src/components/GdeltIntelPanel.ts :: this.content.insertAdjacentElement(…) x1',
   'src/components/GoodThingsDigestPanel.ts :: setTrustedHtml(this.content, …) x3',
   'src/components/GoodThingsDigestPanel.ts :: this.content.appendChild(…) x1',
-  'src/components/HeroSpotlightPanel.ts :: setTrustedHtml(this.content, …) x3',
+  'src/components/HeroSpotlightPanel.ts :: setTrustedHtml(this.content, …) x1',
   'src/components/InternetDisruptionsPanel.ts :: replaceChildren(this.content, …) x1',
   'src/components/LatestBriefPanel.ts :: clearChildren(this.content) x5',
   'src/components/LatestBriefPanel.ts :: replaceChildren(this.content, …) x1',
