@@ -110,9 +110,11 @@ test('source inventory has complete metadata and matches the generated catalog',
   // gtfsrt.ttc.ca: +1 host, +1 provider, +1 observed.
   // Main carries 554/550/673. This PR adds www.bankofcanada.ca and
   // www150.statcan.gc.ca: +2 hosts, +2 providers, +2 observed.
-  assert.equal(stats.activeHosts, 556);
-  assert.equal(stats.providerCount, 552);
-  assert.equal(stats.observedHosts, 675);
+  // Main carries 556/552/675 after BoC/StatCan (#6670). This PR adds
+  // api.weather.gc.ca (ECCC GeoMet): +1 host, +1 provider, +1 observed.
+  assert.equal(stats.activeHosts, 557);
+  assert.equal(stats.providerCount, 553);
+  assert.equal(stats.observedHosts, 676);
   assert.ok(stats.reviewNeeded > 0, 'terms-review rows must remain visible until a license audit is complete');
 
   const byHost = new Map(manifest.entries.map((entry) => [entry.host, entry]));
