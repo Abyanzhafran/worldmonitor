@@ -97,15 +97,15 @@
   "freshnessRequiredForRisk": 2,
   "feedDefinitions": 658,
   "sourceAttribution": {
-    "activeHosts": 554,
-    "structuredHosts": 303,
+    "activeHosts": 556,
+    "structuredHosts": 305,
     "feedHosts": 279,
     "operationalStatusHosts": 30,
-    "providerCount": 550,
-    "observedHosts": 673,
+    "providerCount": 552,
+    "observedHosts": 675,
     "reviewNeeded": 524
   },
-  "sourceAttributionHosts": 554,
+  "sourceAttributionHosts": 556,
   "airportCount": 115,
   "stockExchangeCount": 29,
   "centralBankInstitutionCount": 14,
@@ -308,7 +308,7 @@
   },
   "healthProbedKeys": {
     "bootstrap": 114,
-    "standalone": 156,
-    "total": 270
+    "standalone": 158,
+    "total": 272
   }
 }
