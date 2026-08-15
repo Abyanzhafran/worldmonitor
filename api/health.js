@@ -221,6 +221,7 @@ const BOOTSTRAP_KEYS = {
   weatherAlerts:     'weather:alerts:v1',
   canadaRoads:       'infra:ontario-511:v1',
   albertaRoads:      'infra:alberta-511:v1',
+  torontoRoads:      'infra:toronto-roads:v1',
   spending:          'economic:spending:v1',
   techEvents:        'research:tech-events-bootstrap:v1',
   gdeltIntel:        'intelligence:gdelt-intel:v1',
@@ -699,6 +700,16 @@ const SEED_META = {
       mode: 'expiring-ack',
       fromKey: null,
       issue: 6612,
+      status: 'EMPTY',
+    },
+  },
+  torontoRoads:     {
+    key: 'seed-meta:infra:toronto-roads',
+    maxStaleMin: 45, // seed-toronto-road-restrictions cron */15; 45 = 3× interval
+    cutover: {
+      mode: 'expiring-ack',
+      fromKey: null,
+      issue: 6609,
       status: 'EMPTY',
     },
   },
@@ -1300,7 +1311,7 @@ function parseFredRatesRolloutUntil(results) {
 }
 
 const EMPTY_DATA_OK_KEYS = new Set([
-  'notamClosures', 'faaDelays', 'intlDelays', 'gpsjam', 'positiveGeoEvents', 'weatherAlerts', 'canadaRoads', 'albertaRoads',
+  'notamClosures', 'faaDelays', 'intlDelays', 'gpsjam', 'positiveGeoEvents', 'weatherAlerts', 'canadaRoads', 'albertaRoads', 'torontoRoads',
   'earningsCalendar', 'econCalendar', 'cotPositioning',
   'usniFleet', // usniFleetStale covers the fallback; relay outages → WARN not CRIT
   'newsThreatSummary', // only written when classify produces country matches; quiet news periods = 0 countries, no write
@@ -1343,9 +1354,11 @@ const MISSING_DATA_IS_FAILURE_KEYS = new Set([
   // so they never refresh metadata alone. Without this, an expired or evicted
   // canonical key alongside a still-refreshing seed-meta classified OK: the map
   // layer goes blank and nothing pages. Same reasoning as `outages`.
-  // albertaRoads is written by the same seeder on the same publish path.
+  // albertaRoads is written by the same seeder on the same publish path;
+  // torontoRoads is a different seeder under the same publish contract.
   'canadaRoads',
   'albertaRoads',
+  'torontoRoads',
 ]);
 
 // Keys where a present payload with meta recordCount=0 is valid, but the data
