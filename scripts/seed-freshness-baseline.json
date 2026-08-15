@@ -107,6 +107,18 @@
         "activatedAt": "2026-08-15T20:45:00.000Z",
         "firstScheduledRunAt": "2026-08-16T20:45:00.000Z"
       }
+    },
+    {
+      "name": "viarailLive",
+      "status": "STALE_SEED",
+      "issue": 6615,
+      "expiresAt": "2026-08-15T12:00:00.000Z",
+      "reason": "New optional unofficial VIA Rail live JSON probe (#6615). EMPTY_DATA_OK maps a missing key to STALE_SEED (warn), not EMPTY/crit or SEED_ERROR. After the first tick a 404/shape-break writes sourceState unavailable (NOT_CONFIGURED) rather than remaining STALE_SEED. Re-anchored 2026-08-14T18:00Z: this seeder no longer has its own */15 cron \u2014 seed-bundle-canada (#6711) owns it as a member gated on intervalMs 15min \u2014 so the first run cannot happen until that bundle service is CREATED on Railway, not merely until this branch deploys. The window covers provisioning and matches the ttcAlerts anchor, since both clear on the same event. If the bundle has not been provisioned by 2026-08-15T12:00Z, re-anchor both again.",
+      "cutover": {
+        "probeKey": "seed-meta:transit:viarail-live",
+        "activatedAt": "2026-08-14T18:00:00.000Z",
+        "firstScheduledRunAt": "2026-08-15T12:00:00.000Z"
+      }
     }
   ]
 }

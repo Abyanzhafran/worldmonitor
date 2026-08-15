@@ -542,6 +542,12 @@ const PROVIDER_OVERRIDES = {
     attribution: 'Excluded from the provider count: standards reference, not an ingested source.',
     status: 'excluded',
   },
+  'tsimobile.viarail.ca': {
+    provider: 'VIA Rail Tracker (unofficial)',
+    license: 'VIA Rail Site Terms prohibit commercial use of the Site (https://www.viarail.ca/en/terms-and-conditions). Developer Resources publish GTFS only under Open Government Licence – Canada v2 (https://www.viarail.ca/en/developer-resources); that OGL grant does not cover tsimobile.viarail.ca unofficial live JSON. Terms require review.',
+    attribution: 'VIA Rail Canada; unofficial live train JSON at tsimobile.viarail.ca. Not the Developer Resources GTFS feed; OGL does not apply to this host. Best-effort only.',
+    status: 'terms-review',
+  },
 };
 
 const LOGICAL_ENTRIES = [

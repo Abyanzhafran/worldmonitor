@@ -103,12 +103,13 @@ test('source inventory has complete metadata and matches the generated catalog',
   // an unintended host-count change, only on a stale snapshot — which docs:check
   // already gates. Hardcoding is what makes an accidental source drop go red.
   // Yes, these numbers go stale; that is the tripwire working, and the fix is a
-  // conscious one-line bump. Current main carries 552 hosts, 550 providers,
-  // and 671 observed hosts. The OpenSky and Wingbits aliases in this PR collapse
-  // two duplicate provider identities without removing any host.
-  assert.equal(stats.activeHosts, 552);
-  assert.equal(stats.providerCount, 548);
-  assert.equal(stats.observedHosts, 671);
+  // conscious one-line bump. Main carries 552/548/671 — 550 providers from the
+  // Canada roads stack and Alberta Emergency Alert (#6669), less the two the
+  // OpenSky and Wingbits aliases collapsed in #6717 without removing a host.
+  // This PR adds tsimobile.viarail.ca: +1 host, +1 provider, +1 observed.
+  assert.equal(stats.activeHosts, 553);
+  assert.equal(stats.providerCount, 549);
+  assert.equal(stats.observedHosts, 672);
   assert.ok(stats.reviewNeeded > 0, 'terms-review rows must remain visible until a license audit is complete');
 
   const byHost = new Map(manifest.entries.map((entry) => [entry.host, entry]));
