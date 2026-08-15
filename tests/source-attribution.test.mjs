@@ -106,10 +106,11 @@ test('source inventory has complete metadata and matches the generated catalog',
   // conscious one-line bump. Main carries 552/548/671 — 550 providers from the
   // Canada roads stack and Alberta Emergency Alert (#6669), less the two the
   // OpenSky and Wingbits aliases collapsed in #6717 without removing a host.
-  // This PR adds tsimobile.viarail.ca: +1 host, +1 provider, +1 observed.
-  assert.equal(stats.activeHosts, 553);
-  assert.equal(stats.providerCount, 549);
-  assert.equal(stats.observedHosts, 672);
+  // Main carries 553/549/672 once VIA Rail (#6615) landed. This PR adds
+  // gtfsrt.ttc.ca: +1 host, +1 provider, +1 observed.
+  assert.equal(stats.activeHosts, 554);
+  assert.equal(stats.providerCount, 550);
+  assert.equal(stats.observedHosts, 673);
   assert.ok(stats.reviewNeeded > 0, 'terms-review rows must remain visible until a license audit is complete');
 
   const byHost = new Map(manifest.entries.map((entry) => [entry.host, entry]));

@@ -516,6 +516,8 @@ const STANDALONE_KEYS = {
   intelHistoryIngestEnergyIntelligence:  'intel-history:ingest-health:energy:intelligence:v1',
   // VIA Rail Tracker unofficial live JSON (#6615). No dashboard consumer.
   viarailLive:           'transit:viarail:live',
+  // Seeded and health-monitored; no transit panel yet (#6623).
+  ttcAlerts: 'transit:ttc:alerts:v1',
 };
 
 const SEED_META = {
@@ -737,6 +739,11 @@ const SEED_META = {
       status: 'EMPTY',
     },
   },
+  // seed-meta is `seed-meta:${domain}:${resource}` from runSeed('transit', 'ttc-alerts'),
+  // so the key takes a HYPHEN — it is NOT the canonical transit:ttc:alerts:v1 with
+  // :v1 stripped. The colon form probed a key the seeder never writes, which reads
+  // absent forever no matter how healthy the seeder is.
+  ttcAlerts:        { key: 'seed-meta:transit:ttc-alerts',         maxStaleMin: 30, cutover: { mode: 'expiring-ack', fromKey: null, issue: 6623, status: 'EMPTY' } }, // 5min bundle member; 30 = 6× interval. Empty until first Railway tick is an expiring acknowledgement, not a crit.
   spending:         { key: 'seed-meta:economic:spending',          maxStaleMin: 120 },
   globalTenders:    { key: 'seed-meta:economic:global-tenders',   maxStaleMin: 180 },
   globalTendersSam:             { key: 'seed-meta:economic:global-tenders:sam',              maxStaleMin: 240 }, // 150min request pacing + hourly member gate yields ~180min publishes; 240min leaves one gate of scheduling jitter without raising the 10/day SAM budget.
@@ -1444,6 +1451,10 @@ const ZERO_RECORD_DATA_OK_KEYS = new Set([
   // A completed surge calculation can legitimately contain no surge events;
   // the canonical snapshot must still exist and remain fresh.
   'militarySurges',
+  // TTC GTFS-RT service alerts: a quiet window can validly contain zero
+  // disruptions. The seeder always publishes {alerts:[]}, so a missing
+  // canonical key is still EMPTY (crit).
+  'ttcAlerts',
 ]);
 
 // Cascade groups: if any key in the group has data, all empty siblings are OK.
