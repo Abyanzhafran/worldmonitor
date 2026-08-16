@@ -40,7 +40,7 @@
  *     `https://api.worldmonitor.app/...`; annotating below that names the host
  *     actually contacted.
  *
- * `tests/fetch-attribution-install-order.test.mjs` fails if that ordering is
+ * `tests/fetch-attribution-install-order.test.mts` fails if that ordering is
  * ever broken.
  *
  * ## What it must never touch
@@ -137,11 +137,32 @@ export function annotateFetchFailure(
   // Keep the original frames. Sentry groups on the stack, and our wrapper frame
   // carries no information the original did not already have.
   if (error.stack) annotated.stack = error.stack;
-  (annotated as { cause?: unknown }).cause = error;
+
+  // DELIBERATELY NOT `cause`. Setting `annotated.cause = error` makes this whole
+  // module inert, and the failure is silent:
+  //
+  //   1. `linkedErrorsIntegration()` is a DEFAULT @sentry/browser integration
+  //      (build/npm/cjs/prod/sdk.js:32) and sentry-init.ts does not disable
+  //      defaults, so it runs in `preprocessEvent` — BEFORE `beforeSend`.
+  //   2. It walks `.cause` and expands the chain into `event.exception.values`,
+  //      placing the original error LAST (@sentry/core aggregate-errors.js:20:
+  //      "the last item in event.exception.values is the exception originating
+  //      from the original Error"). The bare cause therefore lands at index 0.
+  //   3. `beforeSend` reads `event.exception?.values?.[0]?.value`
+  //      (sentry-init.ts:353) — i.e. the BARE message. The host suffix never
+  //      reaches THIRD_PARTY_FETCH_HOST_ALLOWLIST and nothing is suppressed.
+  //
+  // Nothing is lost by omitting it: the original `stack` is copied above, and
+  // the original `message` is the annotated one minus the ` (<host>)` suffix.
+  // Re-adding `cause` silently reverts #6746 — every single-value test fixture
+  // still passes, which is exactly how this shipped once already. The
+  // two-value regression test in tests/sentry-beforesend.test.mjs is what
+  // catches it.
   return annotated;
 }
 
 let installedWrapper: typeof globalThis.fetch | null = null;
+let preWrapFetch: typeof globalThis.fetch | null = null;
 
 /**
  * Wrap `window.fetch` once so every failure that reaches the network is
@@ -170,10 +191,31 @@ export function installFetchFailureAttribution(): boolean {
     return false;
   }
   installedWrapper = wrapped;
+  preWrapFetch = original;
   return true;
 }
 
-/** Test seam — restores the pre-wrapping `fetch` and clears the install latch. */
+/**
+ * Test seam — restores the pre-wrapping `fetch` and clears the install latch.
+ *
+ * The restore is guarded on `window.fetch` still being OUR wrapper: if some
+ * other instrumentation wrapped us afterwards, putting the original back would
+ * tear that wrapper's delegate out from under it. In that case we clear the
+ * latch only, exactly as `analytics-collector-transport.ts` does.
+ */
 export function resetFetchFailureAttributionForTesting(): void {
+  if (
+    typeof window !== 'undefined'
+    && installedWrapper
+    && preWrapFetch
+    && window.fetch === installedWrapper
+  ) {
+    try {
+      window.fetch = preWrapFetch;
+    } catch {
+      // Some harnesses expose a non-writable fetch property.
+    }
+  }
   installedWrapper = null;
+  preWrapFetch = null;
 }

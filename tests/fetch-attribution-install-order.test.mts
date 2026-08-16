@@ -31,9 +31,44 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const mainPath = resolve(__dirname, '../src/main.ts');
 
-/** Call sites that install a `window.fetch` wrapper from `src/main.ts`. */
+/** Call sites that install a `window.fetch` wrapper SYNCHRONOUSLY from `src/main.ts`. */
 const LATER_WRAPPER_INSTALLS = ['installRuntimeFetchPatch()', 'installWebApiRedirect()'];
 const ATTRIBUTION_INSTALL = 'installFetchFailureAttribution()';
+
+/**
+ * Bootstrap calls that DO eventually install a `window.fetch` wrapper, but only
+ * asynchronously — `initAnalytics()` reaches `installCollectorFetchGate()` via
+ * `scheduleAfterFirstPaint(loadUmamiScript, ...)`, and `initDebugBearRum()`
+ * injects a CDN script that wraps fetch whenever it loads.
+ *
+ * Both are called BEFORE the attribution install, so attribution is innermost
+ * only because of that deferral — not because of source order. Listed here so
+ * the dependency is explicit rather than accidental.
+ */
+const DEFERRED_FETCH_WRAPPERS = new Set(['initAnalytics()', 'initDebugBearRum()']);
+
+/**
+ * Bootstrap calls that do not touch `window.fetch` at all.
+ *
+ * `installChunkReloadGuard` and `installSwUpdateHandler` were surfaced by this
+ * guard's own closed-world check on its first run (the earlier zero-arg-only
+ * scan missed them); both verified fetch-free — zero `window.fetch =` /
+ * `globalThis.fetch =` assignments in src/bootstrap/chunk-reload.ts and
+ * src/bootstrap/sw-update.ts.
+ */
+const NON_FETCH_BOOTSTRAP = new Set([
+  'installChunkReloadGuard()',
+  'installSwUpdateHandler()',
+  'initI18n()',
+  'initLiveChannelsWindow()',
+  'initMetaTags()',
+  'initSettingsWindow()',
+  'initVercelAnalytics()',
+  'installLcpAttributionDebug()',
+  'installPreInitErrorQueue()',
+  'installStaleBundleCheck()',
+  'installUtmInterceptor()',
+]);
 
 /**
  * Strips comments so a mention in prose does not read as a call site. Without
@@ -79,20 +114,59 @@ describe('fetch attribution install order (src/main.ts)', () => {
     });
   }
 
-  it('finds every window.fetch-wrapping installer this guard knows about', () => {
-    // If main.ts gains another fetch-wrapping installer, this guard must learn
-    // about it — otherwise a new wrapper could quietly install before ours and
-    // the ordering assertions above would still pass.
-    const installerCalls = [...code.matchAll(/\binstall([A-Z]\w*)\(\)/g)].map((m) => `install${m[1]}()`);
+  it('forces every new bootstrap installer to be triaged (closed-world)', () => {
+    // CLOSED-WORLD, not an opt-in allowlist. The previous version of this test
+    // ended in `assert.ok(unknown.length >= 0)` — mathematically always true, so
+    // the one check meant to catch a new fetch wrapper sneaking in ahead of ours
+    // could never fail. Five reviewers flagged it independently.
+    //
+    // The fix inverts the burden: EVERY bootstrap call in main.ts must appear in
+    // one of the two sets below. A newly added installer fails this test until
+    // someone classifies it, which is exactly the moment to ask "does it wrap
+    // window.fetch, and if so does it install after us?".
+    //
+    // Matches `init*`/`install*`/`setup*` with or without arguments, so a
+    // parameterised installer cannot slip through on shape alone.
+    const bootstrapCalls = new Set(
+      [...code.matchAll(/\b((?:install|init|setup)[A-Z]\w*)\s*\(/g)].map((m) => `${m[1]}()`),
+    );
+
     const knownFetchWrappers = new Set([ATTRIBUTION_INSTALL, ...LATER_WRAPPER_INSTALLS]);
-    const unknown = installerCalls.filter((c) => !knownFetchWrappers.has(c));
-    // Not an assertion that `unknown` is empty — main.ts installs plenty of
-    // non-fetch things. This pins the ones we DO know wrap fetch.
     for (const known of knownFetchWrappers) {
-      assert.ok(installerCalls.includes(known), `${known} must still be called from src/main.ts`);
+      assert.ok(bootstrapCalls.has(known), `${known} must still be called from src/main.ts`);
     }
-    assert.ok(unknown.length >= 0);
+
+    const unclassified = [...bootstrapCalls].filter(
+      (c) => !knownFetchWrappers.has(c) && !DEFERRED_FETCH_WRAPPERS.has(c) && !NON_FETCH_BOOTSTRAP.has(c),
+    );
+    assert.deepEqual(
+      unclassified,
+      [],
+      'New bootstrap call(s) in src/main.ts are unclassified. Decide for each: does it '
+      + 'wrap window.fetch? -> LATER_WRAPPER_INSTALLS (and it must come AFTER attribution). '
+      + 'Does it reach a fetch wrapper asynchronously? -> DEFERRED_FETCH_WRAPPERS. '
+      + 'Neither? -> NON_FETCH_BOOTSTRAP.',
+    );
   });
+
+  for (const deferred of DEFERRED_FETCH_WRAPPERS) {
+    it(`${deferred} reaches its fetch wrapper asynchronously, so order does not save us`, () => {
+      // These two DO end up installing window.fetch wrappers
+      // (initAnalytics -> installCollectorFetchGate; initDebugBearRum -> the CDN
+      // script's own wrapper) and both are called BEFORE the attribution install.
+      // We are innermost only because each defers the actual wrapping past first
+      // paint / CDN latency — not because of source order. Pin the deferral so a
+      // future change making either synchronous fails here rather than silently
+      // un-attributing the exact traffic this module exists to attribute.
+      const idx = callIndex(source, deferred);
+      assert.notEqual(idx, -1, `${deferred} missing from src/main.ts — update this guard`);
+      assert.ok(
+        idx < callIndex(source, ATTRIBUTION_INSTALL),
+        `${deferred} is expected to precede attribution in source order; if that changed, `
+        + 're-derive whether the deferral argument below still applies',
+      );
+    });
+  }
 });
 
 describe('installFetchFailureAttribution — idempotence', () => {
@@ -109,6 +183,65 @@ describe('installFetchFailureAttribution — idempotence', () => {
 
       assert.equal(installFetchFailureAttribution(), true, 'second install reports installed');
       assert.equal(fakeWindow.fetch, afterFirst, 'second install must NOT re-wrap');
+    } finally {
+      resetFetchFailureAttributionForTesting();
+      if (savedWindow === undefined) delete (globalThis as Record<string, unknown>).window;
+      else (globalThis as Record<string, unknown>).window = savedWindow;
+    }
+  });
+
+  it('passes a SUCCESSFUL fetch straight through', () => {
+    // The wrapper sits under every request in the app, so the success path is
+    // the overwhelmingly common one — and it was entirely untested.
+    const savedWindow = (globalThis as Record<string, unknown>).window;
+    resetFetchFailureAttributionForTesting();
+    const response = new Response('ok');
+    const calls: Array<[unknown, unknown]> = [];
+    const nativeFetch = (async (input: unknown, init: unknown) => {
+      calls.push([input, init]);
+      return response;
+    }) as unknown as typeof fetch;
+    const fakeWindow = { fetch: nativeFetch };
+    (globalThis as Record<string, unknown>).window = fakeWindow;
+    try {
+      installFetchFailureAttribution();
+      const init = { method: 'POST' };
+      return fakeWindow.fetch('https://api.worldmonitor.app/x', init).then((r: Response) => {
+        assert.equal(r, response, 'the original Response must be returned unchanged');
+        assert.deepEqual(calls, [['https://api.worldmonitor.app/x', init]],
+          'input and init must be forwarded unmodified');
+      });
+    } finally {
+      resetFetchFailureAttributionForTesting();
+      if (savedWindow === undefined) delete (globalThis as Record<string, unknown>).window;
+      else (globalThis as Record<string, unknown>).window = savedWindow;
+    }
+  });
+
+  it('reset restores the pre-wrapping fetch', () => {
+    const savedWindow = (globalThis as Record<string, unknown>).window;
+    resetFetchFailureAttributionForTesting();
+    const nativeFetch = (async () => new Response('ok')) as typeof fetch;
+    const fakeWindow = { fetch: nativeFetch };
+    (globalThis as Record<string, unknown>).window = fakeWindow;
+    try {
+      installFetchFailureAttribution();
+      assert.notEqual(fakeWindow.fetch, nativeFetch, 'precondition: install replaced fetch');
+      resetFetchFailureAttributionForTesting();
+      assert.equal(fakeWindow.fetch, nativeFetch, 'reset must put the original back');
+    } finally {
+      resetFetchFailureAttributionForTesting();
+      if (savedWindow === undefined) delete (globalThis as Record<string, unknown>).window;
+      else (globalThis as Record<string, unknown>).window = savedWindow;
+    }
+  });
+
+  it('reports failure instead of throwing when window.fetch is absent', () => {
+    const savedWindow = (globalThis as Record<string, unknown>).window;
+    resetFetchFailureAttributionForTesting();
+    (globalThis as Record<string, unknown>).window = { fetch: undefined };
+    try {
+      assert.equal(installFetchFailureAttribution(), false);
     } finally {
       resetFetchFailureAttributionForTesting();
       if (savedWindow === undefined) delete (globalThis as Record<string, unknown>).window;

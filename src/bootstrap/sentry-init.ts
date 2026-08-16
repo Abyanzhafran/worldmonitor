@@ -387,8 +387,17 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
       // engine-equivalent phrasing, e.g. an embedded SDK's beacon fetch —
       // WORLDMONITOR-RP). Both route through the host allowlist below, which is
       // the load-bearing safety; this match is just the shape detector.
+      // The optional `TypeError: ` prefix and optional trailing period keep this
+      // detector in step with `FETCH_FAILURE_MESSAGE` in
+      // `src/services/fetch-failure-attribution.ts`, which produces these
+      // annotated messages. The two regexes had already drifted: the module
+      // admits a period-less Gecko phrasing (`resource\.?`) that this detector
+      // required literally, so such a message was annotated and then never
+      // routed to the host allowlist — annotated but unsuppressable. Widening
+      // here is safe because it only decides whether to CONSULT the allowlist;
+      // the allowlist itself is the load-bearing safety (#6746).
       const isHostScopedFetchFailure = excType === 'TypeError'
-        && /^(?:Failed to fetch|NetworkError when attempting to fetch resource\.) \([^)]+\)$/.test(msg);
+        && /^(?:TypeError: )?(?:Failed to fetch|NetworkError when attempting to fetch resource\.?) \([^)]+\)$/.test(msg);
       if (!isHostScopedFetchFailure
           && (excType === 'TypeError' || excType === 'RangeError' || /^(?:TypeError|RangeError):/.test(msg))
           && frames.length > 0) {
@@ -407,7 +416,7 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
       // real basemap / API regression is never silently dropped
       // (WORLDMONITOR-NE/NF, WORLDMONITOR-QG).
       if (isHostScopedFetchFailure) {
-        const hostMatch = msg.match(/^(?:Failed to fetch|NetworkError when attempting to fetch resource\.) \(([^)]+)\)$/);
+        const hostMatch = msg.match(/^(?:TypeError: )?(?:Failed to fetch|NetworkError when attempting to fetch resource\.?) \(([^)]+)\)$/);
         const host = hostMatch?.[1];
         if (host && THIRD_PARTY_FETCH_HOST_ALLOWLIST.has(host)) return null;
       }
@@ -577,6 +586,17 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
       // drop TypeScript assertions and would mangle a regex that contained it
       // (same harness trap as the Floot gate above).
       const bareFrameFunction = (fn: string) => fn.replace(/\s*\[[^\]]*\]$/, '');
+      // DELIBERATELY bare-only — do NOT widen this to accept ` (<host>)`.
+      // #6746 review considered exactly that (annotated SG/TZ/Y8 messages no
+      // longer match this gate and now surface instead of being suppressed) and
+      // rejected it: the host-suffixed form must stay OUT of this gate, because
+      // an annotated first-party failure carrying an extension frame would then
+      // be suppressed — silencing a real api.worldmonitor.app outage for every
+      // user who runs a fetch-wrapping extension. That is the precise blind spot
+      // #6746 exists to prevent, and the existing test at
+      // tests/sentry-beforesend.test.mjs:757 fails when this is widened.
+      // Annotated extension noise is instead handled correctly by the host
+      // allowlist above: allowlisted host -> suppressed, ours -> surfaces.
       if (/^(?:TypeError: )?Failed to fetch$/.test(msg)
           && frames.some(f => /^(?:chrome|moz|safari(?:-web)?)-extension:\/\//.test(f.filename ?? '') && /^(?:(?:.*\.)?window\.|(?:window|Object)\.)?(?:fetch|apply)$/i.test(bareFrameFunction(f.function ?? '')))) {
         return null;

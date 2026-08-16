@@ -1427,6 +1427,68 @@ describe('bare "Failed to fetch" is decided by host, not stack shape (WORLDMONIT
     );
   });
 
+  // ── The shape that hid a P0 ────────────────────────────────────────────────
+  //
+  // `linkedErrorsIntegration()` is a DEFAULT @sentry/browser integration
+  // (build/npm/cjs/prod/sdk.js:32) that runs in preprocessEvent, BEFORE
+  // beforeSend. When the thrown error carries `.cause`, it expands the chain
+  // into `event.exception.values` with the ORIGINAL error LAST (@sentry/core
+  // aggregate-errors.js:20) — so a bare cause occupies values[0], which is
+  // exactly what beforeSend reads (sentry-init.ts:353).
+  //
+  // Every other fixture in this file builds a ONE-entry values array, so the
+  // whole suite is structurally blind to that reordering. These two cases are
+  // the only thing standing between us and silently shipping an inert filter.
+  const twoValueEvent = (causeValue, outerValue, frames) => ({
+    exception: {
+      values: [
+        { type: 'TypeError', value: causeValue, stacktrace: { frames } },
+        { type: 'TypeError', value: outerValue, stacktrace: { frames } },
+      ],
+    },
+  });
+
+  it('a bare cause at values[0] defeats host suppression — why we never set `cause`', () => {
+    // If the attribution module ever re-adds `annotated.cause = error`, THIS is
+    // the event Sentry actually delivers, and the beacon stops being suppressed.
+    const event = twoValueEvent(
+      'Failed to fetch',
+      'Failed to fetch (abacus.worldmonitor.app)',
+      zgStack,
+    );
+    assert.ok(
+      beforeSend(event) !== null,
+      'values[0] is the bare cause, so the allowlist cannot fire — this is the '
+      + 'regression that re-adding `cause` would reintroduce',
+    );
+  });
+
+  it('the single-value shape we actually emit IS suppressed', () => {
+    // Contrast case. Same message, same stack, one value — the shape produced
+    // when no `cause` is set. This is what production must look like.
+    const event = makeEvent('Failed to fetch (abacus.worldmonitor.app)', 'TypeError', zgStack);
+    assert.equal(beforeSend(event), null, 'no cause -> annotated message at values[0] -> suppressed');
+  });
+
+  it('the attribution module does not set `cause`', () => {
+    // Belt-and-braces: assert the source-level invariant too, so the reason is
+    // discoverable from this file without reading the module.
+    const attributionSrc = readFileSync(
+      resolve(__dirname, '../src/services/fetch-failure-attribution.ts'),
+      'utf-8',
+    );
+    // Strip comments first — the module explains the hazard in prose, and that
+    // prose necessarily contains the very assignment we are banning.
+    const code = attributionSrc
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '');
+    assert.ok(
+      !/\.cause\s*=/.test(code),
+      'fetch-failure-attribution.ts must not assign .cause — it activates LinkedErrors '
+      + 'and moves the bare message to values[0], defeating host attribution',
+    );
+  });
+
   it('no longer references Vite chunk names in the beforeSend policy', () => {
     // The deletion this whole block licenses. Chunk names are arbitrary build
     // output; a policy keyed on them cannot stay correct across repartitions.

@@ -63,10 +63,22 @@ describe('annotateFetchFailure — annotation', () => {
     assert.equal((result as Error).name, 'TypeError');
   });
 
-  it('preserves the original error as `cause`', () => {
+  it('does NOT set `cause` — that would make the whole module inert (#6746 P0)', () => {
+    // `linkedErrorsIntegration()` is a DEFAULT @sentry/browser integration and
+    // runs in preprocessEvent, BEFORE beforeSend. It expands `.cause` into
+    // `event.exception.values` with the original error LAST, so the BARE cause
+    // lands at index 0 — and beforeSend reads values[0] (sentry-init.ts:353).
+    // With `cause` set, the host suffix never reaches the allowlist and nothing
+    // is ever suppressed. This assertion is the guard against re-adding it.
     const original = fetchFailure('Failed to fetch');
     const result = annotateFetchFailure(original, 'https://api.worldmonitor.app/x');
-    assert.equal((result as { cause?: unknown }).cause, original);
+    assert.equal(
+      (result as { cause?: unknown }).cause,
+      undefined,
+      'setting cause activates LinkedErrors and silently defeats host attribution',
+    );
+    // The original is still recoverable: same stack, and message minus the suffix.
+    assert.equal((result as Error).stack, original.stack);
   });
 
   it('preserves the original stack rather than pointing at the wrapper', () => {
@@ -76,6 +88,19 @@ describe('annotateFetchFailure — annotation', () => {
     // asserting the stack alone would pass on a no-op passthrough.
     assert.notEqual(result, original, 'annotation must produce a new error');
     assert.equal((result as Error).stack, original.stack);
+  });
+
+  it('annotates the Firefox phrasing WITHOUT a trailing period', () => {
+    // The module admits `resource\.?`. sentry-init.ts's host detector originally
+    // required the period literally, so this variant was annotated and then
+    // never routed to the allowlist — annotated but unsuppressable. Both sides
+    // now accept the optional period; this pins the tolerant half.
+    const original = fetchFailure('NetworkError when attempting to fetch resource');
+    const result = annotateFetchFailure(original, 'https://data.debugbear.com/beacon');
+    assert.equal(
+      messageOf(result),
+      'NetworkError when attempting to fetch resource (data.debugbear.com)',
+    );
   });
 
   it('annotates the Firefox phrasing, keeping its trailing period', () => {
