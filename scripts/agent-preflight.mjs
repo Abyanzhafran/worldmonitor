@@ -25,6 +25,7 @@ const SCHEMA = 'worldmonitor-agent-preflight/v1';
 const DEFAULT_NPM_CACHE = '/tmp/worldmonitor-npm-cache';
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10 * 60 * 1000;
 const COMMAND_TIMEOUT_MS = 30_000;
+const FETCH_TIMEOUT_MS = 180_000;
 const DEFAULT_SNAPSHOT_CACHE = join(
   tmpdir(),
   `worldmonitor-agent-cache-${process.getuid?.() ?? 'user'}`,
@@ -101,7 +102,8 @@ export function printHelp() {
   console.log(`Usage: npm run --silent agent:preflight -- [options]
 
 Run fail-fast local and live checks before expensive verification.
-The command emits one JSON document and bootstraps dependencies at most once.
+The command emits one JSON document, bootstraps dependencies at most once,
+and prepares ignored inventory facts in trusted worktrees.
 
 Options:
   --issue <number>      Check open PRs and worktrees for duplicate issue work.
@@ -111,7 +113,7 @@ Options:
   --allow-dirty         Mark the current dirty worktree as intentional.
   --allow-detached      Mark detached HEAD as intentional (for exact-head review).
   --allow-stale-main    Allow HEAD not to contain the current origin/main.
-  --skip-bootstrap      Fail on incomplete dependencies instead of running bootstrap.
+  --skip-bootstrap      Fail on incomplete dependencies and do not run target scripts.
   --bootstrap-timeout-ms <ms>
                         Stop a single bootstrap after this duration. Default: 600000.
   --cache <dir>         Override the PR snapshot cache directory.
@@ -144,11 +146,14 @@ function redactSecrets(value) {
   return value.replace(/(https?:\/\/)[^/@\s]+@/gi, '$1[redacted]@');
 }
 
-function git(runner, rootDir, args) {
-  const result = runCommand(runner, 'git', args, { cwd: rootDir });
+function git(runner, rootDir, args, options = {}) {
+  const result = runCommand(runner, 'git', args, { cwd: rootDir, ...options });
+  const timeoutMs = options.timeout || COMMAND_TIMEOUT_MS;
   return {
     ok: result.status === 0,
-    stderr: redactSecrets(String(result.stderr || result.error?.code || '').trim()),
+    stderr: result.error?.code === 'ETIMEDOUT'
+      ? `git ${args.slice(0, 2).join(' ')} timed out after ${timeoutMs}ms`
+      : redactSecrets(String(result.stderr || result.error?.code || '').trim()),
     value: output(result),
   };
 }
@@ -323,7 +328,12 @@ function worktreeState(rootDir, runner, options) {
 }
 
 export function currentOriginMain(rootDir, runner, allowStaleMain) {
-  const fetch = git(runner, rootDir, ['fetch', '--no-tags', 'origin', 'main']);
+  const fetch = git(
+    runner,
+    rootDir,
+    ['fetch', '--no-tags', 'origin', 'main'],
+    { timeout: FETCH_TIMEOUT_MS },
+  );
   if (!fetch.ok) {
     return { error: fetch.stderr || 'git fetch origin main failed', fetched: false, ok: false };
   }
@@ -595,8 +605,35 @@ export function bootstrapOnce(rootDir, npmCacheDir, runner, timeoutMs) {
   };
 }
 
+export function prepareInventoryFacts(rootDir, runner, timeoutMs = COMMAND_TIMEOUT_MS) {
+  const result = runner(process.execPath, ['scripts/generate-inventory-facts.mjs'], {
+    cwd: rootDir,
+    encoding: 'utf8',
+    env: {
+      PATH: process.env.PATH,
+      TMPDIR: process.env.TMPDIR,
+    },
+    // Keep stdout available for the preflight's single JSON document while
+    // still showing generation progress to the operator.
+    stdio: ['ignore', 2, 2],
+    timeout: timeoutMs,
+  });
+  if (result.status !== 0) {
+    return {
+      attempted: true,
+      error: result.error?.code === 'ETIMEDOUT'
+        ? `inventory fact generation timed out after ${timeoutMs}ms`
+        : 'inventory fact generation failed',
+      ok: false,
+      timeoutMs,
+    };
+  }
+  return { attempted: true, error: null, ok: true, timeoutMs };
+}
+
 export function runAgentPreflight(options = {}, runner = spawnSync) {
   const rootDir = resolve(options.rootDir || process.cwd());
+  const skipBootstrap = Boolean(options.skipBootstrap);
   const node = supportedNode(rootDir);
   const temp = probeWritableDirectory(tmpdir());
   const npmCache = probeWritableDirectory(options.npmCacheDir || DEFAULT_NPM_CACHE);
@@ -621,7 +658,7 @@ export function runAgentPreflight(options = {}, runner = spawnSync) {
     reason: dependencies.ok ? 'dependencies already complete' : 'blocked before bootstrap',
   };
 
-  if (!dependencies.ok && localGatesOk && !options.skipBootstrap) {
+  if (!dependencies.ok && localGatesOk && !skipBootstrap) {
     bootstrap = bootstrapOnce(
       rootDir,
       options.npmCacheDir || DEFAULT_NPM_CACHE,
@@ -632,8 +669,30 @@ export function runAgentPreflight(options = {}, runner = spawnSync) {
       dependencies = probeDependencies(rootDir, runner);
       worktree = worktreeState(rootDir, runner, options);
     }
-  } else if (!dependencies.ok && options.skipBootstrap) {
+  } else if (!dependencies.ok && skipBootstrap) {
     bootstrap.reason = 'bootstrap disabled by --skip-bootstrap';
+  }
+
+  let inventoryFacts = {
+    attempted: false,
+    ok: skipBootstrap,
+    reason: skipBootstrap
+      ? 'inventory generation disabled by --skip-bootstrap'
+      : 'blocked before inventory generation',
+  };
+  const inventoryPrerequisitesOk = [
+    node.ok,
+    temp.ok,
+    npmCache.ok,
+    snapshotCache.ok,
+    worktree.ok,
+    credentials.ok,
+    dependencies.ok,
+    bootstrap.ok,
+  ].every(Boolean);
+  if (!skipBootstrap && inventoryPrerequisitesOk) {
+    inventoryFacts = prepareInventoryFacts(rootDir, runner);
+    if (inventoryFacts.ok) worktree = worktreeState(rootDir, runner, options);
   }
 
   // Capture mutable Git and GitHub state only after a possible bootstrap. A
@@ -703,6 +762,7 @@ export function runAgentPreflight(options = {}, runner = spawnSync) {
     credentials,
     dependencies: dependencyReport(dependencies),
     duplicatePullRequests: duplicates,
+    inventoryFacts,
     node,
     originMain,
     prAlignment: alignment,
@@ -719,7 +779,7 @@ export function runAgentPreflight(options = {}, runner = spawnSync) {
     worktree,
     worktrees: worktreeInventory,
   };
-  const ok = allGatesOk && dependencies.ok && bootstrap.ok;
+  const ok = allGatesOk && dependencies.ok && bootstrap.ok && inventoryFacts.ok;
   return {
     checks,
     completedAt: new Date().toISOString(),

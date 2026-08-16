@@ -20,6 +20,7 @@ import { pathToFileURL } from 'node:url';
 const SCHEMA = 'worldmonitor-agent-pr-snapshot/v1';
 const REFRESH_PHASES = new Set(['task-start', 'pre-push', 'final']);
 const COMMAND_TIMEOUT_MS = 30_000;
+const FETCH_TIMEOUT_MS = 180_000;
 const STALE_LOCK_MS = 60 * 60 * 1000;
 const DEFAULT_CACHE_DIR = join(
   tmpdir(),
@@ -201,6 +202,10 @@ function runCommand(runner, file, args, options = {}) {
 function checked(runner, file, args, options = {}) {
   const result = runCommand(runner, file, args, options);
   if (result.status !== 0) {
+    if (result.error?.code === 'ETIMEDOUT') {
+      const timeoutMs = options.timeout || COMMAND_TIMEOUT_MS;
+      throw new Error(`${file} ${args.slice(0, 2).join(' ')} timed out after ${timeoutMs}ms`);
+    }
     const detail = redactSecrets(
       String(result.stderr || result.stdout || result.error?.code || '').trim(),
     );
@@ -407,7 +412,12 @@ function remoteState({ pr, repo, rootDir, runner }) {
   const headUrl = pr.headRepository?.url || '';
   const ref = `refs/heads/${pr.headRefName}`;
   const lsRemote = headUrl
-    ? optional(runner, 'git', ['ls-remote', headUrl, ref], { cwd: rootDir })
+    ? checked(
+        runner,
+        'git',
+        ['ls-remote', headUrl, ref],
+        { cwd: rootDir, timeout: FETCH_TIMEOUT_MS },
+      )
     : '';
   const remoteHeadOid = lsRemote.split(/\s+/)[0] || null;
   const localBranch = optional(runner, 'git', ['branch', '--show-current'], { cwd: rootDir }) || null;
@@ -435,7 +445,7 @@ function baseState({ pr, rootDir, runner }) {
     runner,
     'git',
     ['fetch', '--no-tags', 'origin', pr.baseRefName],
-    { cwd: rootDir },
+    { cwd: rootDir, timeout: FETCH_TIMEOUT_MS },
   );
   const fetchedOid = checked(
     runner,

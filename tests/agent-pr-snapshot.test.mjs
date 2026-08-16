@@ -86,6 +86,73 @@ describe('agent PR snapshot', () => {
     assert.equal(createPrSnapshot({ ghBin: 'gh', rootDir: '/repo', runner }), null);
   });
 
+  it('reports a base fetch timeout distinctly after using the network budget', () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'wm-agent-pr-timeout-'));
+    const headOid = oid('a');
+    const baseOid = oid('b');
+    let fetchOptions;
+    const runner = (file, args, options) => {
+      const command = args.join(' ');
+      if (file === 'git' && command === 'remote get-url origin') {
+        return { status: 0, stderr: '', stdout: 'https://github.com/koala73/worldmonitor.git\n' };
+      }
+      if (file === 'git' && command === 'fetch --no-tags origin main') {
+        fetchOptions = options;
+        return { error: { code: 'ETIMEDOUT' }, status: null, stderr: '', stdout: '' };
+      }
+      if (file === 'gh' && args[0] === 'api') {
+        return {
+          status: 0,
+          stderr: '',
+          stdout: JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  author: { login: 'koala73' },
+                  baseRefName: 'main',
+                  baseRefOid: baseOid,
+                  baseRepository: { nameWithOwner: 'koala73/worldmonitor' },
+                  commits: {
+                    nodes: [{
+                      commit: {
+                        oid: headOid,
+                        statusCheckRollup: {
+                          contexts: { nodes: [], pageInfo: { endCursor: null, hasNextPage: false } },
+                        },
+                      },
+                    }],
+                  },
+                  headRefName: 'codex/agent-tools',
+                  headRefOid: headOid,
+                  headRepository: {
+                    nameWithOwner: 'koala73/worldmonitor',
+                    owner: { login: 'koala73' },
+                    url: 'https://github.com/koala73/worldmonitor',
+                  },
+                  isCrossRepository: false,
+                  isDraft: false,
+                  mergeable: 'MERGEABLE',
+                  mergeStateStatus: 'CLEAN',
+                  number: 123,
+                  reviewThreads: { nodes: [], pageInfo: { endCursor: null, hasNextPage: false } },
+                  state: 'OPEN',
+                  url: 'https://github.com/koala73/worldmonitor/pull/123',
+                },
+              },
+            },
+          }),
+        };
+      }
+      throw new Error(`Unexpected command: ${file} ${command}`);
+    };
+
+    assert.throws(
+      () => createPrSnapshot({ cacheDir, ghBin: 'gh', phase: 'task-start', pr: '123', rootDir: '/repo', runner }),
+      /git fetch --no-tags timed out after 180000ms/,
+    );
+    assert.equal(fetchOptions.timeout, 180_000);
+  });
+
   it('separates check runs from commit statuses', () => {
     const result = normalizeCheckContexts([
       {
@@ -154,10 +221,14 @@ describe('agent PR snapshot', () => {
     const baseOid = oid('b');
     const pullRequestBaseOid = oid('c');
     let graphQlCalls = 0;
+    const networkTimeouts = new Map();
 
-    const runner = (file, args) => {
+    const runner = (file, args, options) => {
       if (file === 'git') {
         const command = args.join(' ');
+        if (command.startsWith('fetch ') || command.startsWith('ls-remote ')) {
+          networkTimeouts.set(command.split(' ')[0], options.timeout);
+        }
         if (command === 'remote get-url origin') {
           return { status: 0, stderr: '', stdout: 'https://github.com/koala73/worldmonitor.git\n' };
         }
@@ -262,6 +333,8 @@ describe('agent PR snapshot', () => {
     assert.equal(live.base.state.graphQlMatchesFetched, false);
     assert.equal(live.base.state.pullRequestOid, pullRequestBaseOid);
     assert.equal(live.checks.checkRuns.length, 1);
+    assert.equal(networkTimeouts.get('fetch'), 180_000);
+    assert.equal(networkTimeouts.get('ls-remote'), 180_000);
     assert.match(live.cache.path, new RegExp(`${headOid}\\.json$`));
     assert.equal(existsSync(live.cache.path), true);
     assert.equal(graphQlCalls, 1);

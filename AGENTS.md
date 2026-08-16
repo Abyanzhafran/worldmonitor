@@ -16,13 +16,13 @@ Real-time global intelligence dashboard with a TypeScript browser app, Vercel Ed
 1. Inspect `git status --short --branch`. Preserve unrelated user changes.
 2. State the requested outcome and the terminal state you can prove.
 3. Run `npm run --silent agent:preflight -- --issue <number>` before expensive tests or implementation. Add `--pr <number>` for PR work and repeat `--require-env <NAME>` for task credentials.
-4. Treat `status: "ready"` and `expensiveTestsAllowed: true` in its JSON as the start gate. It refreshes `origin/main`, checks duplicate PRs and active worktrees, captures the task-start PR snapshot, and runs at most one bounded `npm ci --ignore-scripts` dependency bootstrap.
+4. Treat `status: "ready"` and `expensiveTestsAllowed: true` in its JSON as the start gate. It refreshes `origin/main`, checks duplicate PRs and active worktrees, captures the task-start PR snapshot, runs at most one bounded `npm ci --ignore-scripts` dependency bootstrap, and regenerates ignored inventory facts on trusted worktrees.
 5. Use `--allow-dirty`, `--allow-detached`, or `--allow-stale-main` only when that state is intentional and appropriate to the task. These flags record an exception; they do not repair the state.
 6. Use Node.js 24, which matches `.nvmrc` and the main CI workflows. Preflight enforces it.
 
 Fresh-worktree rules:
 
-- `agent:preflight` is the primary safe bootstrap path. It does not link env files or run dependency lifecycle scripts. If a full bootstrap is necessary, run `npm run worktree:bootstrap` only from a trusted agent-owned worktree; for docs-only or test-tooling work, use `npm run worktree:bootstrap:test-only`.
+- `agent:preflight` is the primary safe bootstrap path. It does not link env files or run dependency lifecycle scripts. After dependencies are ready, it directly runs the repository's inventory-fact generator with a minimal environment. If a full bootstrap is necessary, run `npm run worktree:bootstrap` only from a trusted agent-owned worktree; for docs-only or test-tooling work, use `npm run worktree:bootstrap:test-only`.
 - Never run repository scripts from an untrusted or third-party PR checkout. Run `agent:preflight` and `agent:pr-snapshot` from a clean trusted worktree and pass `--root /path/to/untrusted-checkout`; add `--skip-bootstrap` for that target. This keeps the executable code outside the untrusted tree.
 - Link only `.env.local` and `.env`. Never copy or link `.env.vercel-backup` or `.env.vercel-export`.
 - Use `WM_ENV_SOURCE=/path/to/worldmonitor npm run worktree:env` only when Git cannot infer the source checkout.

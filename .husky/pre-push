@@ -399,9 +399,6 @@ if changed '^(api/|server/|src/generated/|scripts/check-edge-function-bundles\.m
   # and generated stubs — a server-only Node-ism breaks the Vercel bundle with
   # zero api/ diff, so those paths must trigger the esbuild check too.
   echo "Running edge function bundle check..."
-  # Agent preflight installs with lifecycle scripts disabled. Recreate the
-  # intentionally ignored inventory modules before esbuild resolves imports.
-  npm run inventory:facts || exit 1
   # The shared checker uses git's tracked inventory, so ignored desktop
   # sidecar bundles beside the API sources cannot become edge candidates.
   node scripts/check-edge-function-bundles.mjs --caller=prepush || exit 1

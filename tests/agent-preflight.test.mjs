@@ -13,6 +13,7 @@ import {
   currentOriginMain,
   findWorktreeCollisions,
   parseArgs,
+  prepareInventoryFacts,
   prAlignment,
   probeDependencies,
   runAgentPreflight,
@@ -109,6 +110,7 @@ describe('agent preflight', () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture' }));
     let bootstrapCalls = 0;
     let bootstrapComplete = false;
+    let inventoryCalls = 0;
     let statusCalls = 0;
 
     const runner = (file, args) => {
@@ -117,6 +119,11 @@ describe('agent preflight', () => {
         mkdirSync(join(root, 'node_modules'), { recursive: true });
         writeFileSync(join(root, 'node_modules', '.package-lock.json'), '{}');
         bootstrapComplete = true;
+        return { status: 0, stderr: '', stdout: '' };
+      }
+      if (file === process.execPath && args[0] === 'scripts/generate-inventory-facts.mjs') {
+        assert.equal(bootstrapComplete, true);
+        inventoryCalls += 1;
         return { status: 0, stderr: '', stdout: '' };
       }
       if (file === 'npm') return { status: 0, stderr: '', stdout: '{}' };
@@ -167,7 +174,79 @@ describe('agent preflight', () => {
     assert.equal(result.expensiveTestsAllowed, true);
     assert.equal(result.checks.bootstrap.attempted, true);
     assert.equal(bootstrapCalls, 1);
-    assert.equal(statusCalls, 2);
+    assert.equal(result.checks.inventoryFacts.ok, true);
+    assert.equal(inventoryCalls, 1);
+    assert.equal(statusCalls, 3);
+  });
+
+  it('regenerates inventory facts when dependencies were already complete', () => {
+    const root = makeRoot();
+    const cacheDir = join(root, 'agent-cache');
+    const npmCacheDir = join(root, 'npm-cache');
+    writeFileSync(join(root, '.nvmrc'), `${currentMajor}\n`);
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture' }));
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    writeFileSync(join(root, 'node_modules', '.package-lock.json'), '{}');
+    let inventoryCalls = 0;
+
+    const runner = (file, args) => {
+      const command = args.join(' ');
+      if (file === process.execPath && command === 'scripts/generate-inventory-facts.mjs') {
+        inventoryCalls += 1;
+        return { status: 0, stderr: '', stdout: '' };
+      }
+      if (file === 'npm') return { status: 0, stderr: '', stdout: '{}' };
+      if (file === 'git') {
+        if (command.startsWith('status ')) return { status: 0, stderr: '', stdout: '' };
+        if (command === 'branch --show-current') {
+          return { status: 0, stderr: '', stdout: 'codex/agent-tools\n' };
+        }
+        if (command === 'remote get-url origin') {
+          return { status: 0, stderr: '', stdout: 'https://github.com/koala73/worldmonitor.git\n' };
+        }
+        if (command === 'rev-parse HEAD' || command === 'rev-parse origin/main') {
+          return { status: 0, stderr: '', stdout: `${headOid}\n` };
+        }
+        if (command.startsWith('rev-list ')) return { status: 0, stderr: '', stdout: '0\t0\n' };
+        if (command === 'worktree list --porcelain') {
+          return {
+            status: 0,
+            stderr: '',
+            stdout: `worktree ${root}\nHEAD ${headOid}\nbranch refs/heads/codex/agent-tools\n`,
+          };
+        }
+        return { status: 0, stderr: '', stdout: '' };
+      }
+      if (args[0] === 'auth') return { status: 0, stderr: '', stdout: '' };
+      if (args[0] === 'api' && args.includes(`repos/koala73/worldmonitor/commits/${headOid}/pulls`)) {
+        return { status: 0, stderr: '', stdout: '[]' };
+      }
+      throw new Error(`Unexpected command: ${file} ${command}`);
+    };
+
+    const result = runAgentPreflight({
+      cacheDir,
+      npmCacheDir,
+      requireEnv: [],
+      rootDir: root,
+    }, runner);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.checks.bootstrap.attempted, false);
+    assert.equal(result.checks.inventoryFacts.ok, true);
+    assert.equal(inventoryCalls, 1);
+
+    const skipped = runAgentPreflight({
+      cacheDir,
+      npmCacheDir,
+      requireEnv: [],
+      rootDir: root,
+      skipBootstrap: true,
+    }, runner);
+    assert.equal(skipped.ok, true);
+    assert.equal(skipped.checks.inventoryFacts.attempted, false);
+    assert.equal(skipped.checks.inventoryFacts.ok, true);
+    assert.equal(inventoryCalls, 1, '--skip-bootstrap must not execute code from the target');
   });
 
   it('does not allow stale-main intent to hide unresolved Git state', () => {
@@ -188,6 +267,21 @@ describe('agent preflight', () => {
     const result = currentOriginMain('/repo', runner, true);
     assert.equal(result.ok, false);
     assert.match(result.error, /bad revision/);
+  });
+
+  it('gives origin/main fetches a network budget and reports timeouts distinctly', () => {
+    let receivedOptions;
+    const runner = (file, args, options) => {
+      assert.equal(file, 'git');
+      assert.equal(args.join(' '), 'fetch --no-tags origin main');
+      receivedOptions = options;
+      return { error: { code: 'ETIMEDOUT' }, status: null, stderr: '', stdout: '' };
+    };
+
+    const result = currentOriginMain('/repo', runner, false);
+    assert.equal(receivedOptions.timeout, 180_000);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /timed out after 180000ms/);
   });
 
   it('requires the checked-out branch to own the PR head', () => {
@@ -259,6 +353,22 @@ describe('agent preflight', () => {
     assert.ok(receivedOptions.timeout <= 1234);
     assert.equal(receivedOptions.env.npm_config_ignore_scripts, 'true');
     assert.equal('UPSTASH_REDIS_REST_URL' in receivedOptions.env, false);
+  });
+
+  it('runs inventory generation directly with a minimal bounded environment', () => {
+    let received;
+    const runner = (file, args, options) => {
+      received = { args, file, options };
+      return { status: 0, stderr: '', stdout: '' };
+    };
+
+    const result = prepareInventoryFacts('/repo', runner, 4321);
+    assert.equal(result.ok, true);
+    assert.equal(received.file, process.execPath);
+    assert.deepEqual(received.args, ['scripts/generate-inventory-facts.mjs']);
+    assert.equal(received.options.cwd, '/repo');
+    assert.equal(received.options.timeout, 4321);
+    assert.equal('UPSTASH_REDIS_REST_URL' in received.options.env, false);
   });
 
   it('installs root and blog dependencies within one bootstrap attempt', () => {
