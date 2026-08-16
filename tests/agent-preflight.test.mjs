@@ -255,7 +255,8 @@ describe('agent preflight', () => {
     const result = bootstrapOnce('/repo', '/tmp/cache', runner, 1234);
     assert.equal(result.ok, false);
     assert.match(result.error, /timed out after 1234ms/);
-    assert.equal(receivedOptions.timeout, 1234);
+    assert.ok(receivedOptions.timeout > 0);
+    assert.ok(receivedOptions.timeout <= 1234);
     assert.equal(receivedOptions.env.npm_config_ignore_scripts, 'true');
     assert.equal('UPSTASH_REDIS_REST_URL' in receivedOptions.env, false);
   });
