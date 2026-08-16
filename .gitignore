@@ -110,6 +110,10 @@ api-cache.json
 verbose-mode.json
 skills-lock.json
 tmp/
+# tests/seed-freshness-workflow.test.mjs mkdtemps this INSIDE the repo root, so
+# while test:data runs any `git add -A` sweeps its stub bins and fixtures into
+# the commit — which is how ten of them reached a branch during #6763.
+.tmp-seed-freshness-gate-*/
 .context/
 # Scratch the Umami storage monitor writes on the runner: Railway volume and
 # deployment dumps plus its cached growth baseline. Local runs produce them too.
