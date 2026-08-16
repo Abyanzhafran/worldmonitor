@@ -29,7 +29,7 @@ You'll get the complete live tool registry back as JSON. Everything else that re
 
 ## Authenticate
 
-Data commands map to MCP `tools/call` and require a user API key. Grab one at [worldmonitor.app/pro](https://www.worldmonitor.app/pro), then either pass it per-call or export it once:
+Data commands map to MCP `tools/call`. Except for `worldmonitor call get_sources`, they require a subscription API key. Grab one at [worldmonitor.app/pro](https://www.worldmonitor.app/pro), then either pass it per-call or export it once:
 
 ```sh
 export WORLDMONITOR_API_KEY=wm_xxxxxxxx
@@ -38,7 +38,7 @@ worldmonitor risk IR                       # reads the key from the environment
 worldmonitor risk IR --api-key wm_xxxxxxxx # pass it explicitly
 ```
 
-The key is sent as the `X-WorldMonitor-Key` header. See [Authentication](/usage-auth) for how keys, OAuth, and browser sessions differ, and [Rate Limits](/usage-rate-limits) for the per-plan allowances. If you call a data command with no key, the CLI exits `1` and prints a hint telling you exactly which flag to pass.
+The key is sent as the `X-WorldMonitor-Key` header. See [Authentication](/usage-auth) for how keys, OAuth, and browser sessions differ, and [Rate Limits](/usage-rate-limits) for the per-plan allowances. If you call a subscription-gated data command with no key, the CLI exits `1` and prints a hint telling you exactly which flag to pass.
 
 ## Data commands
 

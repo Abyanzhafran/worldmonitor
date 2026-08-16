@@ -34,9 +34,10 @@ Hosts discover the links through `_meta.ui.resourceUri` in `tools/list`, enumera
 ## Authentication
 
 - **`tools/list` and other discovery calls:** anonymous, no key.
-- **`tools/call` and `resources/read` (data):** need either an API key or OAuth.
+- **`get_sources` via `tools/call`:** no credentials and no daily quota; separate fail-closed limit of 10 anonymous calls/minute/IP. Its `tools/list` and server-card entries carry `_meta["worldmonitor/access"]: "free"`.
+- **All other data-bearing `tools/call` and `resources/read`:** need subscription access through an API key or OAuth.
   - **API key:** header `X-WorldMonitor-Key: wm_<40-hex>` — issue one at https://worldmonitor.app/pro. Rate limit: 60 requests/minute/key.
-  - **OAuth 2.1 (`scope=mcp`):** Pro and API tiers can both connect via OAuth with no API key. Dynamic Client Registration (RFC 7591) at `https://worldmonitor.app/oauth/register`; authorization and token endpoints follow OAuth 2.1 with PKCE. Any OAuth-connected context — Pro *or* API tier — shares one 50 quota-consuming `tools/call` / `resources/read` counter per UTC day; API-tier clients that authenticate with a `wm_…` key instead have no daily reservation (only the 60 requests/minute limiter).
+  - **OAuth 2.1 (`scope=mcp`):** Pro and API tiers can both connect via OAuth with no API key. Dynamic Client Registration (RFC 7591) at `https://worldmonitor.app/oauth/register`; authorization and token endpoints follow OAuth 2.1 with PKCE. OAuth uses a plan-resolved daily allowance; API Starter and API Business currently use the same 50 quota-consuming `tools/call` / `resources/read` default as Pro, while enterprise OAuth can be unlimited. Dashboard-issued `wm_…` keys also use the 50/day default. Quota-free metadata methods and `get_sources` do not reserve a daily slot.
 
 Full agent walkthrough: [auth.md](https://worldmonitor.app/auth.md). Authorization-server metadata: https://worldmonitor.app/.well-known/oauth-authorization-server · protected-resource metadata: https://worldmonitor.app/.well-known/oauth-protected-resource
 

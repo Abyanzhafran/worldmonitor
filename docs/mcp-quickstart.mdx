@@ -5,12 +5,12 @@ description: "Connect Claude Desktop to World Monitor via MCP and make your firs
 
 WorldMonitor exposes a live tool registry — markets, conflict events, maritime chokepoints, aviation, climate, AI briefs, and China decision signals — over the [Model Context Protocol](https://modelcontextprotocol.io). This page is the shortest path from zero to a useful response inside Claude. Everything else in the [MCP Server reference](/mcp-overview) is optional reading once this works.
 
-## 1. Pick a tier and grab credentials
+## 1. Choose free source discovery or a subscription
 
-Free accounts can't reach the MCP server — the OAuth flow returns `403 INSUFFICIENT_TIER`. You need one of:
+Anyone can connect to the MCP server and call `get_sources` without credentials. It is the sole credential-free, daily-quota-free data tool, with a separate fail-closed ceiling of 10 anonymous calls/minute/IP. Every other data tool is subscription-gated. For those tools, you need one of:
 
 - **Pro** — sign in with your WorldMonitor account, no key to manage. 50 quota-consuming calls per UTC day.
-- **API Starter / Business / Enterprise** — paste a user-issued `wm_…` key in your client, or use the same OAuth flow as Pro. `wm_…` MCP calls are throttled at 60 requests/minute/key in this handler; REST/API plan allowances are separate from the Pro/OAuth MCP daily counter.
+- **API Starter / Business / Enterprise** — paste a user-issued `wm_…` key in your client, or use the same OAuth flow as Pro. Dashboard-issued keys share a 60 requests/minute/user bucket and use the 50 quota-consuming calls/UTC day default. OAuth allowances are plan-resolved; API Starter and API Business currently use that same default, while enterprise OAuth can be unlimited. REST/API plan allowances remain separate.
 
 Upgrade or generate a key at [worldmonitor.app/pro](https://www.worldmonitor.app/pro). The rest of this guide assumes Claude Desktop + OAuth (the simplest path); if you'd rather paste a `wm_…` key into a `curl` script, jump to [Server-side curl](#server-side-curl) at the bottom.
 
@@ -51,7 +51,7 @@ Older Claude Desktop builds — and any stdio-only MCP client — connect throug
 
 Two things matter with this setup:
 
-- **Attach your credential explicitly.** The server completes the connection and all discovery (tools/prompts/resources listings) anonymously by design, so `mcp-remote` never sees a 401 challenge at connect time and does not start its OAuth flow on its own. Without the header, the connection looks healthy but every `tools/call` fails with `401`. Use the single-argument form `X-WorldMonitor-Key:wm_…` with **no space after the colon** — it sidesteps client/`npx` argument-escaping bugs with spaces inside `args` (documented by `mcp-remote` for Cursor and Claude Desktop on Windows).
+- **Attach your credential explicitly for subscription tools.** The server completes the connection and all discovery (tools/prompts/resources listings) anonymously by design, so `mcp-remote` never sees a 401 challenge at connect time and does not start its OAuth flow on its own. Without the header, `get_sources` still works, but every other data-bearing `tools/call` fails with `401`. Use the single-argument form `X-WorldMonitor-Key:wm_…` with **no space after the colon** — it sidesteps client/`npx` argument-escaping bugs with spaces inside `args` (documented by `mcp-remote` for Cursor and Claude Desktop on Windows).
 - **Prefer OAuth?** Omit `--header`: your first tool call returns the 401 challenge that triggers `mcp-remote`'s browser consent flow (dynamic client registration works on both `worldmonitor.app` and `www.worldmonitor.app`). Older `mcp-remote` versions handle this mid-session flow less reliably than the connect-time one, so if the consent window never appears, the explicit key header above is the deterministic path.
 
 ## 3. Ask your first question

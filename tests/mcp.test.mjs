@@ -92,6 +92,7 @@ describe('api/mcp.ts — PRO MCP Server', () => {
     assert.ok(res.headers.get('www-authenticate')?.includes('Bearer realm="worldmonitor"'), 'must include WWW-Authenticate header');
     assert.match(res.headers.get('cache-control') || '', /\bno-store\b/i);
     const body = await res.json();
+    assert.equal(body.id, 1);
     assert.equal(body.error?.code, -32001);
   });
 
@@ -258,6 +259,7 @@ describe('api/mcp.ts — PRO MCP Server', () => {
     const res = await handler(req);
     assert.equal(res.status, 401, 'resources/read of a data-bearing template is a data/quota method — must stay gated');
     const body = await res.json();
+    assert.equal(body.id, 7);
     assert.equal(body.error?.code, -32001);
   });
 
@@ -3196,10 +3198,94 @@ describe('api/mcp.ts — U7 Pro-path', () => {
     const res = await mcpHandler(proReq('POST', callBody('get_market_data')), deps);
     assert.equal(res.status, 401);
     const body = await res.json();
+    assert.equal(body.id, 100);
     assert.equal(body.error?.code, -32001);
     assert.match(body.error.message, /revoked/i);
     assert.equal(pipe.count, 0);
     assert.equal(pipe.ops.length, 0);
+  });
+
+  it('error: revoked Pro bearer cannot gain the credentialed 60/min bucket on free get_sources', async () => {
+    let validationCalls = 0;
+    const { deps, pipe } = makeProDeps({
+      validateProMcpToken: async () => {
+        validationCalls += 1;
+        return null;
+      },
+    });
+    const res = await mcpHandler(proReq('POST', callBody('get_sources', {}, 6712)), deps);
+    assert.equal(res.status, 401);
+    assert.match(res.headers.get('WWW-Authenticate') ?? '', /error="invalid_token"/);
+    const body = await res.json();
+    assert.equal(body.id, 6712);
+    assert.equal(body.error?.code, -32001);
+    assert.match(body.error?.message ?? '', /revoked/i);
+    assert.equal(validationCalls, 1, 'free-tool credential attribution must validate the Pro grant first');
+    assert.equal(pipe.count, 0);
+    assert.equal(pipe.ops.length, 0);
+  });
+
+  it('error: revoked Pro bearer cannot gain the credentialed 60/min bucket on tools/list', async () => {
+    let validationCalls = 0;
+    const { deps, pipe } = makeProDeps({
+      validateProMcpToken: async () => {
+        validationCalls += 1;
+        return null;
+      },
+    });
+    const res = await mcpHandler(proReq('POST', {
+      jsonrpc: '2.0', id: 6714, method: 'tools/list', params: {},
+    }), deps);
+    assert.equal(res.status, 401);
+    assert.match(res.headers.get('WWW-Authenticate') ?? '', /error="invalid_token"/);
+    const body = await res.json();
+    assert.equal(body.id, 6714);
+    assert.equal(body.error?.code, -32001);
+    assert.match(body.error?.message ?? '', /revoked/i);
+    assert.equal(validationCalls, 1, 'public-method credential attribution must validate the Pro grant first');
+    assert.equal(pipe.count, 0);
+    assert.equal(pipe.ops.length, 0);
+  });
+
+  it('error: public-method Pro validation outages preserve the JSON-RPC id', async () => {
+    const { deps } = makeProDeps({
+      validateProMcpToken: async () => {
+        throw new Error('validation backend unavailable');
+      },
+    });
+    const res = await mcpHandler(proReq('POST', {
+      jsonrpc: '2.0', id: 6715, method: 'tools/list', params: {},
+    }), deps);
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.equal(body.id, 6715);
+    assert.equal(body.error?.code, -32603);
+  });
+
+  it('error: production-shaped transient Pro validation returns correlated 503, not revoked 401', async () => {
+    const { deps } = makeProDeps({
+      validateProMcpToken: async () => ({ ok: 'transient' }),
+    });
+    const res = await mcpHandler(proReq('POST', {
+      jsonrpc: '2.0', id: 6716, method: 'tools/list', params: {},
+    }), deps);
+    assert.equal(res.status, 503);
+    assert.equal(res.headers.get('Retry-After'), '5');
+    const body = await res.json();
+    assert.equal(body.id, 6716);
+    assert.equal(body.error?.code, -32603);
+    assert.doesNotMatch(body.error?.message ?? '', /revoked/i);
+  });
+
+  it('happy: valid Pro bearer uses free get_sources without daily quota reservation', async () => {
+    const { deps, pipe } = makeProDeps({ pipelineOpts: { initialCount: 50 } });
+    const res = await mcpHandler(proReq('POST', callBody('get_sources', {}, 6713)), deps);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.error, undefined, JSON.stringify(body.error));
+    assert.equal(body.id, 6713);
+    assert.equal(pipe.count, 50);
+    assert.equal(pipe.ops.length, 0, 'free-tier tools do not reserve the credentialed daily quota');
   });
 
   it('error: cross-user binding violation (validate userId !== bearer userId) → 401', async () => {

@@ -29,7 +29,7 @@ worldmonitor tools
 
 ## 身份验证
 
-数据命令映射到 MCP `tools/call`，需要用户 API 密钥。在 [worldmonitor.app/pro](https://www.worldmonitor.app/pro) 获取一个，然后可以每次调用时传入，或一次性导出它：
+数据命令映射到 MCP `tools/call`。除 `worldmonitor call get_sources` 外，它们都需要订阅 API 密钥。在 [worldmonitor.app/pro](https://www.worldmonitor.app/pro) 获取一个，然后可以每次调用时传入，或一次性导出它：
 
 ```sh
 export WORLDMONITOR_API_KEY=wm_xxxxxxxx
@@ -38,7 +38,7 @@ worldmonitor risk IR                       # reads the key from the environment
 worldmonitor risk IR --api-key wm_xxxxxxxx # pass it explicitly
 ```
 
-密钥作为 `X-WorldMonitor-Key` 头发送。有关密钥、OAuth 和浏览器会话的区别，请参见[身份验证](/zh/usage-auth)；各套餐的额度请参见[速率限制](/zh/usage-rate-limits)。如果你在调用数据命令时未提供密钥，CLI 会以 `1` 退出，并打印一条提示，准确告诉你应传入哪个标志。
+密钥作为 `X-WorldMonitor-Key` 头发送。有关密钥、OAuth 和浏览器会话的区别，请参见[身份验证](/zh/usage-auth)；各套餐的额度请参见[速率限制](/zh/usage-rate-limits)。如果你在调用需要订阅的数据命令时未提供密钥，CLI 会以 `1` 退出，并打印一条提示，准确告诉你应传入哪个标志。
 
 ## 数据命令
 
