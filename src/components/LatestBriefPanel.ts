@@ -447,8 +447,7 @@ export class LatestBriefPanel extends Panel {
    * polling. Returning to the tab re-runs refresh() via visibilitychange.
    */
   private renderDesyncExhausted(): void {
-    this.clearErrorState();
-    clearChildren(this.content);
+    // setContentNodes below handles clearErrorState and the content replace.
     const logo = h('div', { className: 'latest-brief-logo' });
     logo.appendChild(rawHtml(WM_LOGO_SVG));
     this.setContentNodes(
@@ -479,7 +478,7 @@ export class LatestBriefPanel extends Panel {
   }
 
   private renderComposing(data: LatestBriefComposing): void {
-    clearChildren(this.content);
+    // setContentNodes below replaces all content — no manual clear needed.
     // While we're stuck on composing, re-poll every minute so the
     // panel transitions to ready on the next cron tick without
     // requiring a full page reload.
