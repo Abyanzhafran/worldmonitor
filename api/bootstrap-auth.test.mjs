@@ -809,6 +809,38 @@ test('public on-demand URL keeps ONE contract even when credentials are attached
   });
 });
 
+test('every Canada road key serves anonymously with a shield sized to its publisher', async () => {
+  // #6763 moved canadaRoads and albertaRoads off the fast tier so they stop
+  // riding a payload every visitor downloads. A TIERED key is rejected on this
+  // URL — the next test proves marketQuotes and wildfires draw a 401 — so the
+  // move only works if these same requests now qualify. Asserted through the
+  // handler rather than by reading the registry: the registry is what the tier
+  // move edits, so checking it against itself would pass either way.
+  //
+  // The s-maxage values are the second half of the move. Without a profile
+  // these inherit the slow 7200 s shield, which outlives the 45- and 90-minute
+  // freshness budgets api/health.js declares for them.
+  const expected = {
+    canadaRoads: 900,   // seed-provincial-511, 15min member interval
+    albertaRoads: 900,  // same seeder, same interval
+    bcOpen511: 1800,    // seed-open511, 30min member interval
+    torontoRoads: 7200, // 2h publisher; the inherited slow shield already fits
+  };
+  await withMockedBootstrapAuth({ entitlement: null }, async () => {
+    for (const [key, sMaxAge] of Object.entries(expected)) {
+      const resp = await handler(makePublicOnDemandRequest(key));
+      assert.equal(resp.status, 200, `keys=${key} must serve without credentials`);
+      assertSharedCacheHeaders(resp);
+      assertPublicCorsHeaders(resp);
+      assert.match(
+        resp.headers.get('cdn-cache-control') || '',
+        new RegExp(`s-maxage=${sMaxAge}\\b`),
+        `keys=${key} must be CDN-shielded for ${sMaxAge}s`,
+      );
+    }
+  });
+});
+
 test('public on-demand URL does not widen into a CDN-amplification vector', async () => {
   // Every shape below must fall through to the credentialed, no-store path. A
   // multi-key or unlisted-key public URL would make the CDN key space
