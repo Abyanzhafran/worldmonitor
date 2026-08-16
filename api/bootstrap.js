@@ -466,12 +466,12 @@ function isSharedCacheableBootstrapKind(authKind) {
 // default lives here rather than at the call site so there is ONE resolution
 // path: a test that re-derived "on-demand falls back to slow" would be checking
 // its own copy of the rule, which is the rule that was wrong (#6763).
-function successCacheHeaders(tier, authKind, cors, onDemandKey = null) {
+function successCacheHeaders(requestedTier, authKind, cors, onDemandKey = null) {
   // Most on-demand keys carry slow-tier seed data. Keys with a faster publisher
   // cadence must override that through ON_DEMAND_CACHE_PROFILES — the slow CDN
   // shield is 2h, which outlives the freshness budget of anything seeded more
   // often than that.
-  tier = tier ?? (authKind === 'public-on-demand' ? 'slow' : null);
+  const tier = requestedTier ?? (authKind === 'public-on-demand' ? 'slow' : null);
   if (!isPublicBootstrapKind(authKind)) {
     return {
       ...cors,
