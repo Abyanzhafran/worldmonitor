@@ -209,7 +209,7 @@ const ON_DEMAND_KEY_NAMES = new Set([
   // DriveBC is also too large for every visitor's startup payload.
   'bcOpen511',
   // The other two feeds behind the same map layer, moved off FAST in #6763.
-  // Together they were 507,652 of the fast tier's 1,342,844 bytes — 37.8%, more
+  // Together they were 507,639 of the fast tier's 1,343,003 bytes — 37.8%, more
   // than marketQuotes — and a tier is not layer-gated, so every visitor on every
   // variant downloaded them, mobile included, where this layer ships disabled
   // and nothing ever rendered a byte of it.
