@@ -25,6 +25,46 @@ import {
 
 const oid = character => character.repeat(40);
 
+function minimalPrResponse({ baseOid, headOid }) {
+  return {
+    data: {
+      repository: {
+        pullRequest: {
+          author: { login: 'koala73' },
+          baseRefName: 'main',
+          baseRefOid: baseOid,
+          baseRepository: { nameWithOwner: 'koala73/worldmonitor' },
+          commits: {
+            nodes: [{
+              commit: {
+                oid: headOid,
+                statusCheckRollup: {
+                  contexts: { nodes: [], pageInfo: { endCursor: null, hasNextPage: false } },
+                },
+              },
+            }],
+          },
+          headRefName: 'codex/agent-tools',
+          headRefOid: headOid,
+          headRepository: {
+            nameWithOwner: 'koala73/worldmonitor',
+            owner: { login: 'koala73' },
+            url: 'https://github.com/koala73/worldmonitor',
+          },
+          isCrossRepository: false,
+          isDraft: false,
+          mergeable: 'MERGEABLE',
+          mergeStateStatus: 'CLEAN',
+          number: 123,
+          reviewThreads: { nodes: [], pageInfo: { endCursor: null, hasNextPage: false } },
+          state: 'OPEN',
+          url: 'https://github.com/koala73/worldmonitor/pull/123',
+        },
+      },
+    },
+  };
+}
+
 describe('agent PR snapshot', () => {
   it('allows live refreshes only at authoritative workflow boundaries', () => {
     assert.deepEqual(
@@ -104,43 +144,7 @@ describe('agent PR snapshot', () => {
         return {
           status: 0,
           stderr: '',
-          stdout: JSON.stringify({
-            data: {
-              repository: {
-                pullRequest: {
-                  author: { login: 'koala73' },
-                  baseRefName: 'main',
-                  baseRefOid: baseOid,
-                  baseRepository: { nameWithOwner: 'koala73/worldmonitor' },
-                  commits: {
-                    nodes: [{
-                      commit: {
-                        oid: headOid,
-                        statusCheckRollup: {
-                          contexts: { nodes: [], pageInfo: { endCursor: null, hasNextPage: false } },
-                        },
-                      },
-                    }],
-                  },
-                  headRefName: 'codex/agent-tools',
-                  headRefOid: headOid,
-                  headRepository: {
-                    nameWithOwner: 'koala73/worldmonitor',
-                    owner: { login: 'koala73' },
-                    url: 'https://github.com/koala73/worldmonitor',
-                  },
-                  isCrossRepository: false,
-                  isDraft: false,
-                  mergeable: 'MERGEABLE',
-                  mergeStateStatus: 'CLEAN',
-                  number: 123,
-                  reviewThreads: { nodes: [], pageInfo: { endCursor: null, hasNextPage: false } },
-                  state: 'OPEN',
-                  url: 'https://github.com/koala73/worldmonitor/pull/123',
-                },
-              },
-            },
-          }),
+          stdout: JSON.stringify(minimalPrResponse({ baseOid, headOid })),
         };
       }
       throw new Error(`Unexpected command: ${file} ${command}`);
@@ -151,6 +155,80 @@ describe('agent PR snapshot', () => {
       /git fetch --no-tags timed out after 180000ms/,
     );
     assert.equal(fetchOptions.timeout, 180_000);
+  });
+
+  it('keeps the snapshot when the PR head remote cannot be read', () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'wm-agent-pr-remote-'));
+    const headOid = oid('a');
+    const runner = (file, args) => {
+      const command = args.join(' ');
+      if (file === 'gh' && args[0] === 'api') {
+        return {
+          status: 0,
+          stderr: '',
+          stdout: JSON.stringify(minimalPrResponse({ baseOid: headOid, headOid })),
+        };
+      }
+      if (file === 'git' && command === 'remote get-url origin') {
+        return { status: 0, stderr: '', stdout: 'https://github.com/koala73/worldmonitor.git\n' };
+      }
+      if (file === 'git' && command === 'fetch --no-tags origin main') {
+        return { status: 0, stderr: '', stdout: '' };
+      }
+      if (file === 'git' && (command === 'rev-parse origin/main' || command === 'rev-parse HEAD')) {
+        return { status: 0, stderr: '', stdout: `${headOid}\n` };
+      }
+      if (file === 'git' && command === 'branch --show-current') {
+        return { status: 0, stderr: '', stdout: 'codex/agent-tools\n' };
+      }
+      if (file === 'git' && command.includes('@{upstream}')) {
+        return { status: 0, stderr: '', stdout: 'origin/codex/agent-tools\n' };
+      }
+      if (file === 'git' && command.startsWith('ls-remote ')) {
+        return { status: 2, stderr: 'remote: Repository not found.', stdout: '' };
+      }
+      throw new Error(`Unexpected command: ${file} ${command}`);
+    };
+
+    const snapshot = createPrSnapshot({
+      cacheDir,
+      ghBin: 'gh',
+      phase: 'task-start',
+      pr: '123',
+      rootDir: '/repo',
+      runner,
+    });
+    assert.equal(snapshot.mergeability.mergeable, 'MERGEABLE');
+    assert.equal(snapshot.remoteState.remoteHeadOid, null);
+    assert.equal(snapshot.remoteState.graphQlMatchesRemote, null);
+    assert.match(snapshot.remoteState.remoteHeadError, /git ls-remote failed.*Repository not found/);
+    assert.equal(snapshot.remoteState.remoteHeadError.includes('https://'), false);
+    assert.equal(existsSync(snapshot.cache.path), true);
+  });
+
+  it('requires --pr when one HEAD belongs to multiple open pull requests', () => {
+    const runner = (file, args) => {
+      const command = args.join(' ');
+      if (file === 'git' && command === 'remote get-url origin') {
+        return { status: 0, stderr: '', stdout: 'https://github.com/koala73/worldmonitor.git\n' };
+      }
+      if (file === 'git' && command === 'rev-parse HEAD') {
+        return { status: 0, stderr: '', stdout: `${oid('a')}\n` };
+      }
+      if (file === 'gh' && args[0] === 'api') {
+        return {
+          status: 0,
+          stderr: '',
+          stdout: JSON.stringify([{ number: 123, state: 'open' }, { number: 124, state: 'open' }]),
+        };
+      }
+      throw new Error(`Unexpected command: ${file} ${command}`);
+    };
+
+    assert.throws(
+      () => createPrSnapshot({ ghBin: 'gh', rootDir: '/repo', runner }),
+      /multiple open pull requests.*pass --pr <number>/,
+    );
   });
 
   it('separates check runs from commit statuses', () => {

@@ -199,17 +199,25 @@ function runCommand(runner, file, args, options = {}) {
   });
 }
 
+function commandFailure(result, file, args, options = {}) {
+  const labelArgs = file === 'git' && args[0] === 'ls-remote'
+    ? args.slice(0, 1)
+    : args.slice(0, 2);
+  const label = `${file} ${labelArgs.join(' ')}`;
+  if (result.error?.code === 'ETIMEDOUT') {
+    const timeoutMs = options.timeout || COMMAND_TIMEOUT_MS;
+    return `${label} timed out after ${timeoutMs}ms`;
+  }
+  const detail = redactSecrets(
+    String(result.stderr || result.stdout || result.error?.code || '').trim(),
+  );
+  return `${label} failed${detail ? `: ${detail}` : ''}`;
+}
+
 function checked(runner, file, args, options = {}) {
   const result = runCommand(runner, file, args, options);
   if (result.status !== 0) {
-    if (result.error?.code === 'ETIMEDOUT') {
-      const timeoutMs = options.timeout || COMMAND_TIMEOUT_MS;
-      throw new Error(`${file} ${args.slice(0, 2).join(' ')} timed out after ${timeoutMs}ms`);
-    }
-    const detail = redactSecrets(
-      String(result.stderr || result.stdout || result.error?.code || '').trim(),
-    );
-    throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${detail ? `: ${detail}` : ''}`);
+    throw new Error(commandFailure(result, file, args, options));
   }
   return String(result.stdout || '').trim();
 }
@@ -217,6 +225,13 @@ function checked(runner, file, args, options = {}) {
 function optional(runner, file, args, options = {}) {
   const result = runCommand(runner, file, args, options);
   return result.status === 0 ? String(result.stdout || '').trim() : '';
+}
+
+function probed(runner, file, args, options = {}) {
+  const result = runCommand(runner, file, args, options);
+  return result.status === 0
+    ? { error: null, value: String(result.stdout || '').trim() }
+    : { error: commandFailure(result, file, args, options), value: '' };
 }
 
 export function parseGitHubRemote(remoteUrl) {
@@ -287,7 +302,9 @@ function resolvePrFromHead({ ghBin, repo, rootDir, runner }) {
 
   if (pulls.length === 0) return null;
   if (pulls.length > 1) {
-    throw new Error(`HEAD belongs to multiple open pull requests: ${pulls.map(pr => pr.number).join(', ')}`);
+    throw new Error(
+      `HEAD belongs to multiple open pull requests: ${pulls.map(pr => pr.number).join(', ')}; pass --pr <number> to choose explicitly`,
+    );
   }
   return pulls[0].number;
 }
@@ -411,15 +428,15 @@ export function localHeadRelation(rootDir, remoteHeadOid, runner) {
 function remoteState({ pr, repo, rootDir, runner }) {
   const headUrl = pr.headRepository?.url || '';
   const ref = `refs/heads/${pr.headRefName}`;
-  const lsRemote = headUrl
-    ? checked(
+  const remoteHead = headUrl
+    ? probed(
         runner,
         'git',
         ['ls-remote', headUrl, ref],
         { cwd: rootDir, timeout: FETCH_TIMEOUT_MS },
       )
-    : '';
-  const remoteHeadOid = lsRemote.split(/\s+/)[0] || null;
+    : { error: null, value: '' };
+  const remoteHeadOid = remoteHead.value.split(/\s+/)[0] || null;
   const localBranch = optional(runner, 'git', ['branch', '--show-current'], { cwd: rootDir }) || null;
   const upstream = optional(
     runner,
@@ -435,6 +452,7 @@ function remoteState({ pr, repo, rootDir, runner }) {
     headRepositoryUrl: headUrl || null,
     localBranch,
     originUrl: repo.canonicalUrl,
+    remoteHeadError: remoteHead.error,
     remoteHeadOid,
     upstream,
   };

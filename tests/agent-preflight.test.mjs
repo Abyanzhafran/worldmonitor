@@ -12,6 +12,7 @@ import {
   bootstrapOnce,
   currentOriginMain,
   findWorktreeCollisions,
+  inventoryGenerationSkipReason,
   parseArgs,
   prepareInventoryFacts,
   prAlignment,
@@ -110,7 +111,6 @@ describe('agent preflight', () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture' }));
     let bootstrapCalls = 0;
     let bootstrapComplete = false;
-    let inventoryCalls = 0;
     let statusCalls = 0;
 
     const runner = (file, args) => {
@@ -119,11 +119,6 @@ describe('agent preflight', () => {
         mkdirSync(join(root, 'node_modules'), { recursive: true });
         writeFileSync(join(root, 'node_modules', '.package-lock.json'), '{}');
         bootstrapComplete = true;
-        return { status: 0, stderr: '', stdout: '' };
-      }
-      if (file === process.execPath && args[0] === 'scripts/generate-inventory-facts.mjs') {
-        assert.equal(bootstrapComplete, true);
-        inventoryCalls += 1;
         return { status: 0, stderr: '', stdout: '' };
       }
       if (file === 'npm') return { status: 0, stderr: '', stdout: '{}' };
@@ -175,11 +170,12 @@ describe('agent preflight', () => {
     assert.equal(result.checks.bootstrap.attempted, true);
     assert.equal(bootstrapCalls, 1);
     assert.equal(result.checks.inventoryFacts.ok, true);
-    assert.equal(inventoryCalls, 1);
-    assert.equal(statusCalls, 3);
+    assert.equal(result.checks.inventoryFacts.attempted, false);
+    assert.match(result.checks.inventoryFacts.reason, /generator not present/);
+    assert.equal(statusCalls, 2);
   });
 
-  it('regenerates inventory facts when dependencies were already complete', () => {
+  it('allows an older checkout whose inventory generator is not present', () => {
     const root = makeRoot();
     const cacheDir = join(root, 'agent-cache');
     const npmCacheDir = join(root, 'npm-cache');
@@ -187,14 +183,9 @@ describe('agent preflight', () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture' }));
     mkdirSync(join(root, 'node_modules'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.package-lock.json'), '{}');
-    let inventoryCalls = 0;
 
     const runner = (file, args) => {
       const command = args.join(' ');
-      if (file === process.execPath && command === 'scripts/generate-inventory-facts.mjs') {
-        inventoryCalls += 1;
-        return { status: 0, stderr: '', stdout: '' };
-      }
       if (file === 'npm') return { status: 0, stderr: '', stdout: '{}' };
       if (file === 'git') {
         if (command.startsWith('status ')) return { status: 0, stderr: '', stdout: '' };
@@ -234,7 +225,29 @@ describe('agent preflight', () => {
     assert.equal(result.ok, true);
     assert.equal(result.checks.bootstrap.attempted, false);
     assert.equal(result.checks.inventoryFacts.ok, true);
-    assert.equal(inventoryCalls, 1);
+    assert.equal(result.checks.inventoryFacts.attempted, false);
+    assert.equal(
+      result.checks.inventoryFacts.reason,
+      'generator not present in this checkout',
+    );
+
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    writeFileSync(
+      join(root, 'scripts', 'generate-inventory-facts.mjs'),
+      'throw new Error("alternate target code executed");\n',
+    );
+    const alternateTarget = runAgentPreflight({
+      cacheDir,
+      npmCacheDir,
+      requireEnv: [],
+      rootDir: root,
+    }, runner);
+    assert.equal(alternateTarget.ok, true);
+    assert.equal(alternateTarget.checks.inventoryFacts.attempted, false);
+    assert.equal(
+      alternateTarget.checks.inventoryFacts.reason,
+      'inventory generation disabled for an alternate --root target',
+    );
 
     const skipped = runAgentPreflight({
       cacheDir,
@@ -246,7 +259,29 @@ describe('agent preflight', () => {
     assert.equal(skipped.ok, true);
     assert.equal(skipped.checks.inventoryFacts.attempted, false);
     assert.equal(skipped.checks.inventoryFacts.ok, true);
-    assert.equal(inventoryCalls, 1, '--skip-bootstrap must not execute code from the target');
+    assert.equal(
+      skipped.checks.inventoryFacts.reason,
+      'inventory generation disabled by --skip-bootstrap',
+    );
+  });
+
+  it('runs inventory generation only for the current checkout', () => {
+    const current = makeRoot();
+    const alternate = makeRoot();
+    for (const root of [current, alternate]) {
+      mkdirSync(join(root, 'scripts'), { recursive: true });
+      writeFileSync(join(root, 'scripts', 'generate-inventory-facts.mjs'), '');
+    }
+
+    assert.equal(inventoryGenerationSkipReason(current, { currentDir: current }), null);
+    assert.equal(
+      inventoryGenerationSkipReason(alternate, { currentDir: current }),
+      'inventory generation disabled for an alternate --root target',
+    );
+    assert.equal(
+      inventoryGenerationSkipReason(current, { currentDir: current, skipBootstrap: true }),
+      'inventory generation disabled by --skip-bootstrap',
+    );
   });
 
   it('does not allow stale-main intent to hide unresolved Git state', () => {
@@ -369,6 +404,14 @@ describe('agent preflight', () => {
     assert.equal(received.options.cwd, '/repo');
     assert.equal(received.options.timeout, 4321);
     assert.equal('UPSTASH_REDIS_REST_URL' in received.options.env, false);
+  });
+
+  it('defaults the inventory generator runner to spawnSync', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    writeFileSync(join(root, 'scripts', 'generate-inventory-facts.mjs'), 'process.exit(0);\n');
+
+    assert.equal(prepareInventoryFacts(root).ok, true);
   });
 
   it('installs root and blog dependencies within one bootstrap attempt', () => {

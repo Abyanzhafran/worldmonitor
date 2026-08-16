@@ -605,7 +605,25 @@ export function bootstrapOnce(rootDir, npmCacheDir, runner, timeoutMs) {
   };
 }
 
-export function prepareInventoryFacts(rootDir, runner, timeoutMs = COMMAND_TIMEOUT_MS) {
+export function inventoryGenerationSkipReason(rootDir, {
+  currentDir = process.cwd(),
+  skipBootstrap = false,
+} = {}) {
+  if (skipBootstrap) return 'inventory generation disabled by --skip-bootstrap';
+  if (!existsSync(resolve(rootDir, 'scripts', 'generate-inventory-facts.mjs'))) {
+    return 'generator not present in this checkout';
+  }
+  if (resolve(rootDir) !== resolve(currentDir)) {
+    return 'inventory generation disabled for an alternate --root target';
+  }
+  return null;
+}
+
+export function prepareInventoryFacts(
+  rootDir,
+  runner = spawnSync,
+  timeoutMs = COMMAND_TIMEOUT_MS,
+) {
   const result = runner(process.execPath, ['scripts/generate-inventory-facts.mjs'], {
     cwd: rootDir,
     encoding: 'utf8',
@@ -673,13 +691,10 @@ export function runAgentPreflight(options = {}, runner = spawnSync) {
     bootstrap.reason = 'bootstrap disabled by --skip-bootstrap';
   }
 
-  let inventoryFacts = {
-    attempted: false,
-    ok: skipBootstrap,
-    reason: skipBootstrap
-      ? 'inventory generation disabled by --skip-bootstrap'
-      : 'blocked before inventory generation',
-  };
+  const inventorySkipReason = inventoryGenerationSkipReason(rootDir, { skipBootstrap });
+  let inventoryFacts = inventorySkipReason
+    ? { attempted: false, ok: true, reason: inventorySkipReason }
+    : { attempted: false, ok: false, reason: 'blocked before inventory generation' };
   const inventoryPrerequisitesOk = [
     node.ok,
     temp.ok,
@@ -690,7 +705,7 @@ export function runAgentPreflight(options = {}, runner = spawnSync) {
     dependencies.ok,
     bootstrap.ok,
   ].every(Boolean);
-  if (!skipBootstrap && inventoryPrerequisitesOk) {
+  if (!inventorySkipReason && inventoryPrerequisitesOk) {
     inventoryFacts = prepareInventoryFacts(rootDir, runner);
     if (inventoryFacts.ok) worktree = worktreeState(rootDir, runner, options);
   }

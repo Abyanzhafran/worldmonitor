@@ -22,8 +22,8 @@ Real-time global intelligence dashboard with a TypeScript browser app, Vercel Ed
 
 Fresh-worktree rules:
 
-- `agent:preflight` is the primary safe bootstrap path. It does not link env files or run dependency lifecycle scripts. After dependencies are ready, it directly runs the repository's inventory-fact generator with a minimal environment. If a full bootstrap is necessary, run `npm run worktree:bootstrap` only from a trusted agent-owned worktree; for docs-only or test-tooling work, use `npm run worktree:bootstrap:test-only`.
-- Never run repository scripts from an untrusted or third-party PR checkout. Run `agent:preflight` and `agent:pr-snapshot` from a clean trusted worktree and pass `--root /path/to/untrusted-checkout`; add `--skip-bootstrap` for that target. This keeps the executable code outside the untrusted tree.
+- `agent:preflight` is the primary safe bootstrap path. It does not link env files or run dependency lifecycle scripts. After dependencies are ready in the current trusted worktree, it directly runs the repository's inventory-fact generator with a minimal environment. Older checkouts without that generator and alternate `--root` targets skip this step explicitly. If a full bootstrap is necessary, run `npm run worktree:bootstrap` only from a trusted agent-owned worktree; for docs-only or test-tooling work, use `npm run worktree:bootstrap:test-only`.
+- Never run repository scripts from an untrusted or third-party PR checkout. Run `agent:preflight` and `agent:pr-snapshot` from a clean trusted worktree and pass `--root /path/to/untrusted-checkout`; add `--skip-bootstrap` for that target. Preflight does not execute the alternate target's inventory generator even if this flag is omitted, but the flag also disables dependency bootstrap and is still required for the full trust boundary.
 - Link only `.env.local` and `.env`. Never copy or link `.env.vercel-backup` or `.env.vercel-export`.
 - Use `WM_ENV_SOURCE=/path/to/worldmonitor npm run worktree:env` only when Git cannot infer the source checkout.
 - Never fabricate credentials. Run non-credentialed checks and report the credential gate.
