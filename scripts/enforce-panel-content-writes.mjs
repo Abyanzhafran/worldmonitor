@@ -124,8 +124,6 @@ export const DIRECT_WRITE_PATTERNS = [
  */
 export const LEGACY_DIRECT_CONTENT_WRITES = [
   'src/components/AirlineIntelPanel.ts :: setTrustedHtml(this.content, …) x15',
-  'src/components/ChatAnalystPanel.ts :: replaceChildren(this.content, …) x1',
-  'src/components/CorrelationPanel.ts :: replaceChildren(this.content, …) x2',
   'src/components/CountersPanel.ts :: this.content.appendChild(…) x1',
   'src/components/CountersPanel.ts :: this.content.innerHTML = … x1',
   'src/components/DeductionPanel.ts :: replaceChildren(this.content, …) x1',
@@ -144,8 +142,6 @@ export const LEGACY_DIRECT_CONTENT_WRITES = [
   'src/components/LiveWebcamsPanel.ts :: this.content.appendChild(…) x3',
   'src/components/MonitorPanel.ts :: clearChildren(this.content) x1',
   'src/components/MonitorPanel.ts :: this.content.appendChild(…) x3',
-  'src/components/PinnedWebcamsPanel.ts :: this.content.appendChild(…) x2',
-  'src/components/PinnedWebcamsPanel.ts :: this.content.removeChild(…) x1',
   'src/components/PositiveNewsFeedPanel.ts :: setTrustedHtml(this.content, …) x2',
   'src/components/ProgressChartsPanel.ts :: replaceChildren(this.content, …) x1',
   'src/components/ProgressChartsPanel.ts :: setTrustedHtml(this.content, …) x1',
