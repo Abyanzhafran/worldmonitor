@@ -443,7 +443,7 @@ function baseState({ pr, rootDir, runner }) {
     ['rev-parse', `origin/${pr.baseRefName}`],
     { cwd: rootDir },
   );
-  const local = localHeadRelation(rootDir, pr.baseRefOid, runner);
+  const local = localHeadRelation(rootDir, fetchedOid, runner);
   const graphQlMatchesFetched = fetchedOid === pr.baseRefOid;
   return {
     fetchedOid,
@@ -451,7 +451,8 @@ function baseState({ pr, rootDir, runner }) {
     localContainsBase: local.relation === 'exact' || local.relation === 'ahead',
     localHeadOid: local.localHeadOid,
     localRelation: local.relation,
-    ok: graphQlMatchesFetched && (local.relation === 'exact' || local.relation === 'ahead'),
+    ok: local.relation === 'exact' || local.relation === 'ahead',
+    pullRequestOid: pr.baseRefOid,
   };
 }
 
@@ -733,12 +734,13 @@ export function createPrSnapshot({
       includeUntrustedContent: true,
     });
 
+    const currentBaseState = baseState({ pr, rootDir: resolvedRoot, runner });
     const snapshot = {
       base: {
-        oid: pr.baseRefOid,
+        oid: currentBaseState.fetchedOid,
         ref: pr.baseRefName,
         repository: pr.baseRepository?.nameWithOwner || repo.nameWithOwner,
-        state: baseState({ pr, rootDir: resolvedRoot, runner }),
+        state: currentBaseState,
       },
       branchOwnership: {
         author: pr.author?.login || null,

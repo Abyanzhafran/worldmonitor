@@ -512,7 +512,7 @@ export function prAlignment(snapshot, rootDir, runner, { allowDetached = false }
   const localBranch = snapshot.remoteState.localBranch;
   const branchAligned = localBranch === snapshot.head.ref
     || (localBranch === null && allowDetached && headRelation === 'exact');
-  const baseAligned = snapshot.base.state?.graphQlMatchesFetched === true
+  const baseAligned = snapshot.base.oid === localBaseOid
     && snapshot.base.state?.localContainsBase === true;
   const remoteAligned = snapshot.remoteState.graphQlMatchesRemote === true;
   const stateOpen = snapshot.pullRequest.state === 'OPEN';

@@ -152,6 +152,7 @@ describe('agent PR snapshot', () => {
     const cacheDir = mkdtempSync(join(tmpdir(), 'wm-agent-pr-cache-'));
     const headOid = oid('a');
     const baseOid = oid('b');
+    const pullRequestBaseOid = oid('c');
     let graphQlCalls = 0;
 
     const runner = (file, args) => {
@@ -186,7 +187,7 @@ describe('agent PR snapshot', () => {
               pullRequest: {
                 author: { login: 'koala73' },
                 baseRefName: 'main',
-                baseRefOid: baseOid,
+                baseRefOid: pullRequestBaseOid,
                 baseRepository: { nameWithOwner: 'koala73/worldmonitor' },
                 commits: {
                   nodes: [{
@@ -256,7 +257,10 @@ describe('agent PR snapshot', () => {
       runner,
     });
     assert.equal(live.head.oid, headOid);
+    assert.equal(live.base.oid, baseOid);
     assert.equal(live.base.state.ok, true);
+    assert.equal(live.base.state.graphQlMatchesFetched, false);
+    assert.equal(live.base.state.pullRequestOid, pullRequestBaseOid);
     assert.equal(live.checks.checkRuns.length, 1);
     assert.match(live.cache.path, new RegExp(`${headOid}\\.json$`));
     assert.equal(existsSync(live.cache.path), true);

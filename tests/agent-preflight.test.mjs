@@ -215,6 +215,34 @@ describe('agent preflight', () => {
     assert.equal(result.ok, false);
   });
 
+  it('accepts the fetched live base when the PR object base OID is stale', () => {
+    const snapshot = {
+      base: {
+        oid: headOid,
+        ref: 'main',
+        state: {
+          fetchedOid: headOid,
+          graphQlMatchesFetched: false,
+          localContainsBase: true,
+          pullRequestOid: 'b'.repeat(40),
+        },
+      },
+      head: { ref: 'codex/agent-tools' },
+      pullRequest: { state: 'OPEN' },
+      remoteState: {
+        graphQlMatchesRemote: true,
+        localBranch: 'codex/agent-tools',
+        relation: 'ahead',
+      },
+    };
+
+    const result = prAlignment(snapshot, '/repo', () => {
+      throw new Error('runner should not be called');
+    });
+    assert.equal(result.baseAligned, true);
+    assert.equal(result.ok, true);
+  });
+
   it('bounds a safe bootstrap and disables lifecycle scripts', () => {
     let receivedOptions;
     const runner = (file, args, options) => {
