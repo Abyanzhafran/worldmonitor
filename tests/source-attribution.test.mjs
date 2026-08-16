@@ -119,9 +119,11 @@ test('source inventory has complete metadata and matches the generated catalog',
   // Main carries 559/555/678 after SEMA (#6673). This PR adds the CWFIS national
   // WFS host and the BC Wildfire Service host (#6668 merged into this branch):
   // +2 hosts, +2 providers, +2 observed.
-  assert.equal(stats.activeHosts, 561);
-  assert.equal(stats.providerCount, 557);
-  assert.equal(stats.observedHosts, 680);
+  // Main carries 561/557/680 after the wildfire pack (#6664). This PR adds the
+  // Canadian news roster: +17 hosts, +17 providers, +17 observed.
+  assert.equal(stats.activeHosts, 578);
+  assert.equal(stats.providerCount, 574);
+  assert.equal(stats.observedHosts, 697);
   assert.ok(stats.reviewNeeded > 0, 'terms-review rows must remain visible until a license audit is complete');
 
   const byHost = new Map(manifest.entries.map((entry) => [entry.host, entry]));

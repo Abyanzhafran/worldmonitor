@@ -170,10 +170,10 @@ export const PUBLIC_PRODUCT_FACTS = {
     "variants": 6,
     "mapLayers": 58,
     "panelImplementations": 109,
-    "feedDefinitions": 658,
+    "feedDefinitions": 677,
     "freshnessTrackedSourceGroups": 39,
-    "sourceAttributionHosts": 561,
-    "sourceAttributionProviders": 557
+    "sourceAttributionHosts": 578,
+    "sourceAttributionProviders": 574
   }
 };
 
