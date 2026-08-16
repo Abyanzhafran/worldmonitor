@@ -124,8 +124,6 @@ export const DIRECT_WRITE_PATTERNS = [
  */
 export const LEGACY_DIRECT_CONTENT_WRITES = [
   'src/components/AirlineIntelPanel.ts :: setTrustedHtml(this.content, …) x15',
-  'src/components/ChatAnalystPanel.ts :: replaceChildren(this.content, …) x1',
-  'src/components/CorrelationPanel.ts :: replaceChildren(this.content, …) x2',
   'src/components/CountersPanel.ts :: this.content.appendChild(…) x1',
   'src/components/CountersPanel.ts :: this.content.innerHTML = … x1',
   'src/components/DeductionPanel.ts :: replaceChildren(this.content, …) x1',
