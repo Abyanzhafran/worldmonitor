@@ -146,8 +146,6 @@ export const LEGACY_DIRECT_CONTENT_WRITES = [
   'src/components/LiveWebcamsPanel.ts :: this.content.appendChild(…) x3',
   'src/components/MonitorPanel.ts :: clearChildren(this.content) x1',
   'src/components/MonitorPanel.ts :: this.content.appendChild(…) x3',
-  'src/components/PinnedWebcamsPanel.ts :: this.content.appendChild(…) x2',
-  'src/components/PinnedWebcamsPanel.ts :: this.content.removeChild(…) x1',
   'src/components/PositiveNewsFeedPanel.ts :: setTrustedHtml(this.content, …) x2',
   'src/components/ProgressChartsPanel.ts :: replaceChildren(this.content, …) x1',
   'src/components/ProgressChartsPanel.ts :: setTrustedHtml(this.content, …) x1',
