@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { readFileSync as originalReadFileSync, existsSync, readdirSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -16,6 +17,7 @@ import {
   CONTENT_CORPUS_PREFIXES,
   discoverContentCorpusPages,
 } from '../scripts/discover-content-corpus-pages.mjs';
+import { guardBuiltOutput, shouldSkipBuiltOutput } from './_lib/built-output-guard.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
@@ -36,6 +38,7 @@ const dockerNginxSource = readFileSync(resolve(__dirname, '../docker/nginx.conf'
 const frontendDockerfileSource = readFileSync(resolve(__dirname, '../docker/Dockerfile'), 'utf-8');
 const dockerignoreSource = readFileSync(resolve(__dirname, '../.dockerignore'), 'utf-8');
 const vercelIgnoreSource = readFileSync(resolve(__dirname, '../scripts/vercel-ignore.sh'), 'utf-8');
+const variantDashboardSource = readFileSync(resolve(__dirname, '../src/config/variant-dashboard-html.ts'), 'utf-8');
 const SPA_HTML_CACHE_SOURCE = '/((?!api|mcp|a2a|ask|oauth|assets|blog|docs|countries|chokepoints|crises|tools|research|reference|changelog|sources|embed|embed\\.html|favico|map-styles|data|textures|pro|sw\\.js|workbox-[a-f0-9]+\\.js|manifest\\.webmanifest|offline\\.html|robots\\.txt|sitemap\\.xml|schemamap\\.xml|sandbox|llms\\.txt|llms-full\\.txt|openapi\\.yaml|openapi\\.json|auth\\.md|pricing\\.md|support\\.md|ai-search\\.md|agents\\.md|developers\\.md|developers/llms\\.txt|mcp-server\\.md|openapi\\.md|sdks\\.md|agent\\.txt|\\.well-known|wm-widget-sandbox\\.html|mcp-grant\\.html|mcp-grant).*)';
 const GLOBAL_SECURITY_HEADER_SOURCE = '/((?!docs|embed|embed\\.html).*)';
 const APP_ROOT_HOST_PATTERN = '^(?:(?:www|tech|finance|commodity|happy|energy)\\.)?worldmonitor\\.app$';
@@ -308,12 +311,71 @@ describe('crawlable content corpus deployment contracts', () => {
         source.indexOf('npm run build:sitemap') < source.indexOf('npx vite build'),
         name + ' must update public/sitemap.xml before Vite copies public/ into dist/'
       );
+      assert.ok(
+        source.indexOf('node scripts/generate-inventory-facts.mjs') < source.indexOf('npx vite build'),
+        name + ' must generate ignored inventory assets in a clean build context before Vite runs',
+      );
     }
+    assert.ok(
+      dockerfileSource.indexOf('node scripts/generate-inventory-facts.mjs') < dockerfileSource.indexOf('node docker/build-handlers.mjs'),
+      'the self-host image must generate the Edge inventory module before handler bundling',
+    );
+    assert.match(frontendDockerfileSource, /RUN test -s dist\/product-facts\.json/);
+    assert.ok(!packageJson.scripts['build:full'].includes('npm run build:blog &&'), 'build:full must not regenerate inventory facts inside build:blog');
   });
 
   it('builds Vercel when corpus source files change', () => {
     assert.ok(vercelIgnoreSource.includes("'CHANGELOG.md'"));
     assert.ok(vercelIgnoreSource.includes("'docs/snapshots/'"));
+    for (const path of [
+      'scripts/crawlable-sources-page.mjs',
+      'scripts/generate-inventory-facts.mjs',
+      'scripts/docs-stats.mjs',
+      'scripts/source-attribution.mjs',
+    ]) {
+      assert.equal(vercelIgnoreSource.split(`'${path}'`).length - 1, 2, `${path} must trigger main and preview builds`);
+    }
+  });
+
+  it('builds Vercel for script-only inventory derivation changes', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'wm-vercel-ignore-'));
+    try {
+      const fixtureEnv = { ...process.env };
+      for (const key of ['GIT_COMMON_DIR', 'GIT_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_WORK_TREE']) {
+        delete fixtureEnv[key];
+      }
+      const git = (...args) => execFileSync('git', args, { cwd: fixture, env: fixtureEnv, encoding: 'utf8' });
+
+      git('init', '-q');
+      git('config', 'user.email', 'test@example.com');
+      git('config', 'user.name', 'Test');
+      writeFileSync(join(fixture, 'README.md'), 'base\n');
+      git('add', 'README.md');
+      git('commit', '-qm', 'base');
+
+      for (const path of [
+        'scripts/crawlable-sources-page.mjs',
+        'scripts/generate-inventory-facts.mjs',
+        'scripts/docs-stats.mjs',
+        'scripts/source-attribution.mjs',
+      ]) {
+        const previous = git('rev-parse', 'HEAD').trim();
+        mkdirSync(dirname(join(fixture, path)), { recursive: true });
+        writeFileSync(join(fixture, path), `${path}\n`);
+        git('add', path);
+        git('commit', '-qm', path);
+        assert.throws(
+          () => execFileSync('/bin/bash', [resolve(__dirname, '../scripts/vercel-ignore.sh')], {
+            cwd: fixture,
+            env: { ...fixtureEnv, VERCEL_GIT_COMMIT_REF: 'main', VERCEL_GIT_PREVIOUS_SHA: previous },
+          }),
+          (error) => error?.status === 1,
+          `${path} must request a Vercel build`,
+        );
+      }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it('keeps corpus inputs available in Docker build contexts', () => {
@@ -773,13 +835,21 @@ describe('welcome landing page routing', () => {
   });
 
   it('renames the web dashboard HTML output away from root index.html', () => {
-    assert.match(viteConfigSource, /function dashboardHtmlOutputPlugin\(\)/);
-    assert.match(viteConfigSource, /enforce:\s*'post'/);
-    assert.match(viteConfigSource, /Object\.entries\(bundle\)\.find/);
-    assert.match(viteConfigSource, /output\.fileName === 'index\.html'/);
-    assert.match(viteConfigSource, /delete bundle\[bundleKey\]/);
-    assert.match(viteConfigSource, /dashboardHtml\.fileName = 'dashboard\.html'/);
-    assert.match(viteConfigSource, /!isDesktopBuild && dashboardHtmlOutputPlugin\(\)/);
+    // Assert the build's OUTPUT, not the plugin's internals. Vercel's
+    // filesystem precedence serves a root index.html at / ahead of every
+    // rewrite above, so what matters is that the web build emits
+    // dashboard.html and leaves no index.html behind — however the plugin
+    // happens to accomplish it.
+    const distDir = resolve(__dirname, '../dist');
+    const dashboardHtml = join(distDir, 'dashboard.html');
+    if (shouldSkipBuiltOutput(dashboardHtml)) return;
+    guardBuiltOutput(dashboardHtml);
+
+    assert.ok(existsSync(dashboardHtml), 'web build must emit dist/dashboard.html');
+    assert.ok(
+      !existsSync(join(distDir, 'index.html')),
+      'web build must not leave a root dist/index.html — Vercel would serve it at / ahead of the dashboard rewrite',
+    );
   });
 
   it('does not keep stale welcome exclusions in the SPA catch-all rewrite', () => {
@@ -2210,23 +2280,50 @@ describe('agent readiness: api-catalog + openapi build', () => {
     );
   });
 
-  it('every web-variant build chains npm run build:openapi', () => {
+  it('every web-variant build regenerates inventory facts and OpenAPI', () => {
     // build:desktop and build:pro are intentionally excluded — Tauri
     // sidecar builds and the standalone pro-test workspace don't ship
     // the OpenAPI spec.
-    const webVariants = ['build:full', 'build:tech', 'build:finance', 'build:happy', 'build:commodity'];
-    for (const variant of webVariants) {
-      const script = pkg.scripts[variant];
-      assert.ok(script, `package.json must define scripts["${variant}"]`);
+    const declaredVariants = variantDashboardSource
+      .match(/WEB_DASHBOARD_VARIANTS\s*=\s*\[([^\]]+)\]/)?.[1]
+      .match(/'[^']+'/g)
+      ?.map((value) => value.slice(1, -1));
+    assert.ok(declaredVariants?.length, 'WEB_DASHBOARD_VARIANTS extraction must not be empty');
+
+    for (const variant of ['full', ...declaredVariants]) {
+      const buildName = `build:${variant}`;
+      const prebuildName = `prebuild:${variant}`;
+      const script = pkg.scripts[buildName];
+      assert.ok(script, `package.json must define scripts["${buildName}"]`);
       assert.ok(
         script.includes('npm run build:openapi'),
-        `scripts["${variant}"] must chain "npm run build:openapi" so the web bundle ships the spec; got: ${script}`
+        `scripts["${buildName}"] must chain "npm run build:openapi" so the web bundle ships the spec; got: ${script}`
+      );
+      assert.equal(
+        pkg.scripts[prebuildName],
+        'npm run product:facts',
+        `scripts["${prebuildName}"] must regenerate ignored inventory facts before ${buildName}`,
       );
     }
   });
 
   it('keeps a prebuild hook so the default `npm run build` path also copies the spec', () => {
-    assert.ok(pkg.scripts.prebuild, 'package.json must define scripts["prebuild"] (default build path uses it)');
+    assert.ok(
+      pkg.scripts.prebuild?.includes('npm run product:facts'),
+      'package.json scripts["prebuild"] must regenerate ignored product and inventory facts',
+    );
+    assert.ok(
+      pkg.scripts.prebuild?.includes('npm run build:openapi'),
+      'package.json scripts["prebuild"] must copy the generated OpenAPI spec',
+    );
+  });
+
+  it('regenerates ignored inventory facts before the Tauri desktop build', () => {
+    assert.equal(
+      pkg.scripts['prebuild:desktop'],
+      'npm run product:facts',
+      'Tauri packages api/ and public/ resources, so build:desktop must regenerate ignored facts',
+    );
   });
 
   it('openapi source exists at docs/api/worldmonitor.openapi.yaml', () => {
