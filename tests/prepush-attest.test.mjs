@@ -484,8 +484,17 @@ describe('pre-push wiring: the hook must consume these decisions', () => {
 
   test('delegates edge entry discovery to the tracked-file checker', () => {
     has(
+      /^\s*npm run inventory:facts \|\| exit 1$/m,
+      'pre-push must recreate ignored inventory facts before bundling edge entries',
+    );
+    has(
       /^\s*node scripts\/check-edge-function-bundles\.mjs --caller=prepush \|\| exit 1$/m,
       'pre-push must use the shared checker with its worktree-aware caller profile',
+    );
+    assert.ok(
+      hook.indexOf('npm run inventory:facts || exit 1')
+        < hook.indexOf('node scripts/check-edge-function-bundles.mjs --caller=prepush || exit 1'),
+      'pre-push must regenerate ignored inventory facts before the edge bundle check',
     );
     lacks(/find api\/ -name "\*\.js"/, 'working-tree globs rediscover ignored sidecar bundles');
   });
