@@ -88,6 +88,7 @@ describe('locale completeness', () => {
   // 2000 means the catalog collapsed (bad parse / mass deletion), which would
   // make the per-locale completeness checks below pass vacuously.
   it('en.json defines at least 2000 translation keys', () => {
+    // inventory-contract: locale-key-completeness; classification: floor; promise: the English UI catalog remains a full product surface; reason: a 2000-key floor detects mass deletion before locale parity can pass vacuously
     assert.ok(enKeys.length >= 2000, `expected a large en catalog, got ${enKeys.length}`);
   });
 
@@ -97,6 +98,7 @@ describe('locale completeness', () => {
       const localeKeySet = new Set(flattenKeys(locale));
       const missing = enKeys.filter((key) => !localeKeySet.has(key));
 
+      // inventory-contract: locale-key-completeness; classification: parity; reason: missing-key parity is an exact completeness contract, not a catalog total
       assert.equal(
         missing.length,
         0,
@@ -142,6 +144,34 @@ describe('locale completeness', () => {
           caToken,
           `${file} weather coverage copy must name Canada scope (${caToken})`,
         );
+      }
+    });
+  }
+
+  for (const file of ['en.json', ...localeFiles]) {
+    it(`${file} describes the shared Canada roads layer without stale province-only copy`, () => {
+      const locale = JSON.parse(readFileSync(join(LOCALES_DIR, file), 'utf8'));
+      const values = [
+        locale.components.deckgl.layers.canadaRoads,
+        locale.components.deckgl.layerHelp.descriptions.canadaRoads,
+      ];
+      for (const value of values) {
+        assert.equal(typeof value, 'string');
+        assert.match(value, /Canada|Canadian/i, `${file} canadaRoads copy must identify Canadian scope`);
+        assert.doesNotMatch(value, /Ontario and Alberta/i, `${file} canadaRoads copy must not claim only two provinces`);
+      }
+    });
+
+    it(`${file} discloses Alberta Emergency Alert for the canadaAlerts layer`, () => {
+      const locale = JSON.parse(readFileSync(join(LOCALES_DIR, file), 'utf8'));
+      const values = [
+        locale.components.deckgl.layers.canadaAlerts,
+        locale.components.deckgl.layerHelp.descriptions.canadaAlerts,
+        locale.commands.labels.layer.canadaAlerts,
+      ];
+      for (const value of values) {
+        assert.equal(typeof value, 'string');
+        assert.match(value, /Alberta Emergency Alert/i, `${file} canadaAlerts copy must name Alberta Emergency Alert`);
       }
     });
   }

@@ -371,7 +371,7 @@ export function actionableReviewThreads(
     });
 }
 
-function localHeadRelation(rootDir, remoteHeadOid, runner) {
+export function localHeadRelation(rootDir, remoteHeadOid, runner) {
   const localHeadOid = optional(runner, 'git', ['rev-parse', 'HEAD'], { cwd: rootDir });
   if (!localHeadOid) return { localHeadOid: null, relation: 'unknown' };
   if (localHeadOid === remoteHeadOid) return { localHeadOid, relation: 'exact' };

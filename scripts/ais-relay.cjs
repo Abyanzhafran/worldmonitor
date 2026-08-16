@@ -54,6 +54,13 @@ const {
 const { maintainClosedMarketEquityKeys: maintainClosedMarketEquityKeysWithDeps } = require('./shared/closed-market-equity-maintenance.cjs');
 const { getUsEquitySession, isMultiMarketEquityTradingDay } = require('./shared/market-hours.cjs');
 const { mergeLastGoodQuotes, planYahooRefresh } = require('./shared/market-quote-refresh.cjs');
+// ESM module loaded via require(esm) (Node >= 22.12; relay image is node:24).
+// Same implementation the RPC handler scores with — see the module header for
+// why it lives in shared/ rather than beside the other scoring helpers.
+const { detectTrafficAnomaly } = require('../shared/chokepoint-traffic-anomaly.js');
+const { CHOKEPOINT_THREAT_LEVELS } = require('../shared/chokepoint-threat-levels.js');
+const { classifyVesselType } = require('../shared/ais-vessel-type.js');
+const { CORRIDOR_RISK_NAME_MAP, deriveCorridorRiskLevel } = require('../shared/corridor-risk.js');
 const chinaCountryStockIndexHelpersPromise = import('./_country-stock-index.mjs');
 // Terminal handler attached AT DECLARATION. This promise is created at module
 // load but not awaited until seedWeatherAlerts() runs, so without a .catch()
@@ -5783,15 +5790,6 @@ const CORRIDOR_RISK_BASE_URL = 'https://corridorrisk.io/api/corridors';
 const CORRIDOR_RISK_REDIS_KEY = 'supply_chain:corridorrisk:v1';
 const CORRIDOR_RISK_TTL = 14400; // 4h (seed runs hourly, gives 3 retries before expiry)
 const CORRIDOR_RISK_SEED_INTERVAL_MS = 60 * 60 * 1000;
-// API name -> canonical chokepoint ID (partial substring match)
-const CORRIDOR_RISK_NAME_MAP = [
-  { pattern: 'hormuz', id: 'hormuz_strait' },
-  { pattern: 'bab-el-mandeb', id: 'bab_el_mandeb' },
-  { pattern: 'red sea', id: 'bab_el_mandeb' },
-  { pattern: 'suez', id: 'suez' },
-  { pattern: 'south china sea', id: 'taiwan_strait' },
-  { pattern: 'black sea', id: 'bosphorus' },
-];
 let corridorRiskSeedInFlight = false;
 let latestCorridorRiskData = null;
 
@@ -5830,7 +5828,7 @@ async function seedCorridorRisk() {
       const mapping = CORRIDOR_RISK_NAME_MAP.find(m => name.includes(m.pattern));
       if (!mapping) continue;
       const score = Number(corridor.score ?? 0);
-      const riskLevel = score >= 70 ? 'critical' : score >= 50 ? 'high' : score >= 30 ? 'elevated' : 'normal';
+      const riskLevel = deriveCorridorRiskLevel(score);
       result[mapping.id] = {
         riskLevel,
         riskScore: score,
@@ -6882,6 +6880,7 @@ const DODO_TIER_CONFIG = GENERATED_PRODUCT_CATALOG.tierConfig;
 const DODO_PUBLIC_TIER_GROUPS = GENERATED_PRODUCT_CATALOG.publicTierGroups;
 const DODO_FALLBACK_PRICES = GENERATED_PRODUCT_CATALOG.fallbackPrices;
 const DODO_PUBLIC_PRODUCT_FACTS = GENERATED_PRODUCT_CATALOG.facts;
+const DODO_PUBLIC_INVENTORY_FACTS = requireShared('inventory-facts.generated.json');
 
 let dodoPriceSeedInFlight = false;
 
@@ -6966,6 +6965,7 @@ async function seedDodoPrices() {
     const now = Date.now();
     const payload = {
       ...DODO_PUBLIC_PRODUCT_FACTS,
+      capabilities: DODO_PUBLIC_INVENTORY_FACTS.capabilities,
       tiers,
       fetchedAt: now,
       cachedUntil: now + DODO_PRICE_SEED_TTL * 1000,
@@ -7665,12 +7665,6 @@ const CHOKEPOINTS = [
   { name: 'Kerch Strait', lat: 45.33, lon: 36.60, radius: 0.5 },
   { name: 'Lombok Strait', lat: -8.47, lon: 115.72, radius: 0.5 },
 ];
-
-function classifyVesselType(shipType) {
-  if (shipType >= 80 && shipType <= 89) return 'tanker';
-  if (shipType >= 70 && shipType <= 79) return 'cargo';
-  return 'other';
-}
 
 const chokepointCrossings = new Map();
 const transitCooldowns = new Map();
@@ -8386,18 +8380,6 @@ const TRANSIT_SUMMARY_HISTORY_KEY_PREFIX = 'supply_chain:transit-summaries:histo
 const TRANSIT_SUMMARY_TTL = 3600; // 1h — 6x interval; survives ~5 consecutive missed pings
 const TRANSIT_SUMMARY_INTERVAL_MS = 10 * 60 * 1000;
 
-// Threat levels for anomaly detection.
-// IMPORTANT: Must stay in sync with CHOKEPOINTS[].threatLevel in
-// server/worldmonitor/supply-chain/v1/get-chokepoint-status.ts
-// Only war_zone and critical trigger anomaly signals.
-const CHOKEPOINT_THREAT_LEVELS = {
-  suez: 'high', malacca_strait: 'normal', hormuz_strait: 'war_zone',
-  bab_el_mandeb: 'critical', panama: 'normal', taiwan_strait: 'elevated',
-  cape_of_good_hope: 'normal', gibraltar: 'normal', bosphorus: 'elevated',
-  korea_strait: 'normal', dover_strait: 'normal', kerch_strait: 'war_zone',
-  lombok_strait: 'normal',
-};
-
 // ID mapping: relay geofence name -> canonical ID
 const RELAY_NAME_TO_ID = {
   'Suez Canal': 'suez', 'Malacca Strait': 'malacca_strait',
@@ -8409,21 +8391,6 @@ const RELAY_NAME_TO_ID = {
   'Lombok Strait': 'lombok_strait',
   'South China Sea': null, 'Black Sea': null, // area geofences, not chokepoints
 };
-
-// Duplicated from server/worldmonitor/supply-chain/v1/_scoring.mjs because
-// ais-relay.cjs is CJS and cannot import .mjs modules. Keep in sync.
-function detectTrafficAnomalyRelay(history, threatLevel) {
-  if (!history || history.length < 37) return { dropPct: 0, signal: false };
-  const sorted = [...history].sort((a, b) => b.date.localeCompare(a.date));
-  let recent7 = 0, baseline30 = 0;
-  for (let i = 0; i < 7 && i < sorted.length; i++) recent7 += sorted[i].total;
-  for (let i = 7; i < 37 && i < sorted.length; i++) baseline30 += sorted[i].total;
-  const baselineAvg7 = (baseline30 / Math.min(30, sorted.length - 7)) * 7;
-  if (baselineAvg7 < 14) return { dropPct: 0, signal: false };
-  const dropPct = Math.round(((baselineAvg7 - recent7) / baselineAvg7) * 100);
-  const isHighThreat = threatLevel === 'war_zone' || threatLevel === 'critical';
-  return { dropPct, signal: dropPct >= 50 && isHighThreat };
-}
 
 async function seedTransitSummaries() {
   let pwFailureReason = null;
@@ -8463,7 +8430,7 @@ async function seedTransitSummaries() {
     if (cpData) pwCovered++;
     const threatLevel = CHOKEPOINT_THREAT_LEVELS[cpId] || 'normal';
     const history = cpData?.history ?? [];
-    const anomaly = detectTrafficAnomalyRelay(history, threatLevel);
+    const anomaly = detectTrafficAnomaly(history, threatLevel);
 
     // Get relay transit counts for this chokepoint
     let relayTransit = null;

@@ -15,15 +15,13 @@ import {
   readdirSync,
   writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MANIFEST_PATH = 'shared/source-attribution-manifest.json';
-// Byte-identical copy for services whose rootDirectory is scripts/ (they cannot
-// reach ../shared). tests/edge-functions.test.mjs asserts the two match.
-const MIRROR_PATH = 'scripts/shared/source-attribution-manifest.json';
 const DOCS_PATH = 'docs/source-attribution.mdx';
 // MDX comments, not HTML ones: Mintlify parses docs/source-attribution.mdx as MDX v3,
 // which rejects `<!--` ("Unexpected character `!` before name") and fails the
@@ -71,11 +69,57 @@ const licensedPublisherFeed = (provider) => ({
   status: 'reviewed',
 });
 
+/**
+ * A provider identity is allowed to span multiple hosts only when the grouping
+ * is declared here. The stable key is for review history; the display provider
+ * remains the manifest/catalog identity. Host retirement does not delete a
+ * member from this declaration, so a source lifecycle change cannot silently
+ * become a provider rename or regroup.
+ */
+export const PROVIDER_IDENTITY_GROUPS = Object.freeze({
+  'opensky-network': Object.freeze({
+    provider: 'opensky-network.org',
+    memberHosts: Object.freeze(['auth.opensky-network.org', 'opensky-network.org']),
+    reason: 'The authentication and product hosts belong to one OpenSky Network provider identity.',
+    reviewReference: 'PR #6717',
+  }),
+  'our-world-in-data': Object.freeze({
+    provider: 'Our World in Data',
+    memberHosts: Object.freeze(['ourworldindata.org', 'owid-public.owid.io']),
+    reason: 'The public data host and dataset landing host belong to one Our World in Data provider identity.',
+    reviewReference: 'PR #6250',
+  }),
+  'uspto-open-data': Object.freeze({
+    provider: 'USPTO Open Data Portal',
+    memberHosts: Object.freeze(['api.uspto.gov', 'data.uspto.gov']),
+    reason: 'The two official USPTO data hosts belong to one Open Data Portal provider identity.',
+    reviewReference: 'PR #6250',
+  }),
+  wingbits: Object.freeze({
+    provider: 'wingbits.com',
+    memberHosts: Object.freeze(['customer-api.wingbits.com', 'ecs-api.wingbits.com', 'wingbits.com']),
+    reason: 'The customer and ECS API hosts and excluded product link belong to one Wingbits provider identity.',
+    reviewReference: 'PR #6717',
+  }),
+});
+
 const PROVIDER_OVERRIDES = {
-  'auth.opensky-network.org': { provider: 'opensky-network.org' },
-  'opensky-network.org': { provider: 'opensky-network.org' },
-  'customer-api.wingbits.com': { provider: 'wingbits.com' },
-  'ecs-api.wingbits.com': { provider: 'wingbits.com' },
+  'api.adsb.lol': { provider: 'adsb.lol' },
+  'api.airplanes.live': { provider: 'airplanes.live' },
+  'api.x.com': { provider: 'X API' },
+  'atbackend.sipri.org': { provider: 'SIPRI Arms Transfers Database' },
+  'opendata.adsb.fi': { provider: 'adsb.fi Open Data' },
+  'auth.opensky-network.org': { provider: 'opensky-network.org', identityGroup: 'opensky-network' },
+  'opensky-network.org': { provider: 'opensky-network.org', identityGroup: 'opensky-network' },
+  'customer-api.wingbits.com': { provider: 'wingbits.com', identityGroup: 'wingbits' },
+  'ecs-api.wingbits.com': { provider: 'wingbits.com', identityGroup: 'wingbits' },
+  'wingbits.com': {
+    provider: 'wingbits.com',
+    identityGroup: 'wingbits',
+    license: 'Excluded: first-party, control-plane, UI, or rendering transport',
+    attribution: 'Excluded from the external-provider count: not an ingested upstream dataset.',
+    status: 'excluded',
+  },
   'moxie.foxbusiness.com': licensedPublisherFeed('Fox Business'),
   'www.wired.com': licensedPublisherFeed('Wired'),
   'www.businessinsider.com': licensedPublisherFeed('Business Insider'),
@@ -164,6 +208,24 @@ const PROVIDER_OVERRIDES = {
     attribution: 'U.S. Geological Survey Mineral Commodity Summaries; link to the ScienceBase data release (https://doi.org/10.5066/P1WKQ63T).',
     status: 'reviewed',
   },
+  'geoserver.cwfif.nrcan.gc.ca': {
+    provider: 'CWFIS / CWFIF (NRCan)',
+    license: 'Open Government Licence - Canada; redistribution granted (copy, modify, publish, distribute, including commercial use) with attribution',
+    attribution: 'Canadian Forest Service. Canadian Wildland Fire Information System (CWFIS), Natural Resources Canada, Canadian Forest Service, Northern Forestry Centre, Edmonton, Alberta. https://cwfis.cfs.nrcan.gc.ca. Contains information licensed under the Open Government Licence – Canada (https://open.canada.ca/en/open-government-licence-canada). Evidence: https://cwfis.cfs.nrcan.gc.ca/downloads/licence.txt',
+    status: 'reviewed',
+  },
+  'openmaps.gov.bc.ca': {
+    provider: 'BC Wildfire Service (OpenMaps)',
+    license: 'Open Government Licence - British Columbia; redistribution granted (copy, modify, publish, distribute, including commercial use) with attribution',
+    attribution: 'Contains information licensed under the Open Government Licence – British Columbia. BC Wildfire Service, Current Fire Locations (PROT_CURRENT_FIRE_PNTS_SP), Government of British Columbia. https://catalogue.data.gov.bc.ca/dataset/bc-wildfire-fire-locations-current. Evidence: https://www2.gov.bc.ca/gov/content/data/policy-standards/data-policies/open-data/open-government-licence-bc and https://open.canada.ca/data/en/dataset/2790e3f7-6395-4230-8545-04efb5a18800',
+    status: 'reviewed',
+  },
+  'www.earthquakescanada.nrcan.gc.ca': {
+    provider: 'Earthquakes Canada (NRCan)',
+    license: 'Earthquakes Canada citation terms; live Atom redistribution not explicitly granted (historical catalogues on the Open Government Portal are OGL-Canada)',
+    attribution: 'Natural Resources Canada, Earthquakes Canada; link to https://www.earthquakescanada.nrcan.gc.ca/index-en.php?tpl_region=canada. Event-metadata citation: https://www.earthquakescanada.nrcan.gc.ca/cite-en.php',
+    status: 'terms-review',
+  },
   'ogcapi.bgs.ac.uk': {
     provider: 'British Geological Survey World Mineral Statistics',
     license: 'BGS mineral statistics terms; attribution required; redistribution restricted',
@@ -196,12 +258,14 @@ const PROVIDER_OVERRIDES = {
   },
   'api.uspto.gov': {
     provider: 'USPTO Open Data Portal',
+    identityGroup: 'uspto-open-data',
     license: 'U.S. government public data; USPTO terms apply',
     attribution: 'U.S. Patent and Trademark Office (USPTO) Open Data Portal.',
     status: 'reviewed',
   },
   'data.uspto.gov': {
     provider: 'USPTO Open Data Portal',
+    identityGroup: 'uspto-open-data',
     license: 'U.S. government public data; USPTO terms apply',
     attribution: 'U.S. Patent and Trademark Office (USPTO) Open Data.',
     status: 'reviewed',
@@ -244,12 +308,14 @@ const PROVIDER_OVERRIDES = {
   },
   'ourworldindata.org': {
     provider: 'Our World in Data',
+    identityGroup: 'our-world-in-data',
     license: 'CC BY 4.0 for the dataset unless the dataset page states otherwise',
     attribution: 'Our World in Data; link to the dataset page.',
     status: 'reviewed',
   },
   'owid-public.owid.io': {
     provider: 'Our World in Data',
+    identityGroup: 'our-world-in-data',
     license: 'CC BY 4.0 for the dataset unless the dataset page states otherwise',
     attribution: 'Our World in Data; link to the dataset page.',
     status: 'reviewed',
@@ -300,6 +366,12 @@ const PROVIDER_OVERRIDES = {
     provider: 'OpenSanctions',
     license: 'OpenSanctions terms; dataset-specific license varies by source',
     attribution: 'OpenSanctions; link to the matching entity/dataset.',
+    status: 'terms-review',
+  },
+  'www.international.gc.ca': {
+    provider: 'Global Affairs Canada (SEMA consolidated sanctions)',
+    license: 'Government of Canada website terms; no explicit redistribution licence on the SEMA XML. Canada.ca terms restrict commercial reproduction unless otherwise specified. The Open Government Licence page on this host covers international-assistance open data sets, not this sanctions list.',
+    attribution: 'Global Affairs Canada, Consolidated Canadian Autonomous Sanctions List; link to https://www.international.gc.ca/world-monde/international_relations-relations_internationales/sanctions/consolidated-consolide.aspx?lang=eng',
     status: 'terms-review',
   },
   'earth-search.aws.element84.com': {
@@ -573,6 +645,24 @@ const PROVIDER_OVERRIDES = {
     status: 'terms-review',
   },
 };
+
+// Provider display identities change rarely and affect attribution, catalog
+// grouping, and public provider totals. This review epoch makes any change to
+// a provider-bearing override a separate, explicit lifecycle event instead of
+// something `--write` can silently normalize into the manifest.
+export const PROVIDER_IDENTITY_REVIEW = Object.freeze({
+  sha256: '38b0b43635fdb230c9e0c6f4de8ba93b500168c4d05cef7794a556e3a7aa3e4f',
+  reason: 'Baseline the reviewed identities, including the merged ECCC, Bank of Canada, Statistics Canada, Earthquakes Canada, Global Affairs Canada, CWFIS, BC Wildfire Service, and Canadian news providers.',
+  reviewReference: 'PR #6662; PR #6670; PR #6736',
+});
+
+export function providerIdentityDigest(providerOverrides = PROVIDER_OVERRIDES) {
+  const identities = Object.entries(providerOverrides || {})
+    .filter(([, override]) => typeof override?.provider === 'string')
+    .map(([host, override]) => [host, override.provider])
+    .sort(([left], [right]) => left.localeCompare(right));
+  return createHash('sha256').update(JSON.stringify(identities)).digest('hex');
+}
 
 const LOGICAL_ENTRIES = [
   {
@@ -849,7 +939,13 @@ function clearStaleExclusion(previous, observed, override) {
  * stick instead of sending them to a command that would discard it.
  */
 function overrideFor(observed) {
-  if (PROVIDER_OVERRIDES[observed.host]) return PROVIDER_OVERRIDES[observed.host];
+  if (PROVIDER_OVERRIDES[observed.host]) {
+    // identityGroup is review metadata for the override declaration. It is not
+    // part of the public manifest schema and must never leak into generated
+    // attribution rows.
+    const { identityGroup, ...override } = PROVIDER_OVERRIDES[observed.host];
+    return override;
+  }
   const presentationOnly = observed.references.length > 0
     && observed.references.every((reference) => PRESENTATION_ONLY_FILES.has(reference.path));
   if (presentationOnly) return { provider: observed.host, ...GENERATED_EXCLUSIONS[0] };
@@ -966,6 +1062,10 @@ export function validateManifest(inventory, manifest) {
     if (typeof entry.observed !== 'boolean') errors.push(`manifest entry ${label} observed must be boolean`);
     if (typeof entry.kind !== 'string' || !MANIFEST_KIND_RE.test(entry.kind)) errors.push(`invalid manifest kind for ${label}`);
     if (typeof entry.status !== 'string' || !MANIFEST_STATUSES.has(entry.status)) errors.push(`invalid manifest status for ${label}`);
+    const reviewedProvider = PROVIDER_OVERRIDES[entry.host]?.provider;
+    if (typeof entry.provider === 'string' && entry.provider !== entry.host && entry.provider !== reviewedProvider) {
+      errors.push(`custom provider identity for ${label} must be declared in PROVIDER_OVERRIDES`);
+    }
     if (entry.references !== undefined && !Array.isArray(entry.references)) {
       errors.push(`manifest entry ${label} references must be an array`);
     }
@@ -1041,13 +1141,122 @@ export function validateManifest(inventory, manifest) {
       errors.push(`incomplete logical attribution metadata for ${label}`);
     }
   }
+  errors.push(...validateProviderIdentityGroups(manifest));
   return errors;
+}
+
+export function validateProviderIdentityGroups(
+  manifest,
+  groups = PROVIDER_IDENTITY_GROUPS,
+  providerOverrides = PROVIDER_OVERRIDES,
+  providerIdentityReview = providerOverrides === PROVIDER_OVERRIDES ? PROVIDER_IDENTITY_REVIEW : null,
+) {
+  const errors = [];
+  const entries = Array.isArray(manifest?.entries) ? manifest.entries : [];
+  const claimedHostGroups = new Map();
+  const claimedProviderGroups = new Map();
+  const allHostsByProvider = new Map();
+  const activeHostsByProvider = new Map();
+  for (const entry of entries) {
+    const allHosts = allHostsByProvider.get(entry?.provider) || [];
+    allHosts.push(entry?.host);
+    allHostsByProvider.set(entry?.provider, allHosts);
+    if (!isActiveSourceAttributionEntry(entry)) continue;
+    const activeHosts = activeHostsByProvider.get(entry.provider) || [];
+    activeHosts.push(entry.host);
+    activeHostsByProvider.set(entry.provider, activeHosts);
+  }
+  const requireDeclaredMembership = providerOverrides !== PROVIDER_OVERRIDES
+    || entries.some((entry) => providerOverrides?.[entry?.host]);
+
+  if (providerIdentityReview) {
+    if (typeof providerIdentityReview.reason !== 'string' || !providerIdentityReview.reason.trim()) {
+      errors.push('provider identity review needs a reason');
+    }
+    if (typeof providerIdentityReview.reviewReference !== 'string' || !providerIdentityReview.reviewReference.trim()) {
+      errors.push('provider identity review needs a review reference');
+    }
+    const digest = providerIdentityDigest(providerOverrides);
+    if (providerIdentityReview.sha256 !== digest) {
+      errors.push(`provider identity overrides changed without a reviewed lifecycle epoch; expected sha256 ${providerIdentityReview.sha256}, got ${digest}`);
+    }
+  }
+
+  for (const [groupId, group] of Object.entries(groups || {})) {
+    const label = `provider identity group ${groupId}`;
+    if (!group || typeof group !== 'object') {
+      errors.push(`${label} must be an object`);
+      continue;
+    }
+    if (typeof group.provider !== 'string' || !group.provider.trim()) errors.push(`${label} needs a provider`);
+    if (typeof group.reason !== 'string' || !group.reason.trim()) errors.push(`${label} needs a reason`);
+    if (typeof group.reviewReference !== 'string' || !group.reviewReference.trim()) errors.push(`${label} needs a review reference`);
+    if (!Array.isArray(group.memberHosts) || group.memberHosts.length < 2) {
+      errors.push(`${label} needs at least two member hosts`);
+      continue;
+    }
+    const memberHosts = group.memberHosts.filter((host) => typeof host === 'string' && host.trim());
+    if (memberHosts.length !== group.memberHosts.length) errors.push(`${label} has an invalid member host`);
+    if (new Set(memberHosts).size !== memberHosts.length) errors.push(`${label} repeats a member host`);
+    if (claimedProviderGroups.has(group.provider)) {
+      errors.push(`${label} reuses provider ${group.provider} from ${claimedProviderGroups.get(group.provider)}`);
+    } else {
+      claimedProviderGroups.set(group.provider, groupId);
+    }
+    for (const host of memberHosts) {
+      if (claimedHostGroups.has(host)) {
+        errors.push(`${label} reuses host ${host} from ${claimedHostGroups.get(host)}`);
+      } else {
+        claimedHostGroups.set(host, groupId);
+      }
+      const override = providerOverrides?.[host];
+      if (!override || override.identityGroup !== groupId) {
+        errors.push(`${label} member ${host} must point to this group from PROVIDER_OVERRIDES`);
+      } else if (override.provider !== group.provider) {
+        errors.push(`${label} member ${host} overrides provider as ${override.provider}, not ${group.provider}`);
+      }
+    }
+
+    // The ledger must preserve the complete group, including explicitly
+    // retired rows. This makes host retirement and provider regrouping
+    // separate review events and rejects deleting the whole group at once.
+    const manifestHosts = [...(allHostsByProvider.get(group.provider) || [])].sort();
+    const declaredHosts = [...memberHosts].sort();
+    if (requireDeclaredMembership && !isDeepStrictEqual(manifestHosts, declaredHosts)) {
+      errors.push(`${label} manifest membership is ${manifestHosts.join(', ') || '(empty)'}; expected ${declaredHosts.join(', ')}`);
+    }
+  }
+
+  for (const [host, override] of Object.entries(providerOverrides || {})) {
+    if (!override?.identityGroup) continue;
+    if (!groups?.[override.identityGroup]) {
+      errors.push(`provider override ${host} points to unknown identity group ${override.identityGroup}`);
+    }
+  }
+
+  for (const [provider, hosts] of activeHostsByProvider) {
+    if (hosts.length < 2) continue;
+    const groupId = claimedProviderGroups.get(provider);
+    if (!groupId) {
+      errors.push(`active provider ${provider} has undeclared identity collision across ${hosts.sort().join(', ')}`);
+    }
+  }
+  return errors;
+}
+
+export function isActiveSourceAttributionEntry(entry) {
+  return entry?.observed === true && CREDIT_BEARING_STATUSES.has(entry.status);
+}
+
+export function activeSourceAttributionEntries(manifest) {
+  return (Array.isArray(manifest?.entries) ? manifest.entries : [])
+    .filter(isActiveSourceAttributionEntry);
 }
 
 export function sourceAttributionStats(inventory, manifest) {
   const validationErrors = validateManifest(inventory, manifest);
   if (validationErrors.length) throw new Error(`source-attribution: invalid manifest (${validationErrors.join('; ')})`);
-  const active = (manifest.entries || []).filter((entry) => entry.observed === true && entry.status !== 'excluded');
+  const active = activeSourceAttributionEntries(manifest);
   const structured = active.filter((entry) => entry.kind.split('+').includes('structured'));
   const feeds = active.filter((entry) => entry.kind.split('+').includes('feed'));
   const status = active.filter((entry) => entry.kind.split('+').includes('operational-status'));
@@ -1159,10 +1368,6 @@ export function checkSourceAttribution(rootDir = ROOT) {
   if (readFileSync(manifestPath, 'utf8') !== rebuilt) {
     return { errors: [`${MANIFEST_PATH} is out of date; ${REGENERATE_HINT}`] };
   }
-  const mirrorPath = join(rootDir, MIRROR_PATH);
-  if (!existsSync(mirrorPath) || readFileSync(mirrorPath, 'utf8') !== rebuilt) {
-    return { errors: [`${MIRROR_PATH} is out of sync with ${MANIFEST_PATH}; ${REGENERATE_HINT}`] };
-  }
   const actual = matchGeneratedAttributionSection(readFileSync(docsPath, 'utf8'));
   if (actual !== renderAttributionSection(inventory, previous)) {
     return { errors: [`${DOCS_PATH} is out of date; ${REGENERATE_HINT}`] };
@@ -1215,9 +1420,6 @@ export function runSourceAttribution({
       const stats = sourceAttributionStats(inventory, manifest);
       const serialized = serializeManifest(manifest);
       writeFileSync(join(rootDir, MANIFEST_PATH), serialized);
-      // The mirror is what `scripts/`-rooted Railway services read. Writing it
-      // here keeps a manual `cp` from being the only thing holding them equal.
-      writeFileSync(join(rootDir, MIRROR_PATH), serialized);
       updateDocs(rootDir, section);
       const retired = manifest.entries.filter((entry) => entry.observed === false).map((entry) => entry.host);
       const newlyRetired = retired.filter(

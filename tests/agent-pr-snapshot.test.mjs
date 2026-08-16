@@ -15,6 +15,7 @@ import {
   actionableReviewThreads,
   createPrSnapshot,
   getPrSnapshot,
+  localHeadRelation,
   normalizeCheckContexts,
   parseArgs,
   parseGitHubRemote,
@@ -122,6 +123,29 @@ describe('agent PR snapshot', () => {
     assert.deepEqual(actionable.map(thread => thread.id), ['active']);
     assert.equal(actionable[0].latestComment.body, undefined);
     assert.equal(actionable[0].latestComment.contentIncluded, false);
+  });
+
+  it('reports unknown topology when a Git ancestry check fails', () => {
+    const localOid = oid('a');
+    const remoteOid = oid('b');
+    const runner = (_file, args) => {
+      const command = args.join(' ');
+      if (command === 'rev-parse HEAD') {
+        return { status: 0, stderr: '', stdout: `${localOid}\n` };
+      }
+      if (command === `cat-file -e ${remoteOid}^{commit}`) {
+        return { status: 0, stderr: '', stdout: '' };
+      }
+      if (command === `merge-base --is-ancestor ${remoteOid} ${localOid}`) {
+        return { status: 128, stderr: 'fatal: invalid commit graph', stdout: '' };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    assert.deepEqual(localHeadRelation('/repo', remoteOid, runner), {
+      localHeadOid: localOid,
+      relation: 'unknown',
+    });
   });
 
   it('writes a head-OID cache and serves it without another GitHub query', () => {

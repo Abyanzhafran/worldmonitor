@@ -81,7 +81,7 @@ npm run lint:boundaries              # Import boundary contract
 npm run test:data                    # Unit and integration tests
 npm run test:sidecar                 # Sidecar and API handler tests
 npm run test:e2e                     # Playwright suite
-make generate                        # Proto clients, servers, and OpenAPI
+make generate                        # Proto clients, servers, and OpenAPI; requires buf + sebuf v0.11.1 plugins
 ```
 
 ## Verification
