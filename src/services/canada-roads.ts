@@ -2,6 +2,7 @@ import { createCircuitBreaker } from '@/utils';
 import { ensureHydrated, getHydratedData } from '@/services/bootstrap';
 import { toApiUrl } from '@/services/runtime';
 import {
+  CANADA_ROAD_SOURCES,
   hasHealthyCanadaRoadSource,
   loadCanadaRoadSourcesCore,
   type CanadaRoadRecord,
@@ -10,6 +11,7 @@ import {
 } from './canada-roads-core';
 
 export {
+  CANADA_ROAD_SOURCES,
   hasHealthyCanadaRoadSource,
   recordsFromPayload,
   unionCanadaRoadRecords,
@@ -18,18 +20,6 @@ export {
   type CanadaRoadSourceState,
   type CanadaRoadSourceStates,
 } from './canada-roads-core';
-
-/**
- * Unions bootstrap `canadaRoads` (infra:ontario-511:v1) and `albertaRoads`
- * (infra:alberta-511:v1) with on-demand `torontoRoads`
- * (infra:toronto-roads:v1).
- */
-export const CANADA_ROAD_SOURCES: readonly CanadaRoadSourceDescriptor[] = Object.freeze([
-  { key: 'canadaRoads', source: 'ontario-511', jurisdiction: 'ON', onDemand: false },
-  { key: 'albertaRoads', source: 'alberta-511', jurisdiction: 'AB', onDemand: false },
-  { key: 'torontoRoads', source: 'toronto-roads', jurisdiction: 'Toronto', onDemand: true },
-  { key: 'bcOpen511', source: 'bc-open511', jurisdiction: 'BC', onDemand: true },
-]);
 
 /**
  * Freshness-panel id per road source. Derived from CANADA_ROAD_SOURCES so a
