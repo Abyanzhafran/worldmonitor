@@ -458,6 +458,7 @@ window.addEventListener('securitypolicyviolation', (e) => {
 
 import { debugGetCells, getCellCount } from '@/services/geo-convergence';
 import { initMetaTags } from '@/services/meta-tags';
+import { installFetchFailureAttribution } from '@/services/fetch-failure-attribution';
 import { installRuntimeFetchPatch, installWebApiRedirect } from '@/services/runtime';
 import { loadDesktopSecrets } from '@/services/runtime-config';
 import { applyStoredTheme } from '@/utils/theme-manager';
@@ -488,6 +489,14 @@ initDebugBearRum();
 // Initialize dynamic meta tags for sharing
 initMetaTags();
 
+// MUST stay first among the fetch wrappers. This one wraps native `fetch`
+// directly and sits at the BOTTOM of the delegation chain, so every request
+// that reaches the network passes through it — including the ones
+// `wmSessionFetch` early-returns past (non-API targets, credential-less public
+// data, premium paths), which is where the Umami beacon lives. Installed above
+// instead, it would miss exactly the traffic it exists to attribute.
+// Guarded by tests/fetch-attribution-install-order.test.mts. #6746.
+installFetchFailureAttribution();
 // In desktop mode, route /api/* calls to the local Tauri sidecar backend.
 installRuntimeFetchPatch();
 // In web production, route RPC calls through api.worldmonitor.app (Cloudflare edge).
