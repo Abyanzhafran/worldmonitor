@@ -405,12 +405,9 @@ export class LatestBriefPanel extends Panel {
    * this is an error state.
    */
   private renderSignInRequired(): void {
-    // Terminal state — retire any auto-retry a prior transient denial armed.
-    this.clearErrorState();
-    clearChildren(this.content);
     const logo = h('div', { className: 'latest-brief-logo' });
     logo.appendChild(rawHtml(WM_LOGO_SVG));
-    this.content.appendChild(
+    this.setContentNodes(
       h('div', { className: 'latest-brief-card latest-brief-card--composing' },
         logo,
         h('div', { className: 'latest-brief-empty-title' }, 'Sign in to view your brief.'),
@@ -429,12 +426,9 @@ export class LatestBriefPanel extends Panel {
    * contradicts does NOT land here; see classifyPremiumDenial (#5608).
    */
   private renderUpgradeRequired(): void {
-    // Terminal state — retire any auto-retry a prior transient denial armed.
-    this.clearErrorState();
-    clearChildren(this.content);
     const logo = h('div', { className: 'latest-brief-logo' });
     logo.appendChild(rawHtml(WM_LOGO_SVG));
-    this.content.appendChild(
+    this.setContentNodes(
       h('div', { className: 'latest-brief-card latest-brief-card--composing' },
         logo,
         h('div', { className: 'latest-brief-empty-title' }, 'Pro required.'),
@@ -457,7 +451,7 @@ export class LatestBriefPanel extends Panel {
     clearChildren(this.content);
     const logo = h('div', { className: 'latest-brief-logo' });
     logo.appendChild(rawHtml(WM_LOGO_SVG));
-    this.content.appendChild(
+    this.setContentNodes(
       h('div', { className: 'latest-brief-card latest-brief-card--composing' },
         logo,
         h('div', { className: 'latest-brief-empty-title' }, 'We couldn’t confirm your plan.'),
@@ -496,7 +490,7 @@ export class LatestBriefPanel extends Panel {
     // DocumentFragment.
     const logoDiv = h('div', { className: 'latest-brief-logo' });
     logoDiv.appendChild(rawHtml(WM_LOGO_SVG));
-    this.content.appendChild(
+    this.setContentNodes(
       h('div', { className: 'latest-brief-card latest-brief-card--composing' },
         logoDiv,
         h('div', { className: 'latest-brief-empty-title' }, 'Your brief is composing.'),
