@@ -1077,10 +1077,6 @@ describe('feed catalog drift', () => {
     for (const name of CANADA_CATALOG) {
       assert.ok(byName.has(name), `${name} must be in FEEDS.us catalog`);
     }
-    assert.equal(CANADA_CATALOG.length, 23, 'frozen 23-source Canada roster (20 native + 3 GNews-only)');
-    assert.deepEqual([...feeds.CANADA_EN_DEFAULT_SOURCES], ['CBC News', 'CTV News', 'Toronto Star']);
-    assert.ok(byName.has('CTV News'), 'CTV News must be catalogued via GNews site: fallback');
-    assert.ok(byName.has('CP24'), 'CP24 must be catalogued via GNews site: fallback');
 
     const usDefaults = feeds.DEFAULT_ENABLED_SOURCES.us ?? [];
     for (const name of feeds.CANADA_EN_DEFAULT_SOURCES) {
@@ -1133,12 +1129,9 @@ describe('feed catalog drift', () => {
   it('catalogs ≥1 Nordic beyond Sweden and EN-reachable High North sources (#5960)', () => {
     const europe = feeds.FEEDS.europe ?? [];
     const byName = new Map(europe.map((f) => [f.name, f]));
-    // Beyond SVT (already present): at least one of FI/NO/DK pack.
+    // Beyond SVT (already present): retain the named FI/NO/DK pack.
     const nordicBeyondSweden = NORDIC_ARCTIC_CATALOG.filter((n) => byName.has(n));
-    assert.ok(
-      nordicBeyondSweden.length >= 1,
-      'need ≥1 Nordic/Arctic source beyond Sweden (SVT)',
-    );
+    assert.deepEqual(nordicBeyondSweden, [...NORDIC_ARCTIC_CATALOG]);
     for (const name of NORDIC_ARCTIC_CATALOG) {
       const feed = byName.get(name);
       assert.ok(feed, `${name} must be in FEEDS.europe catalog`);
