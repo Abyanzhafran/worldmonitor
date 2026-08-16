@@ -771,7 +771,9 @@ export const CACHE_TOOLS: ToolDef[] = [
         category: { type: 'string', description: 'Filter top news stories to one category (e.g. "conflict", "economy"; fallback is "general").' },
         country: { type: 'string', description: 'Filter top stories and travel advisories to one ISO 3166-1 alpha-2 country code (case-insensitive).' },
         alerts_only: { type: 'boolean', description: 'Keep only top stories flagged as alerts.' },
-        limit: { type: 'number', description: 'Cap each list (top stories, signals, advisories) to at most this many items (default 30, pass 0 for no cap).' },
+        query: { type: 'string', description: 'Keep only top stories whose headline, primary source, or any clustered member headline contains this text (case-insensitive substring). This filters the LIVE news window only — it is not a historical index, so an event older than the current digest will not be found here. Use search_intel_history for that.' },
+        min_importance: { type: 'number', description: 'Keep only top stories whose effectiveImportanceScore is at least this value. 0 is honoured as a real floor rather than treated as absent; a story carrying no score is excluded when this is set, never treated as scoring zero.' },
+        limit: { type: 'number', description: 'Cap each list (top stories, signals, advisories) to at most this many items (default 30, pass 0 for no cap). Applied AFTER query and min_importance, so a capped list is drawn from the matches.' },
       },
       required: [],
     },
@@ -851,6 +853,26 @@ export const CACHE_TOOLS: ToolDef[] = [
         narrowNested(data, 'advisories-bootstrap', 'advisories', (a) => matchesCode(a.country, countries));
       }
       if (argBool(params.alerts_only)) narrowNested(data, 'insights', 'topStories', (s) => s.isAlert === true);
+      // query + min_importance run BEFORE the caps: filtering after capping
+      // would draw the cap from the first N items and then match within them,
+      // so a story matching the query but sitting past the cap would vanish.
+      const query = argStr(params.query);
+      if (query) {
+        narrowNested(data, 'insights', 'topStories', (s) => (
+          ciIncludes(s.primaryTitle, query)
+          || ciIncludes(s.primarySource, query)
+          || (Array.isArray(s.memberTitles) && s.memberTitles.some((t: unknown) => ciIncludes(t, query)))
+        ));
+      }
+      // `?? null` distinguishes an absent threshold from an explicit 0, which
+      // is a real floor: a story with no score must not pass it.
+      const minImportance = argNum(params.min_importance);
+      if (minImportance !== null) {
+        narrowNested(data, 'insights', 'topStories', (s) => {
+          const score = argNum(s.effectiveImportanceScore);
+          return score !== null && score >= minImportance;
+        });
+      }
       capNested(data, 'insights', 'topStories', limit);
       capNested(data, 'cross-source-signals', 'signals', limit);
       capNested(data, 'advisories-bootstrap', 'advisories', limit);
@@ -882,7 +904,7 @@ export const CACHE_TOOLS: ToolDef[] = [
     name: 'get_natural_disasters',
     _uiResourceUri: NATURAL_DISASTERS_UI_URI,
     _outputBudgetBytes: 131072,
-    description: 'Recent earthquakes (USGS), active wildfires (NASA FIRMS), and natural hazard events. Includes magnitude, location, and threat severity.',
+    description: 'Recent M4.5+ earthquakes (USGS and Earthquakes Canada / NRCan), active wildfires (NASA FIRMS), and natural hazard events. Includes magnitude, location, source, and threat severity.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -903,7 +925,7 @@ export const CACHE_TOOLS: ToolDef[] = [
         properties: {
           earthquakes: { type: 'array', items: { type: 'object', properties: {
             id: { type: 'string' }, place: { type: 'string' }, magnitude: { type: 'number' },
-            depthKm: { type: 'number' }, occurredAt: { type: 'number' }, sourceUrl: { type: 'string' },
+            depthKm: { type: 'number' }, occurredAt: { type: 'number' }, sourceUrl: { type: 'string' }, source: { type: 'string' }, category: { type: 'string' },
             location: { type: 'object', properties: {
               latitude: { type: 'number' }, longitude: { type: 'number' },
             } },
