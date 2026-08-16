@@ -56,11 +56,34 @@ const TIER_CDN_CACHE = {
   slow: 'public, s-maxage=7200, stale-while-revalidate=1800, stale-if-error=7200',
   fast: 'public, s-maxage=600, stale-while-revalidate=120, stale-if-error=900',
 };
+// An on-demand key with no entry here inherits the SLOW shield (s-maxage=7200,
+// 2h). Any key published more often than that MUST declare a profile: the CDN
+// would otherwise hand browsers a payload api/health.js already calls
+// STALE_SEED, and the client stamps it fresh on arrival — a green freshness
+// panel over data nobody re-fetched, with nothing to page on because health
+// reads Redis and never sees the cached copy.
+//
+// Size `cdn` to the publisher's own interval, not to the freshness budget: the
+// budget is 2-3x the interval to absorb a missed tick, so caching out to the
+// budget guarantees the shield outlives a complete seed cycle.
+// tests/bootstrap-on-demand-cache-budget.test.mts enforces the ceiling.
 const ON_DEMAND_CACHE_PROFILES = {
   // Seeded every 15 minutes. Keep the caller-invariant public URL from
   // outliving a complete seed interval; per-group stale/unavailable states
   // remain part of the payload contract.
   chinaDecisionSignals: {
+    browser: 'max-age=60, stale-while-revalidate=120, stale-if-error=900',
+    cdn: 'public, s-maxage=900, stale-while-revalidate=120, stale-if-error=900',
+  },
+  // seed-bundle-canada member interval 30min, 90min health budget. The default
+  // 2h shield outlived the budget by half an hour (#6667).
+  bcOpen511: {
+    browser: 'max-age=60, stale-while-revalidate=120, stale-if-error=1800',
+    cdn: 'public, s-maxage=1800, stale-while-revalidate=300, stale-if-error=1800',
+  },
+  // seed-bundle-market-backup member interval 15min, 45min health budget. Same
+  // defect as bcOpen511: the default 2h shield was 2.6x the budget.
+  marketCorrelationSeries: {
     browser: 'max-age=60, stale-while-revalidate=120, stale-if-error=900',
     cdn: 'public, s-maxage=900, stale-while-revalidate=120, stale-if-error=900',
   },
@@ -426,7 +449,16 @@ function isSharedCacheableBootstrapKind(authKind) {
   return authKind === 'public-weather' || authKind === 'public-tier' || authKind === 'public-on-demand';
 }
 
+// `tier` is the requested tier, or null for a single-key read. The on-demand
+// default lives here rather than at the call site so there is ONE resolution
+// path: a test that re-derived "on-demand falls back to slow" would be checking
+// its own copy of the rule, which is the rule that was wrong (#6763).
 function successCacheHeaders(tier, authKind, cors, onDemandKey = null) {
+  // Most on-demand keys carry slow-tier seed data. Keys with a faster publisher
+  // cadence must override that through ON_DEMAND_CACHE_PROFILES — the slow CDN
+  // shield is 2h, which outlives the freshness budget of anything seeded more
+  // often than that.
+  tier = tier ?? (authKind === 'public-on-demand' ? 'slow' : null);
   if (!isPublicBootstrapKind(authKind)) {
     return {
       ...cors,
@@ -555,16 +587,13 @@ export default async function handler(req, ctx) {
   // The browser runtime sends API requests with credentials so session and
   // entitlement cookies can ride along. Credentialed requests cannot consume
   // ACAO: * responses, even for public bootstrap data.
-  // Most on-demand keys carry slow-tier seed data. Keys with a faster publisher
-  // cadence can override that default through ON_DEMAND_CACHE_PROFILES.
-  const cacheTier = tier ?? (auth.kind === 'public-on-demand' ? 'slow' : null);
   const onDemandKey = auth.kind === 'public-on-demand' && names.length === 1
     ? names[0]
     : null;
   const response = jsonResponse(
     { data, missing },
     200,
-    successCacheHeaders(cacheTier, auth.kind, cors, onDemandKey),
+    successCacheHeaders(tier, auth.kind, cors, onDemandKey),
   );
   return measureR2Shadow
     ? finishBootstrapR2ShadowResponse(req, ctx, tier, response, redisDurationMs)
@@ -572,6 +601,10 @@ export default async function handler(req, ctx) {
 }
 
 export const __testing__ = {
+  // The real resolver, so the CDN-shield guard in
+  // tests/bootstrap-on-demand-cache-budget.test.mts calls the same code the
+  // handler does instead of restating the fallback chain.
+  successCacheHeaders,
   resetBootstrapR2ShadowForTests() {
     nextBootstrapR2ShadowProbeIsCold = true;
     scheduleBootstrapR2Shadow = vercelWaitUntil;
