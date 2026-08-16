@@ -603,10 +603,17 @@ export default async function handler(req, ctx) {
   const onDemandKey = auth.kind === 'public-on-demand' && names.length === 1
     ? names[0]
     : null;
+  // A public on-demand miss is an empty body, not a payload. Caching it at the
+  // publisher interval would hide a recovered seeder until the shield expires
+  // (#6784): health probes Redis, so nothing pages, and the client stamps the
+  // empty hit as a fresh read.
+  const cacheHeaders = onDemandKey && missing.includes(onDemandKey)
+    ? { ...getPublicCorsHeaders(), 'Cache-Control': 'no-store' }
+    : successCacheHeaders(tier, auth.kind, cors, onDemandKey);
   const response = jsonResponse(
     { data, missing },
     200,
-    successCacheHeaders(tier, auth.kind, cors, onDemandKey),
+    cacheHeaders,
   );
   return measureR2Shadow
     ? finishBootstrapR2ShadowResponse(req, ctx, tier, response, redisDurationMs)

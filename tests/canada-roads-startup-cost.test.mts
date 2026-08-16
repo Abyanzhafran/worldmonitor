@@ -115,3 +115,11 @@ test('a layer whose sources are all on-demand does not ship enabled', () => {
     );
   }
 });
+
+test('App.ts runs the extracted opt-in helper, not an inline copy', () => {
+  // The helper owns the four-branch behavior. If App stops calling it, the
+  // unit tests keep passing while returning visitors never migrate.
+  const app = read('src/App.ts');
+  assert.match(app, /applyCanadaRoadsOptInMigration\(/);
+  assert.match(app, /from '@\/services\/canada-roads-opt-in'/);
+});

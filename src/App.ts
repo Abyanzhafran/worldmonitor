@@ -38,6 +38,7 @@ import {
 } from '@/config/map-layer-definitions';
 import type { MapVariant } from '@/config/map-layer-definitions';
 import { getStoredMapModePreference } from '@/services/map-mode-preference';
+import { applyCanadaRoadsOptInMigration } from '@/services/canada-roads-opt-in';
 import {
   initDB,
   cleanOldSnapshots,
@@ -994,24 +995,11 @@ export class App {
       // Persist immediately so dirty storage doesn't reintroduce the layer.
       mapLayers = this.sanitizeMapLayersForTier(mapLayers);
 
-      // One-time migration (#6763): retire the canadaRoads default-on.
-      //
-      // The saved blob wins over DEFAULT_MAP_LAYERS, and it is written whenever
-      // the user touches ANY layer — so without this, flipping the default only
-      // reaches visitors who never customised anything, and everyone else keeps
-      // fetching ~2.2 MB of on-demand road data on every load.
-      //
-      // Turning it off is not overriding a preference: the layer SHIPPED
-      // enabled, so a `true` here is an inherited default, not a choice nobody
-      // could have made. Runs once, so a deliberate re-enable afterwards sticks.
-      const CANADA_ROADS_OPT_IN_KEY = 'worldmonitor-canada-roads-opt-in-v1';
-      if (!localStorage.getItem(CANADA_ROADS_OPT_IN_KEY)) {
-        if (mapLayers.canadaRoads) {
-          mapLayers = { ...mapLayers, canadaRoads: false };
-          saveToStorage(STORAGE_KEYS.mapLayers, mapLayers);
-        }
-        localStorage.setItem(CANADA_ROADS_OPT_IN_KEY, 'done');
-      }
+      mapLayers = applyCanadaRoadsOptInMigration(
+        mapLayers,
+        localStorage,
+        (layers) => saveToStorage(STORAGE_KEYS.mapLayers, layers),
+      );
 
       panelSettings = loadFromStorage<Record<string, PanelConfig>>(
         STORAGE_KEYS.panels,
