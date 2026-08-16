@@ -1470,6 +1470,81 @@ describe('bare "Failed to fetch" is decided by host, not stack shape (WORLDMONIT
     assert.equal(beforeSend(event), null, 'no cause -> annotated message at values[0] -> suppressed');
   });
 
+  // ── Period-less Gecko, end to end ─────────────────────────────────────────
+  //
+  // `FETCH_FAILURE_MESSAGE` admits `resource\.?`, so the module annotates the
+  // period-less Gecko phrasing too. Until #6762 review, `isHostScopedFetchFailure`
+  // required the period literally — that message was annotated and then never
+  // routed to the allowlist. Both sides now accept it; these two fixtures are
+  // what make the widening observable, since every other Gecko fixture in this
+  // file uses the period form.
+
+  it('suppresses the annotated period-less Gecko phrasing for an allowlisted host', () => {
+    const event = makeEvent(
+      'NetworkError when attempting to fetch resource (abacus.worldmonitor.app)',
+      'TypeError',
+      zgStack,
+    );
+    assert.equal(beforeSend(event), null, 'period-less Gecko must route through the host allowlist');
+  });
+
+  it('SURFACES the annotated period-less Gecko phrasing for api.worldmonitor.app', () => {
+    const event = makeEvent(
+      'NetworkError when attempting to fetch resource (api.worldmonitor.app)',
+      'TypeError',
+      zgStack,
+    );
+    assert.ok(beforeSend(event) !== null, 'an origin outage must surface in the period-less shape too');
+  });
+
+  it('accepts the `TypeError: ` prefix on an annotated message', () => {
+    // The file's sibling gates already tolerate this prefix, which means the
+    // project has observed it in `exception.values[].value`. The host detector
+    // must not be the one place that misses it.
+    const event = makeEvent(
+      'TypeError: Failed to fetch (abacus.worldmonitor.app)',
+      'TypeError',
+      zgStack,
+    );
+    assert.equal(beforeSend(event), null, 'prefixed annotated message must still reach the allowlist');
+  });
+
+  it('the producer and consumer regexes accept the same phrasing set', () => {
+    // Belt-and-braces against the drift that caused the period-less gap. The
+    // module PRODUCES annotated messages; sentry-init CONSUMES them. They are
+    // separate literals in separate files (sentry-init's beforeSend body is
+    // eval'd standalone by this harness, so it cannot import a shared one), so
+    // assert equivalence behaviourally instead.
+    const attributionSrc = readFileSync(
+      resolve(__dirname, '../src/services/fetch-failure-attribution.ts'),
+      'utf-8',
+    );
+    const producerMatch = attributionSrc.match(
+      /const FETCH_FAILURE_MESSAGE =\s*(\/\^[\s\S]*?\/);/,
+    );
+    assert.ok(producerMatch, 'FETCH_FAILURE_MESSAGE must be a single regex literal');
+    // eslint-disable-next-line no-new-func
+    const producer = new Function(`return ${producerMatch[1]}`)();
+
+    for (const phrase of [
+      'Failed to fetch',
+      'NetworkError when attempting to fetch resource.',
+      'NetworkError when attempting to fetch resource',
+      'Load failed',
+    ]) {
+      assert.ok(producer.test(phrase), `producer must annotate: ${phrase}`);
+      // Anything the producer annotates must be routable by the consumer once
+      // the host suffix is appended — otherwise it is annotated-but-unsuppressable.
+      const annotated = `${phrase} (abacus.worldmonitor.app)`;
+      const verdict = beforeSend(makeEvent(annotated, 'TypeError', zgStack));
+      const ignored = isIgnored(`TypeError: ${annotated}`);
+      assert.ok(
+        verdict === null || ignored,
+        `consumer must be able to act on an annotated message the producer emits: ${annotated}`,
+      );
+    }
+  });
+
   it('the attribution module does not set `cause`', () => {
     // Belt-and-braces: assert the source-level invariant too, so the reason is
     // discoverable from this file without reading the module.

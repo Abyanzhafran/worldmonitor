@@ -150,23 +150,50 @@ describe('fetch attribution install order (src/main.ts)', () => {
   });
 
   for (const deferred of DEFERRED_FETCH_WRAPPERS) {
-    it(`${deferred} reaches its fetch wrapper asynchronously, so order does not save us`, () => {
-      // These two DO end up installing window.fetch wrappers
-      // (initAnalytics -> installCollectorFetchGate; initDebugBearRum -> the CDN
-      // script's own wrapper) and both are called BEFORE the attribution install.
-      // We are innermost only because each defers the actual wrapping past first
-      // paint / CDN latency — not because of source order. Pin the deferral so a
-      // future change making either synchronous fails here rather than silently
-      // un-attributing the exact traffic this module exists to attribute.
+    it(`${deferred} is called before attribution — which is why its deferral is load-bearing`, () => {
+      // Named for what it actually checks. Source ORDER only; the deferral
+      // itself is pinned by the next test. An earlier version of this test
+      // claimed to "pin the deferral" while asserting nothing but this index
+      // comparison — it would have passed even if the callee started wrapping
+      // fetch synchronously, which is the whole risk.
       const idx = callIndex(source, deferred);
       assert.notEqual(idx, -1, `${deferred} missing from src/main.ts — update this guard`);
       assert.ok(
         idx < callIndex(source, ATTRIBUTION_INSTALL),
-        `${deferred} is expected to precede attribution in source order; if that changed, `
-        + 're-derive whether the deferral argument below still applies',
+        `${deferred} precedes attribution, so we are innermost only by its deferral`,
       );
     });
   }
+
+  it('initAnalytics defers the collector gate past first paint', () => {
+    // THE actual invariant. `initAnalytics()` runs before the attribution
+    // install, and it reaches `installCollectorFetchGate()` — which wraps
+    // window.fetch. Attribution is innermost only because that gate is never
+    // reached synchronously from init:
+    //
+    //   - loadUmamiScript() (the one unguarded call) is scheduled via
+    //     scheduleAfterFirstPaint, not called inline;
+    //   - the other call sites sit behind a `window.umami` check, and that
+    //     global only exists once the deferred script has loaded.
+    //
+    // Drop the scheduling and the collector captures NATIVE fetch, silently
+    // un-attributing the exact Umami-beacon traffic this module exists to
+    // attribute. That regression is invisible in every other test, so assert
+    // the wiring here.
+    const analyticsSrc = stripComments(
+      readFileSync(resolve(__dirname, '../src/services/analytics.ts'), 'utf-8'),
+    );
+    assert.match(
+      analyticsSrc,
+      /scheduleAfterFirstPaint\(\s*loadUmamiScript/,
+      'analytics.ts must schedule loadUmamiScript after first paint — calling it inline from '
+      + 'initAnalytics would install the collector fetch gate before attribution',
+    );
+    assert.ok(
+      !/^\s*loadUmamiScript\(\);/m.test(analyticsSrc),
+      'loadUmamiScript() must not be invoked synchronously at statement level',
+    );
+  });
 });
 
 describe('installFetchFailureAttribution — idempotence', () => {
