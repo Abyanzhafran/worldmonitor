@@ -15,7 +15,7 @@ WorldMonitor exposes its intelligence stack as a [Model Context Protocol](https:
 OAuth is not needed for `get_sources`: it is the sole credential-free, daily-quota-free data tool. Anonymous calls use a separate fail-closed limit of 10 requests/minute/IP. Every other data tool remains subscription-gated.
 </Info>
 
-All paid tiers share the same MCP server and the same 64 tools. Dashboard-issued API-key (`wm_…`) clients and most OAuth contexts use a hard default of **50 quota-consuming `tools/call` / `resources/read` calls per UTC day**; OAuth allowances are plan-resolved, with API Starter and API Business currently held to that same 50/day default and enterprise OAuth able to be unlimited. Only legacy operator keys explicitly allowlisted by the deployment skip the daily reservation. Every authenticated context is also protected by the **60 requests/minute** limiter. `get_sources` and the metadata helper `describe_tool` are exempt from the daily quota.
+All paid tiers share the same MCP server and tool inventory. Dashboard-issued API-key (`wm_…`) clients and most OAuth contexts use a hard default of **50 quota-consuming `tools/call` / `resources/read` calls per UTC day**; OAuth allowances are plan-resolved, with API Starter and API Business currently held to that same 50/day default and enterprise OAuth able to be unlimited. Only legacy operator keys explicitly allowlisted by the deployment skip the daily reservation. Every authenticated context is also protected by the **60 requests/minute** limiter. `get_sources` and the metadata helper `describe_tool` are exempt from the daily quota.
 
 Pro subscribers can connect Claude Desktop / Cursor / claude.ai without ever pasting an API key — see [Pro sign-in flow](#pro-sign-in-flow) below. API Starter+ holders may continue to paste a `wm_…` key on the consent page (the original flow), or use the same OAuth path as Pro.
 
@@ -201,7 +201,7 @@ npx @modelcontextprotocol/inspector https://worldmonitor.app/mcp
 
 ## Tool catalog
 
-The server exposes 64 tools. Most are cache-reads over pre-seeded Redis keys (sub-second). The slower, non-cache paths are the six live LLM/external-API tools (`get_country_brief`, `analyze_situation`, `generate_forecasts`, `search_flights`, `search_flight_prices_by_date`, `classify_event`) plus the live geo RPC tools (`get_airspace`, `get_maritime_activity`), the bounded canonical procurement proxy (`get_procurement_opportunities`), the corporate-intelligence proxy (`get_company_intelligence`), the canonical China decision-signal RPC (`get_china_decision_signals`), and the three durable-history RPCs (`search_intel_history`, `get_intel_timeline`, `get_similar_events`). `get_world_brief` reads the dashboard's precomputed, citation-grounded `news:insights:v1` snapshot and does not make a request-time LLM call. The on-demand NLP utilities (`classify_event`, `extract_entities`, `get_news_clusters`, `get_keyword_spikes`) accept bounded caller text or compute over live seeded data; all but `classify_event` are fully deterministic. One (`describe_tool`, added v1.5.0) returns the full uncompressed definition of any other tool — useful when the compressed `tools/list` description is ambiguous; exempt from the Pro daily quota.
+The server exposes a registry of tools. Most are cache-reads over pre-seeded Redis keys (sub-second). The slower, non-cache paths are the six live LLM/external-API tools (`get_country_brief`, `analyze_situation`, `generate_forecasts`, `search_flights`, `search_flight_prices_by_date`, `classify_event`) plus the live geo RPC tools (`get_airspace`, `get_maritime_activity`), the bounded canonical procurement proxy (`get_procurement_opportunities`), the corporate-intelligence proxy (`get_company_intelligence`), the canonical China decision-signal RPC (`get_china_decision_signals`), and the three durable-history RPCs (`search_intel_history`, `get_intel_timeline`, `get_similar_events`). `get_world_brief` reads the dashboard's precomputed, citation-grounded `news:insights:v1` snapshot and does not make a request-time LLM call. The on-demand NLP utilities (`classify_event`, `extract_entities`, `get_news_clusters`, `get_keyword_spikes`) accept bounded caller text or compute over live seeded data; all but `classify_event` are fully deterministic. One (`describe_tool`, added v1.5.0) returns the full uncompressed definition of any other tool — useful when the compressed `tools/list` description is ambiguous; exempt from the Pro daily quota.
 
 <Tip>
 For per-tool parameters, freshness budgets, timeouts, and concrete `curl` examples, see the [MCP Tools Reference](/mcp-tools-reference). For payload projection — every tool accepts an optional `jmespath` argument that typically cuts response size by 80-95% — see the [JMESPath guide](/mcp-jmespath).
@@ -284,7 +284,7 @@ Every record's `title`, `summary` and `sourceUrl` are verbatim third-party feed 
 
 | Tool | Description |
 |------|-------------|
-| `get_natural_disasters` | USGS earthquakes, NASA FIRMS wildfires, hazard events. |
+| `get_natural_disasters` | USGS and Earthquakes Canada / NRCan earthquakes, NASA FIRMS wildfires, hazard events. |
 | `get_climate_data` | Temp/precip anomalies vs WMO normals, GDACS/FIRMS alerts, Mauna Loa CO2, OpenAQ PM2.5, sea ice, ocean heat. |
 | `get_radiation_data` | Global radiation monitoring station readings + anomaly flags. |
 | `get_research_signals` | Emerging technology events from curated research feeds. |
@@ -396,11 +396,11 @@ Current follow-up trackers:
 - [#4525](https://github.com/koala73/worldmonitor/issues/4525) — pure-read deferred MCP coverage candidates.
 - [#4526](https://github.com/koala73/worldmonitor/issues/4526) — manual mapping and fetch-on-miss triage.
 
-See the [Tool catalog](#tool-catalog) above for the complete list of 64 tools, or the [MCP Tools Reference](/mcp-tools-reference) for per-tool details.
+See the [Tool catalog](#tool-catalog) above for the complete live tool registry, or the [MCP Tools Reference](/mcp-tools-reference) for per-tool details.
 
 ## Prompts and resources
 
-In addition to the 64 tools, WorldMonitor exposes MCP prompts and resources so clients can discover common workflows and address stable data slices without inventing tool plans from scratch.
+In addition to the live tool registry, WorldMonitor exposes MCP prompts and resources so clients can discover common workflows and address stable data slices without inventing tool plans from scratch.
 
 ### Prompts
 
@@ -454,7 +454,7 @@ The server supports [MCP Apps](https://modelcontextprotocol.io/extensions/apps/b
 | `ui://worldmonitor/chokepoint-monitor.html` | `get_chokepoint_status` | Per-chokepoint rolling transit summaries (today's count, week-over-week change, tanker split) with a risk-level badge. |
 | `ui://worldmonitor/news-intelligence.html` | `get_news_intelligence` | AI-classified top stories with category, alert flag, country, and source. |
 | `ui://worldmonitor/conflict-events.html` | `get_conflict_events` | Active armed-conflict events (belligerents, violence type, country, fatalities, date) from the UCDP feed. |
-| `ui://worldmonitor/natural-disasters.html` | `get_natural_disasters` | Recent earthquakes (USGS magnitude, place, time) and active wildfires (NASA FIRMS), grouped. |
+| `ui://worldmonitor/natural-disasters.html` | `get_natural_disasters` | Recent M4.5+ earthquakes (USGS and Earthquakes Canada / NRCan: magnitude, place, time, source) and active wildfires (NASA FIRMS), grouped. |
 | `ui://worldmonitor/prediction-markets.html` | `get_prediction_markets` | Active event-contract odds grouped by category (geopolitical, tech, finance) with a probability bar per market. |
 | `ui://worldmonitor/forecasts.html` | `get_forecast_predictions` | AI-generated geopolitical and economic forecasts as probability cards (title, domain, region). |
 

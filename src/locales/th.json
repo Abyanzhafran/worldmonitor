@@ -476,7 +476,9 @@
         "displacement": "สลับการเคลื่อนย้ายผู้พลัดถิ่น",
         "climate": "สลับความผิดปกติของสภาพภูมิอากาศ",
         "outages": "สลับการขัดข้องของอินเทอร์เน็ต",
-        "tradeRoutes": "สลับเส้นทางการค้า"
+        "tradeRoutes": "สลับเส้นทางการค้า",
+        "canadaRoads": "Toggle Canada roads overlay",
+        "canadaAlerts": "Toggle Alberta Emergency Alert overlay"
       },
       "view": {
         "dark": "เปลี่ยนเป็นโหมดมืด",
@@ -1168,7 +1170,7 @@
         "ucdpEvents": "เหตุการณ์ UCDP",
         "displacementFlows": "กระแสการพลัดถิ่น",
         "climateAnomalies": "ความผิดปกติของสภาพภูมิอากาศ",
-        "weatherAlerts": "การแจ้งเตือนสภาพอากาศในสหรัฐฯ (NWS)",
+        "weatherAlerts": "การแจ้งเตือนสภาพอากาศในสหรัฐฯ และแคนาดา (NWS, ECCC)",
         "strategicWaterways": "เส้นทางน้ำยุทธศาสตร์",
         "economicCenters": "ศูนย์กลางเศรษฐกิจ",
         "criticalMinerals": "แร่ธาตุสำคัญ",
@@ -1188,7 +1190,9 @@
         "speciesRecovery": "การฟื้นตัวของสายพันธุ์",
         "renewableInstallations": "พลังงานสะอาด",
         "radiationSpike": "การเพิ่มขึ้นของรังสี",
-        "radiationElevated": "รังสีสูงขึ้น"
+        "radiationElevated": "รังสีสูงขึ้น",
+        "canadaRoads": "Canada Roads",
+        "canadaAlerts": "Canada Alerts (Alberta Emergency Alert)"
       },
       "tooltip": {
         "earthquake": "แผ่นดินไหว",
@@ -1249,7 +1253,7 @@
           "infraDatacenters": "คลัสเตอร์คำนวณ AI >=10,000 GPU",
           "infraOutages": "การดับอินเทอร์เน็ตและการหยุดชะงักของบริการ",
           "naturalEventsTech": "แผ่นดินไหว, พายุ, ไฟ (อาจส่งผลต่อศูนย์ข้อมูล)",
-          "weatherAlerts": "การแจ้งเตือนสภาพอากาศรุนแรงในสหรัฐฯ (NWS)",
+          "weatherAlerts": "การแจ้งเตือนสภาพอากาศรุนแรงในสหรัฐฯ และแคนาดา (NWS, ECCC)",
           "economicCenters": "ตลาดหลักทรัพย์และธนาคารกลาง",
           "countriesOverlay": "ภาพซ้อนทับชื่อประเทศ",
           "financeExchanges": "ตลาดหลักทรัพย์ระดับโลกตามระดับตลาด",
@@ -1261,7 +1265,7 @@
           "financeOutages": "การหยุดชะงักอินเทอร์เน็ตที่อาจส่งผลต่อการดำเนินการตลาด",
           "financeCyberThreats": "เหตุการณ์ด้านความปลอดภัยรอบโครงสร้างพื้นฐานการเงิน",
           "macroWaterways": "จุดคอขวดยุทธศาสตร์สำหรับการขนส่งสินค้าโภคภัณฑ์",
-          "weatherAlertsMarket": "เหตุการณ์สภาพอากาศรุนแรงในสหรัฐฯ ที่เกี่ยวข้องกับตลาด (NWS)",
+          "weatherAlertsMarket": "เหตุการณ์สภาพอากาศรุนแรงในสหรัฐฯ และแคนาดา ที่เกี่ยวข้องกับตลาด (NWS, ECCC)",
           "naturalEventsMacro": "แผ่นดินไหว ไฟ น้ำท่วม และภัยธรรมชาติอื่น ๆ",
           "timeRecent": "กรองข้อมูลตามเวลาล่าสุดเป็นชั่วโมง",
           "timeExtended": "แสดงข้อมูลสัปดาห์ เดือน หรือทั้งหมดที่ผ่านมา",
@@ -1294,7 +1298,9 @@
           "tradeRoutes": "เส้นทางเดินเรือหลักของโลกที่เชื่อมต่อท่าเรือผ่านจุดยุทธศาสตร์",
           "dayNight": "เส้นแบ่งเขตแสงอาทิตย์แบบเรียลไทม์แสดงโซนกลางวันและกลางคืน",
           "geoBoundaries": "เขตปลอดทหาร แนวหยุดยิง และพรมแดนที่เป็นข้อพิพาท",
-          "ciiChoropleth": "แผนที่ความร้อนดัชนีความไม่มั่นคงของประเทศ — ระบายสีประเทศตามคะแนน CII (เขียว=มั่นคง, แดง=วิกฤต)"
+          "ciiChoropleth": "แผนที่ความร้อนดัชนีความไม่มั่นคงของประเทศ — ระบายสีประเทศตามคะแนน CII (เขียว=มั่นคง, แดง=วิกฤต)",
+          "canadaRoads": "Official road incidents, alerts, conditions, closures, construction, and hazards across supported Canadian jurisdictions",
+          "canadaAlerts": "Alberta Emergency Alert public warnings (Atom feed from www.alberta.ca)"
         },
         "notes": {
           "timeAffects": "ส่งผลต่อ: แผ่นดินไหว, สภาพอากาศ, การประท้วง, การหยุดชะงัก"
@@ -2352,13 +2358,14 @@
     },
     "sanctionsPressure": {
       "title": "การคว่ำบาตรและการระบุตัวตน",
-      "infoTooltip": "การระบุตัวตนตามการคว่ำบาตร OFAC จากรายชื่อ SDN และรายชื่อรวม แสดงว่าประเทศใดที่เผชิญกับความกดดันในการระบุตัวตนมากที่สุด โปรแกรมใดที่เป็นตัวขับเคลื่อน และสิ่งใดที่ได้รับการเพิ่มเข้ามาใหม่นับตั้งแต่การอัปเดตครั้งล่าสุด",
+      "infoTooltip": "รายชื่อ SDN และรายชื่อรวมของ OFAC รวมถึงการระบุตัวตน SEMA/JVCFOA ของ Global Affairs Canada แสดงว่าประเทศใดที่เผชิญกับความกดดันในการระบุตัวตนมากที่สุด โปรแกรมใดที่เป็นตัวขับเคลื่อน และสิ่งใดที่ได้รับการเพิ่มเข้ามาใหม่นับตั้งแต่การอัปเดตครั้งล่าสุด",
       "loading": "กำลังโหลดข้อมูลการคว่ำบาตร...",
       "unavailable": "ข้อมูลการคว่ำบาตรไม่พร้อมใช้งาน",
       "summary": {
         "new": "ใหม่",
         "vessels": "เรือ",
-        "aircraft": "เครื่องบิน"
+        "aircraft": "เครื่องบิน",
+        "sema": "SEMA"
       },
       "sections": {
         "countries": "ประเทศที่ถูกคว่ำบาตร",
@@ -2373,11 +2380,12 @@
       "footer": {
         "updated": "อัปเดตแล้ว {{time}}",
         "dataset": "ชุดข้อมูล {{date}}",
-        "source": "แหล่งที่มา: OFAC"
+        "source": "แหล่งที่มา: OFAC · GAC SEMA"
       },
       "pills": {
         "newCount": "+{{count}} ใหม่",
-        "new": "ใหม่"
+        "new": "ใหม่",
+        "sema": "sema-ca"
       },
       "designations_one": "{{count}} การระบุตัวตน",
       "designations_other": "{{count}} การระบุตัวตน",
@@ -2823,6 +2831,7 @@
     "moreEvents": "เหตุการณ์เพิ่มเติม",
     "monitoring": "กำลังเฝ้าระวัง",
     "viewUSGS": "ดูบน USGS",
+    "viewNRCan": "ดูบน Earthquakes Canada",
     "expired": "หมดอายุ",
     "timeAgo": {
       "s": "{{count}}s ago",

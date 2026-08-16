@@ -18,14 +18,14 @@ const SOURCE_DOMAINS = [
     id: 'military',
     name: 'Military & Strategic',
     anchor: 'military-%26-strategic',
-    blurb: '226 military bases, live ADS-B military flights, naval activity, ~100 tracked satellites, and GPS jamming detected from transponder anomalies.',
+    blurb: 'Military bases, live ADS-B military flights, naval activity, tracked satellites, and GPS jamming detected from transponder anomalies.',
     providers: ['adsb.lol', 'Wingbits', 'CelesTrak', 'gpsjam.org', 'LiveUAMap'],
   },
   {
     id: 'news',
     name: 'News & OSINT',
     anchor: 'news-%26-osint',
-    blurb: 'Hundreds of tiered news feeds across six variants, a 56-channel Telegram OSINT lane, live TV, and webcam grids — every source disclosed and bias-tagged.',
+    blurb: 'Tiered news feeds across every product variant, a curated Telegram OSINT lane, live TV, and webcam grids — every source disclosed and bias-tagged.',
     providers: ['Reuters', 'BBC', 'AP', 'Al Jazeera', 'Bellingcat', 'ISW'],
   },
   {
@@ -46,7 +46,7 @@ const SOURCE_DOMAINS = [
     id: 'infrastructure',
     name: 'Infrastructure & Cyber',
     anchor: 'infrastructure-%26-cyber',
-    blurb: 'Undersea cables, pipelines, 62 strategic ports, AI datacenters, internet outages, and six live threat-intelligence feeds.',
+    blurb: 'Undersea cables, pipelines, strategic ports, AI datacenters, internet outages, and live threat-intelligence feeds.',
     providers: ['Cloudflare Radar', 'Submarine Cable Map', 'abuse.ch', 'AbuseIPDB', 'Epoch AI'],
   },
   {
@@ -67,7 +67,7 @@ const SOURCE_DOMAINS = [
     id: 'china',
     name: 'China Coverage',
     anchor: 'china-coverage',
-    blurb: 'Source-attributed official lanes: NBS and SAFE macro, policy documents from six ministries, exchange disclosures, and cross-strait activity claims.',
+    blurb: 'Source-attributed official lanes: NBS and SAFE macro, ministry policy documents, exchange disclosures, and cross-strait activity claims.',
     providers: ['NBS', 'SAFE', "People's Bank of China", 'SSE / SZSE', 'Taiwan MND'],
   },
   {
@@ -95,6 +95,7 @@ const SOURCE_DOMAIN_MATCHERS = [
 // Keep ambiguous structured providers explicit so a new unmatched provider
 // fails the build instead of silently becoming "geopolitics".
 const SOURCE_DOMAIN_OVERRIDES = new Map([
+  ['Alberta Emergency Alert', 'environment'],
   ['Hyperliquid', 'finance'],
   ['api.rainviewer.com', 'environment'],
   ['api.scrapecreators.com', 'news'],
@@ -104,38 +105,51 @@ const SOURCE_DOMAIN_OVERRIDES = new Map([
   ['api.windy.com', 'environment'],
   ['archive-api.open-meteo.com', 'environment'],
   ['British Geological Survey World Mineral Statistics', 'energy'],
+  ['Bank of Canada', 'finance'],
   ['bothsidesofthetable.com', 'technology'],
+  ['City of Toronto Open Data', 'infrastructure'],
   ['contxto.com', 'technology'],
   ['corridorrisk.io', 'infrastructure'],
+  ['CWFIS / CWFIF (NRCan)', 'environment'],
+  ['BC Wildfire Service (OpenMaps)', 'environment'],
   ['data.ecb.europa.eu', 'finance'],
   ['SEC EDGAR', 'finance'],
   ['datalab.wto.org', 'finance'],
   ['disrupt-africa.com', 'technology'],
   ['Element84 Earth Search STAC', 'environment'],
+  ['Earthquakes Canada (NRCan)', 'environment'],
+  ['Environment and Climate Change Canada (ECCC)', 'environment'],
   ['SEC EDGAR Full-Text Search', 'finance'],
   ['fc.yahoo.com', 'finance'],
   ['gml.noaa.gov', 'environment'],
   ['kr-asia.com', 'news'],
   ['lavca.org', 'technology'],
   ['news.usni.org', 'military'],
+  ['Ontario 511', 'infrastructure'],
+  ['Alberta 511', 'infrastructure'],
+  ['BC Open511', 'infrastructure'],
   ['oauth.reddit.com', 'news'],
   ['overpass-api.de', 'military'],
   ['pitchbook.com', 'technology'],
   ['production.dataviz.cnn.io', 'finance'],
   ['schema.org', 'technology'],
+  ['Statistics Canada', 'finance'],
   ['wabi-europe-north-b-api.analysis.windows.net', 'infrastructure'],
   ['web.archive.org', 'geopolitics'],
   ['www.aaii.com', 'finance'],
   ['www.aaronsw.com', 'technology'],
   ['www.cbr.ru', 'finance'],
   ['Financial Action Task Force (FATF)', 'geopolitics'],
+  ['Global Affairs Canada (SEMA consolidated sanctions)', 'geopolitics'],
   ['www.fwdstart.me', 'technology'],
   ['International Forum of Sovereign Wealth Funds', 'finance'],
   ['www.newyorkfed.org', 'finance'],
   ['www.nfx.com', 'technology'],
   ['www.reddit.com', 'news'],
   ['SWF Institute', 'finance'],
+  ['Toronto Transit Commission (TTC) GTFS-RT', 'infrastructure'],
   ['USGS ScienceBase (Mineral Commodity Summaries)', 'energy'],
+  ['VIA Rail Tracker (unofficial)', 'infrastructure'],
   ['www.techstars.com', 'technology'],
   ['www.windy.com', 'environment'],
   ['your-app.convex.site', 'infrastructure'],
@@ -172,6 +186,7 @@ const SOURCE_NAME_OVERRIDES = new Map([
   ['api.tzevaadom.co.il', 'Tzeva Adom'],
   ['api.unhcr.org', 'UNHCR'],
   ['api.usaspending.gov', 'USAspending.gov'],
+  ['api.weather.gc.ca', 'Environment and Climate Change Canada (ECCC)'],
   ['api.weather.gov', 'U.S. National Weather Service'],
   ['api.worldbank.org', 'World Bank'],
   ['api.wto.org', 'World Trade Organization (WTO)'],
@@ -546,6 +561,9 @@ function sourceDomainIdForEntries(entries) {
   return match[0];
 }
 export function buildSourceCatalog(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw new Error('Source catalog cannot be empty');
+  }
   const entriesByProvider = new Map();
   for (const entry of entries) {
     const providerEntries = entriesByProvider.get(entry.provider) || [];

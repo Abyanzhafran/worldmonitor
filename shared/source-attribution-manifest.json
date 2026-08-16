@@ -67,6 +67,34 @@
       ]
     },
     {
+      "host": "511.alberta.ca",
+      "provider": "Alberta 511",
+      "kind": "structured",
+      "observed": true,
+      "license": "Alberta 511 terms (https://511.alberta.ca/about/about): non-commercial/educational reproduction allowed; commercial reproduction needs written permission from Alberta Transportation and Economic Corridors. https://511.alberta.ca/help/terms returned 404.",
+      "attribution": "Alberta 511 (Alberta Transportation and Economic Corridors). https://511.alberta.ca/",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/lib/provincial-511.mjs"
+        }
+      ]
+    },
+    {
+      "host": "511on.ca",
+      "provider": "Ontario 511",
+      "kind": "structured",
+      "observed": true,
+      "license": "Ontario 511 API terms; Government of Ontario data; attribution required",
+      "attribution": "Ontario 511 (Ministry of Transportation). https://511on.ca/",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/lib/provincial-511.mjs"
+        }
+      ]
+    },
+    {
       "host": "abacus.worldmonitor.app",
       "provider": "abacus.worldmonitor.app",
       "kind": "structured",
@@ -736,6 +764,20 @@
       ]
     },
     {
+      "host": "api.open511.gov.bc.ca",
+      "provider": "BC Open511",
+      "kind": "structured",
+      "observed": true,
+      "license": "Open Government Licence - British Columbia (OGL-BC). Confirmed on https://api.open511.gov.bc.ca/help. API Terms of Use for OGL-BC information also apply.",
+      "attribution": "DriveBC Open511 (Province of British Columbia). Licensed under OGL-BC. https://api.open511.gov.bc.ca/help",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/lib/open511.mjs"
+        }
+      ]
+    },
+    {
       "host": "api.openaq.org",
       "provider": "OpenAQ",
       "kind": "structured",
@@ -1045,6 +1087,20 @@
       ]
     },
     {
+      "host": "api.weather.gc.ca",
+      "provider": "Environment and Climate Change Canada (ECCC)",
+      "kind": "structured",
+      "observed": true,
+      "license": "ECCC Data Server End-use Licence; Government of Canada open data",
+      "attribution": "Environment and Climate Change Canada (ECCC) weather alerts via MSC GeoMet (https://api.weather.gc.ca/).",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/_weather-alert-select.mjs"
+        }
+      ]
+    },
+    {
       "host": "api.weather.gov",
       "provider": "api.weather.gov",
       "kind": "structured",
@@ -1054,10 +1110,7 @@
       "status": "terms-review",
       "references": [
         {
-          "path": "scripts/ais-relay.cjs"
-        },
-        {
-          "path": "scripts/seed-weather-alerts.mjs"
+          "path": "scripts/_weather-alert-select.mjs"
         }
       ]
     },
@@ -1337,7 +1390,7 @@
     },
     {
       "host": "auth.opensky-network.org",
-      "provider": "auth.opensky-network.org",
+      "provider": "opensky-network.org",
       "kind": "structured",
       "observed": true,
       "license": "Provider terms for this upstream API/dataset; verify before redistribution",
@@ -1537,6 +1590,23 @@
       "references": [
         {
           "path": "scripts/_trade-parse-utils.mjs"
+        }
+      ]
+    },
+    {
+      "host": "calgaryherald.com",
+      "provider": "calgaryherald.com",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit calgaryherald.com and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
         }
       ]
     },
@@ -1952,7 +2022,7 @@
     },
     {
       "host": "customer-api.wingbits.com",
-      "provider": "customer-api.wingbits.com",
+      "provider": "wingbits.com",
       "kind": "structured",
       "observed": true,
       "license": "Provider terms for this upstream API/dataset; verify before redistribution",
@@ -2494,7 +2564,7 @@
     },
     {
       "host": "ecs-api.wingbits.com",
-      "provider": "ecs-api.wingbits.com",
+      "provider": "wingbits.com",
       "kind": "structured",
       "observed": true,
       "license": "Provider terms for this upstream API/dataset; verify before redistribution",
@@ -2503,6 +2573,23 @@
       "references": [
         {
           "path": "server/worldmonitor/military/v1/get-wingbits-live-flight.ts"
+        }
+      ]
+    },
+    {
+      "host": "edmontonjournal.com",
+      "provider": "edmontonjournal.com",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit edmontonjournal.com and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
         }
       ]
     },
@@ -3084,6 +3171,23 @@
       ]
     },
     {
+      "host": "financialpost.com",
+      "provider": "financialpost.com",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit financialpost.com and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
       "host": "finnhub.io",
       "provider": "finnhub.io",
       "kind": "structured",
@@ -3259,6 +3363,20 @@
         },
         {
           "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
+      "host": "geoserver.cwfif.nrcan.gc.ca",
+      "provider": "CWFIS / CWFIF (NRCan)",
+      "kind": "structured",
+      "observed": true,
+      "license": "Open Government Licence - Canada; redistribution granted (copy, modify, publish, distribute, including commercial use) with attribution",
+      "attribution": "Canadian Forest Service. Canadian Wildland Fire Information System (CWFIS), Natural Resources Canada, Canadian Forest Service, Northern Forestry Centre, Edmonton, Alberta. https://cwfis.cfs.nrcan.gc.ca. Contains information licensed under the Open Government Licence – Canada (https://open.canada.ca/en/open-government-licence-canada). Evidence: https://cwfis.cfs.nrcan.gc.ca/downloads/licence.txt",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/wildfire/cwfis-wfs.mjs"
         }
       ]
     },
@@ -3461,6 +3579,20 @@
       ]
     },
     {
+      "host": "gtfsrt.ttc.ca",
+      "provider": "Toronto Transit Commission (TTC) GTFS-RT",
+      "kind": "structured",
+      "observed": true,
+      "license": "CKAN package_show for ttc-gtfs-realtime-gtfs-rt: license_id=notspecified, isopen=false (https://ckan0.cf.opendata.inter.prod-toronto.ca/api/3/action/package_show?id=ttc-gtfs-realtime-gtfs-rt). Portal dataset page chrome links OGL-Toronto but is not data-bound to this dataset.",
+      "attribution": "Toronto Transit Commission GTFS-RT service alerts. https://gtfsrt.ttc.ca and https://open.toronto.ca/dataset/ttc-gtfs-realtime-gtfs-rt/. Portal HTML cites OGL-Toronto; CKAN does not.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/seed-ttc-alerts.mjs"
+        }
+      ]
+    },
+    {
       "host": "hacker-news.firebaseio.com",
       "provider": "hacker-news.firebaseio.com",
       "kind": "structured",
@@ -3574,6 +3706,23 @@
       "observed": true,
       "license": "Provider terms for this feed publisher; verify before redistribution",
       "attribution": "Credit hvg.hu and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
+      "host": "ici.radio-canada.ca",
+      "provider": "ici.radio-canada.ca",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit ici.radio-canada.ca and link to the original feed publisher.",
       "status": "terms-review",
       "references": [
         {
@@ -4171,6 +4320,23 @@
       ]
     },
     {
+      "host": "macleans.ca",
+      "provider": "macleans.ca",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit macleans.ca and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
       "host": "maps.worldmonitor.app",
       "provider": "maps.worldmonitor.app",
       "kind": "structured",
@@ -4392,6 +4558,23 @@
         },
         {
           "path": "server/worldmonitor/aviation/v1/_shared.ts"
+        }
+      ]
+    },
+    {
+      "host": "nationalpost.com",
+      "provider": "nationalpost.com",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit nationalpost.com and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
         }
       ]
     },
@@ -4775,6 +4958,15 @@
       ]
     },
     {
+      "host": "open.alberta.ca",
+      "provider": "open.alberta.ca",
+      "kind": "structured",
+      "observed": false,
+      "license": "Provider terms for this upstream API/dataset; verify before redistribution",
+      "attribution": "Credit open.alberta.ca and link to the original upstream API/dataset.",
+      "status": "excluded"
+    },
+    {
       "host": "opendata.adsb.fi",
       "provider": "adsb.fi Open Data",
       "kind": "structured",
@@ -4792,6 +4984,20 @@
       ]
     },
     {
+      "host": "openmaps.gov.bc.ca",
+      "provider": "BC Wildfire Service (OpenMaps)",
+      "kind": "structured",
+      "observed": true,
+      "license": "Open Government Licence - British Columbia; redistribution granted (copy, modify, publish, distribute, including commercial use) with attribution",
+      "attribution": "Contains information licensed under the Open Government Licence – British Columbia. BC Wildfire Service, Current Fire Locations (PROT_CURRENT_FIRE_PNTS_SP), Government of British Columbia. https://catalogue.data.gov.bc.ca/dataset/bc-wildfire-fire-locations-current. Evidence: https://www2.gov.bc.ca/gov/content/data/policy-standards/data-policies/open-data/open-government-licence-bc and https://open.canada.ca/data/en/dataset/2790e3f7-6395-4230-8545-04efb5a18800",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/wildfire/bc-fire-points.mjs"
+        }
+      ]
+    },
+    {
       "host": "openrouter.ai",
       "provider": "openrouter.ai",
       "kind": "structured",
@@ -4805,6 +5011,9 @@
         },
         {
           "path": "scripts/lib/company-monitoring-classifier-client.mjs"
+        },
+        {
+          "path": "scripts/regional-snapshot/weekly-brief.mjs"
         }
       ]
     },
@@ -4856,6 +5065,23 @@
       "references": [
         {
           "path": "src/components/LiveNewsPanel.ts"
+        }
+      ]
+    },
+    {
+      "host": "ottawacitizen.com",
+      "provider": "ottawacitizen.com",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit ottawacitizen.com and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
         }
       ]
     },
@@ -5760,6 +5986,20 @@
       ]
     },
     {
+      "host": "secure.toronto.ca",
+      "provider": "City of Toronto Open Data",
+      "kind": "structured",
+      "observed": true,
+      "license": "CKAN package_show for road-restrictions: license_id=notspecified, license_title=\"License not specified\" (https://ckan0.cf.opendata.inter.prod-toronto.ca/api/3/action/package_show?id=road-restrictions). Portal dataset page chrome links OGL-Toronto but is not data-bound to this dataset.",
+      "attribution": "City of Toronto, Road Restrictions. https://open.toronto.ca/dataset/road-restrictions/",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/lib/toronto-road-restrictions.mjs"
+        }
+      ]
+    },
+    {
       "host": "sedeaplicaciones.minetur.gob.es",
       "provider": "sedeaplicaciones.minetur.gob.es",
       "kind": "structured",
@@ -6481,6 +6721,23 @@
       ]
     },
     {
+      "host": "thenarwhal.ca",
+      "provider": "thenarwhal.ca",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit thenarwhal.ca and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
       "host": "thenewstack.io",
       "provider": "thenewstack.io",
       "kind": "feed+structured",
@@ -6518,12 +6775,46 @@
       ]
     },
     {
+      "host": "theprovince.com",
+      "provider": "theprovince.com",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit theprovince.com and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
       "host": "thesentry.org",
       "provider": "thesentry.org",
       "kind": "feed",
       "observed": true,
       "license": "Provider terms for this feed publisher; verify before redistribution",
       "attribution": "Credit thesentry.org and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
+      "host": "thetyee.ca",
+      "provider": "thetyee.ca",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit thetyee.ca and link to the original feed publisher.",
       "status": "terms-review",
       "references": [
         {
@@ -6624,6 +6915,20 @@
         },
         {
           "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
+      "host": "tsimobile.viarail.ca",
+      "provider": "VIA Rail Tracker (unofficial)",
+      "kind": "structured",
+      "observed": true,
+      "license": "VIA Rail Site Terms prohibit commercial use of the Site (https://www.viarail.ca/en/terms-and-conditions). Developer Resources publish GTFS only under Open Government Licence – Canada v2 (https://www.viarail.ca/en/developer-resources); that OGL grant does not cover tsimobile.viarail.ca unofficial live JSON. Terms require review.",
+      "attribution": "VIA Rail Canada; unofficial live train JSON at tsimobile.viarail.ca. Not the Developer Resources GTFS feed; OGL does not apply to this host. Best-effort only.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/viarail-live.mjs"
         }
       ]
     },
@@ -6802,6 +7107,23 @@
       "license": "U.S. government public information; site and document-specific notices apply",
       "attribution": "Office of the U.S. Trade Representative; link to the original release.",
       "status": "reviewed",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
+      "host": "vancouversun.com",
+      "provider": "vancouversun.com",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit vancouversun.com and link to the original feed publisher.",
+      "status": "terms-review",
       "references": [
         {
           "path": "server/worldmonitor/news/v1/_feeds.ts"
@@ -7077,6 +7399,9 @@
         },
         {
           "path": "api/og-story.js"
+        },
+        {
+          "path": "api/opensky.js"
         },
         {
           "path": "api/referral/me.ts"
@@ -7358,6 +7683,23 @@
       ]
     },
     {
+      "host": "www.alberta.ca",
+      "provider": "Alberta Emergency Alert",
+      "kind": "structured",
+      "observed": true,
+      "license": "Alberta.ca terms of use. Open Government Licence - Alberta exists on the open.alberta.ca licence page but is not bound to the AEA Atom feed on a live dataset page (the alberta-emergency-alert.aspx page has no OGL statement).",
+      "attribution": "Alberta Emergency Alert, Government of Alberta. https://www.alberta.ca/alberta-emergency-alert.aspx",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/lib/alberta-emergency-alert.mjs"
+        },
+        {
+          "path": "scripts/source-attribution.mjs"
+        }
+      ]
+    },
+    {
       "host": "www.aljazeera.com",
       "provider": "www.aljazeera.com",
       "kind": "feed",
@@ -7541,6 +7883,20 @@
         },
         {
           "path": "server/worldmonitor/aviation/v1/list-aviation-news.ts"
+        }
+      ]
+    },
+    {
+      "host": "www.bankofcanada.ca",
+      "provider": "Bank of Canada",
+      "kind": "structured",
+      "observed": true,
+      "license": "Bank of Canada Terms of Use — permission to freely use, copy, distribute and transmit website content with attribution (https://www.bankofcanada.ca/terms/)",
+      "attribution": "Bank of Canada Valet API; link to https://www.bankofcanada.ca/valet/ and the Terms of Use at https://www.bankofcanada.ca/terms/.",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/lib/boc-valet.mjs"
         }
       ]
     },
@@ -8165,6 +8521,20 @@
         },
         {
           "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
+      "host": "www.earthquakescanada.nrcan.gc.ca",
+      "provider": "Earthquakes Canada (NRCan)",
+      "kind": "structured",
+      "observed": true,
+      "license": "Earthquakes Canada citation terms; live Atom redistribution not explicitly granted (historical catalogues on the Open Government Portal are OGL-Canada)",
+      "attribution": "Natural Resources Canada, Earthquakes Canada; link to https://www.earthquakescanada.nrcan.gc.ca/index-en.php?tpl_region=canada. Event-metadata citation: https://www.earthquakescanada.nrcan.gc.ca/cite-en.php",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/seismology/nrcan-atom.mjs"
         }
       ]
     },
@@ -8884,6 +9254,37 @@
       ]
     },
     {
+      "host": "www.international.gc.ca",
+      "provider": "Global Affairs Canada (SEMA consolidated sanctions)",
+      "kind": "structured",
+      "observed": true,
+      "license": "Government of Canada website terms; no explicit redistribution licence on the SEMA XML. Canada.ca terms restrict commercial reproduction unless otherwise specified. The Open Government Licence page on this host covers international-assistance open data sets, not this sanctions list.",
+      "attribution": "Global Affairs Canada, Consolidated Canadian Autonomous Sanctions List; link to https://www.international.gc.ca/world-monde/international_relations-relations_internationales/sanctions/consolidated-consolide.aspx?lang=eng",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/_sema-sanctions.mjs"
+        }
+      ]
+    },
+    {
+      "host": "www.ipolitics.ca",
+      "provider": "www.ipolitics.ca",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit www.ipolitics.ca and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
       "host": "www.irrawaddy.com",
       "provider": "www.irrawaddy.com",
       "kind": "feed",
@@ -8969,6 +9370,23 @@
       ]
     },
     {
+      "host": "www.lapresse.ca",
+      "provider": "www.lapresse.ca",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit www.lapresse.ca and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
       "host": "www.lasillavacia.com",
       "provider": "www.lasillavacia.com",
       "kind": "feed",
@@ -8977,6 +9395,23 @@
       "attribution": "Credit www.lasillavacia.com and link to the original feed publisher.",
       "status": "terms-review",
       "references": [
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
+      "host": "www.ledevoir.com",
+      "provider": "www.ledevoir.com",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit www.ledevoir.com and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
         {
           "path": "src/config/feeds.ts"
         }
@@ -10401,6 +10836,23 @@
       ]
     },
     {
+      "host": "www.thestar.com",
+      "provider": "www.thestar.com",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit www.thestar.com and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
       "host": "www.theverge.com",
       "provider": "www.theverge.com",
       "kind": "feed+structured",
@@ -10474,6 +10926,23 @@
         },
         {
           "path": "src/config/variants/tech.ts"
+        }
+      ]
+    },
+    {
+      "host": "www.tvanouvelles.ca",
+      "provider": "www.tvanouvelles.ca",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit www.tvanouvelles.ca and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
         }
       ]
     },
@@ -10680,6 +11149,23 @@
         },
         {
           "path": "src/services/webcams/index.ts"
+        }
+      ]
+    },
+    {
+      "host": "www.winnipegfreepress.com",
+      "provider": "www.winnipegfreepress.com",
+      "kind": "feed",
+      "observed": true,
+      "license": "Provider terms for this feed publisher; verify before redistribution",
+      "attribution": "Credit www.winnipegfreepress.com and link to the original feed publisher.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
         }
       ]
     },
@@ -10910,6 +11396,20 @@
       "references": [
         {
           "path": "server/worldmonitor/infrastructure/v1/list-service-statuses.ts"
+        }
+      ]
+    },
+    {
+      "host": "www150.statcan.gc.ca",
+      "provider": "Statistics Canada",
+      "kind": "structured",
+      "observed": true,
+      "license": "Statistics Canada Open Licence (Open Government Licence — Canada); use, reproduce, publish, freely distribute or sell with attribution (https://www.statcan.gc.ca/en/terms-conditions/open-licence)",
+      "attribution": "Statistics Canada. Web Data Service. https://www.statcan.gc.ca/en/developers/wds/user-guide",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/lib/statcan-wds.mjs"
         }
       ]
     },
