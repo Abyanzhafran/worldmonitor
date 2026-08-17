@@ -155,6 +155,35 @@ describe('sources catalog origin countries', () => {
     assert.equal(sourceOriginLabel(null), 'International');
   });
 
+  it('classifies GitHub-owned platform hosts as international', () => {
+    for (const host of [
+      'api.github.com',
+      'github.blog',
+      'raw.githubusercontent.com',
+      'www.githubstatus.com',
+    ]) {
+      assert.equal(
+        resolveSourceOrigin({ provider: host, hosts: [host] }),
+        null,
+        `${host} must use the catalog's global-platform classification`,
+      );
+    }
+  });
+
+  it('does not infer Serbia from the vanity domain lobste.rs', () => {
+    assert.equal(resolveSourceOrigin({ provider: 'lobste.rs', hosts: ['lobste.rs'] }), 'US');
+  });
+
+  it('fails closed when one provider resolves to conflicting countries', () => {
+    assert.throws(
+      () => resolveSourceOrigin({
+        provider: 'Conflicting Provider',
+        hosts: ['24.hu', 'www.bbc.com'],
+      }),
+      /Source provider has conflicting origin countries: Conflicting Provider/,
+    );
+  });
+
   it('fails closed when a generic-TLD provider has no origin country', () => {
     assert.throws(
       () => buildSourceCatalog([{
@@ -705,6 +734,31 @@ describe('crawlable corpus generator', () => {
       searchInput.dispatchEvent(new window.Event('input'));
       assert.equal(visibleProviderCount(), 0);
       assert.equal(window.document.getElementById('source-no-results').hidden, false);
+      resetButton.click();
+      const composableCard = [...window.document.querySelectorAll('.provider-card')]
+        .find((card) => card.dataset.sourceKind.split(' ').length > 0);
+      assert.ok(composableCard, 'the catalog must contain a provider for the combined-filter test');
+      const combinedDomain = composableCard.dataset.sourceDomain;
+      const combinedKind = composableCard.dataset.sourceKind.split(' ')[0];
+      const combinedCountry = composableCard.dataset.sourceCountry;
+      const combinedQuery = composableCard.dataset.provider;
+      window.document.getElementById('source-domain').value = combinedDomain;
+      kindSelect.value = combinedKind;
+      countrySelect.value = combinedCountry;
+      searchInput.value = combinedQuery;
+      searchInput.dispatchEvent(new window.Event('input'));
+      const combinedMatches = [...window.document.querySelectorAll('.provider-card')].filter((card) => (
+        card.dataset.sourceDomain === combinedDomain
+        && card.dataset.sourceKind.split(' ').includes(combinedKind)
+        && card.dataset.sourceCountry === combinedCountry
+        && card.textContent.toLowerCase().includes(combinedQuery.toLowerCase())
+      ));
+      assert.ok(combinedMatches.length > 0, 'the selected filters must retain at least one provider');
+      assert.equal(
+        visibleProviderCount(),
+        combinedMatches.length,
+        'domain, type, country, and search filters must compose with AND semantics',
+      );
       window.close();
       assert.doesNotMatch(sourcesPage, /[?&]ref=/, 'sources CTAs must never use the affiliate ref= param');
       // Domain cards deep-link into the docs catalog with the query BEFORE the

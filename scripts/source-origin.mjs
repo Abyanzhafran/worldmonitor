@@ -9,24 +9,27 @@
 // real ccTLDs infer automatically. Generic or vanity TLDs need an explicit
 // override so a new .com source cannot ship without a country decision.
 
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const COUNTRY_NAMES_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'shared', 'country-names.json');
-const COUNTRY_NAMES = JSON.parse(readFileSync(COUNTRY_NAMES_PATH, 'utf8'));
-
 export const INTERNATIONAL_FILTER = 'intl';
 
-const ISO2_CODES = new Set(Object.values(COUNTRY_NAMES));
-ISO2_CODES.add('EU');
+// Keep this module runtime-neutral: it is consumed by both Node corpus scripts
+// and the Vercel Edge MCP registry. JSON import attributes and node:fs are not
+// portable across those two bundle paths.
+const ISO2_CODES = new Set((
+  'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BR BS BT BW BY BZ ' +
+  'CA CD CF CG CH CI CK CL CM CN CO CR CU CV CW CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET EU FI FJ FK FM ' +
+  'FO FR GA GB GD GE GG GH GI GL GM GN GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT ' +
+  'JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML ' +
+  'MM MN MO MP MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN ' +
+  'PR PS PT PW PY QA RO RS RU RW SA SB SC SD SE SG SH SI SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH ' +
+  'TJ TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS XK YE ZA ZM ZW'
+).split(' '));
 
 const REGION_NAMES = new Intl.DisplayNames(['en'], { type: 'region' });
 
 // ccTLDs used as generic product domains. Do not infer a country from these.
 const VANITY_CC_TLDS = new Set([
   'ai', 'am', 'cc', 'cf', 'cm', 'co', 'fm', 'ga', 'gd', 'gg', 'gl', 'gq',
-  'io', 'is', 'ly', 'me', 'ml', 'mn', 'nu', 'sh', 'so', 'tk', 'to', 'tv',
+  'io', 'is', 'ly', 'me', 'ml', 'mn', 'nu', 'rs', 'sh', 'so', 'tk', 'to', 'tv',
   'vc', 'ws', 'zw',
 ]);
 
@@ -78,7 +81,7 @@ const HOST_ORIGINS = Object.freeze({
   'api.exa.ai': 'US',
   'api.firecrawl.dev': 'US',
   'api.gdeltproject.org': 'US',
-  'api.github.com': 'US',
+  'api.github.com': null,
   'api.hyperliquid.xyz': 'US',
   'api.openaq.org': 'US',
   'api.opensanctions.org': 'DE',
@@ -161,7 +164,7 @@ const HOST_ORIGINS = Object.freeze({
   'gcaptain.com': 'US',
   'geospatial-usace.opendata.arcgis.com': 'US',
   'ghoapi.azureedge.net': null,
-  'github.blog': 'US',
+  'github.blog': null,
   'globalenergymonitor.org': 'US',
   'globalinitiative.net': 'CH',
   'goldsilverworlds.com': 'BE',
@@ -186,6 +189,9 @@ const HOST_ORIGINS = Object.freeze({
   'krebsonsecurity.com': 'US',
   'lavca.org': 'US',
   'linearstatus.com': 'US',
+  // The Lobsters domain is a .rs domain hack; the publisher is operated from
+  // Chicago, not Serbia.
+  'lobste.rs': 'US',
   'meduza.io': 'RU',
   'mempool.space': null,
   'mexiconewsdaily.com': 'MX',
@@ -221,7 +227,7 @@ const HOST_ORIGINS = Object.freeze({
   'query.wikidata.org': null,
   'query1.finance.yahoo.com': 'US',
   'railway.instatus.com': 'US',
-  'raw.githubusercontent.com': 'US',
+  'raw.githubusercontent.com': null,
   'reasonstobecheerful.world': 'US',
   'responsiblestatecraft.org': 'US',
   'restcountries.com': null,
@@ -341,7 +347,7 @@ const HOST_ORIGINS = Object.freeze({
   'www.france24.com': 'FR',
   'www.ft.com': 'GB',
   'www.fwdstart.me': 'US',
-  'www.githubstatus.com': 'US',
+  'www.githubstatus.com': null,
   'www.gitex.com': 'AE',
   'www.globenewswire.com': 'US',
   'www.goldseek.com': 'US',
