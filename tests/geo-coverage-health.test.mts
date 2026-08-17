@@ -7,7 +7,7 @@
  *
  *   1. shared/source-geography.json stays in sync with the feed catalog
  *      (every mapped name resolves, every ISO2 is known)
- *   2. strategic floors hold (UA/PL/TW/PK/CA ≥ 1 EN default-on local source)
+ *   2. strategic floors hold for globally default-on local sources
  *   3. the zeroDefaultOnAllowlist in shared/geo-coverage-policy.json matches
  *      reality EXACTLY — both directions: undocumented new gaps fail, and so
  *      do stale entries once a pack lands default-on local coverage
@@ -26,7 +26,7 @@ import {
   computeGeoCoverage,
   evaluateGeoCoverage,
   formatGeoCoverageHuman,
-  getEnglishDefaultEnabledSources,
+  getGloballyDefaultEnabledSources,
   loadGeoCoverageInputs,
   validateGeoCoveragePolicy,
   validateSourceGeography,
@@ -36,6 +36,10 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Strategic floors the epic pins — must stay in policy so CI cannot go green by emptying floors. */
 const STRATEGIC_FLOOR_ISO2 = ['UA', 'PL', 'TW', 'PK', 'CA'] as const;
+const CRISIS_FLOOR_ISO2 = [
+  'YE', 'SY', 'PS', 'HT', 'AF', 'LB', 'ML', 'BF', 'NE',
+  'VE', 'CU', 'LY', 'EG', 'BD', 'KE', 'CM',
+] as const;
 const STRATEGIC_FLOOR_MIN = 1;
 
 /**
@@ -155,6 +159,36 @@ const EXPECTED_REQUIRED_SOURCE_GEOGRAPHY = new Map<string, readonly string[]>([
   ['Ynetnews', ['IL']],
   ['Zerkalo', ['BY']],
   ['Ziarul de Gardă', ['MD']],
+  ['Yemen Online', ['YE']],
+  ["Sana'a Center", ['YE']],
+  ['Syria Direct', ['SY']],
+  ['Enab Baladi English', ['SY']],
+  ['+972 Magazine', ['IL', 'PS']],
+  ['WAFA English', ['PS']],
+  ['HaitiLibre English', ['HT']],
+  ['AyiboPost', ['HT']],
+  ['Amu TV', ['AF']],
+  ['Pajhwok Afghan News', ['AF']],
+  ['Naharnet Lebanon', ['LB']],
+  ["L'Orient Today", ['LB']],
+  ['Studio Tamani', ['ML']],
+  ['leFaso.net', ['BF']],
+  ['ActuNiger', ['NE']],
+  ['Aïr Info', ['NE']],
+  ['Caracas Chronicles', ['VE']],
+  ['Efecto Cocuyo', ['VE']],
+  ['Havana Times', ['CU']],
+  ['14ymedio', ['CU']],
+  ['Libya Herald', ['LY']],
+  ['Egypt Independent', ['EG']],
+  ['Mada Masr', ['EG']],
+  ['The Daily Star', ['BD']],
+  ['Dhaka Tribune', ['BD']],
+  ['Daily Nation', ['KE']],
+  ['The Guardian Post', ['CM']],
+  ['Tchadinfos', ['TD']],
+  ['Alwihda Info', ['TD']],
+  ['Radio Ndeke Luka', ['CF']],
 ]);
 
 let inputs: Awaited<ReturnType<typeof loadGeoCoverageInputs>>;
@@ -192,20 +226,22 @@ describe('geographic coverage health (#5957)', () => {
     assert.deepEqual(validateGeoCoveragePolicy(inputs), []);
   });
 
-  it('filters default-enabled sources by EN reachability', () => {
+  it('counts English and approved strategic non-English global defaults', () => {
     const fakeFeeds = {
       FULL_FEEDS: {
         test: [
           { name: 'English', url: 'https://example.com/en' },
           { name: 'French', url: 'https://example.com/fr', lang: 'fr' },
+          { name: 'French Strategic', url: 'https://example.com/fr-strategic', lang: 'fr', strategicDefault: true },
           { name: 'Explicit English', url: 'https://example.com/en-2', lang: 'en' },
         ],
       },
       INTEL_SOURCES: [{ name: 'Unlabeled Intel', url: 'https://example.com/intel' }],
-      getAllDefaultEnabledSources: () => new Set(['English', 'French', 'Explicit English', 'Unlabeled Intel']),
+      getAllDefaultEnabledSources: () => new Set(['English', 'French', 'French Strategic', 'Explicit English', 'Unlabeled Intel']),
     };
-    assert.deepEqual([...getEnglishDefaultEnabledSources(fakeFeeds)], [
+    assert.deepEqual([...getGloballyDefaultEnabledSources(fakeFeeds)], [
       'English',
+      'French Strategic',
       'Explicit English',
       'Unlabeled Intel',
     ]);
@@ -274,6 +310,17 @@ describe('geographic coverage health (#5957)', () => {
     assert.equal(violations.length, 1);
   });
 
+  it('pins crisis-floor countries at ≥1 in policy (#6812)', () => {
+    const floors = inputs.policy.floors ?? {};
+    for (const iso2 of CRISIS_FLOOR_ISO2) {
+      const floor = floors[iso2] ?? 0;
+      assert.ok(
+        floor >= 1,
+        `policy.floors must pin crisis-floor ${iso2} >= 1 (got ${floor})`,
+      );
+    }
+  });
+
   it('pins strategic floors UA/PL/TW/PK/CA at ≥1 in policy (not just live counts)', () => {
     const floors = inputs.policy.floors ?? {};
     for (const iso2 of STRATEGIC_FLOOR_ISO2) {
@@ -286,7 +333,7 @@ describe('geographic coverage health (#5957)', () => {
     }
   });
 
-  it('strategic floors hold (UA/PL/TW/PK/CA ≥ 1 EN default-on local source)', () => {
+  it('strategic floors hold for globally default-on local sources', () => {
     const rows = computeGeoCoverage(inputs);
     for (const row of rows) {
       assert.ok(
@@ -296,18 +343,18 @@ describe('geographic coverage health (#5957)', () => {
     }
   });
 
-  it('counts only EN-reachable default-on local sources', () => {
+  it('keeps known countries without any global default documented', () => {
     const rows = computeGeoCoverage(inputs);
     const byIso = new Map(rows.map((row) => [row.iso2, row]));
     for (const iso2 of ['AR', 'CD', 'SD']) {
       const row = byIso.get(iso2);
       assert.ok(row, `${iso2} must remain a keyCountry coverage row`);
-      assert.deepEqual(row.defaultOnSources, [], `${iso2} has no EN-reachable default-on local source`);
-      assert.equal(row.allowlistReason !== null, true, `${iso2} must document its EN reachability gap`);
+      assert.deepEqual(row.defaultOnSources, [], `${iso2} has no globally default-on local source`);
+      assert.equal(row.allowlistReason !== null, true, `${iso2} must document its global-default gap`);
     }
 
     const { violations } = evaluateGeoCoverage(rows);
-    assert.deepEqual(violations, [], 'known EN reachability gaps must be allowlisted');
+    assert.deepEqual(violations, [], 'known global-default gaps must be allowlisted');
   });
 
   it('recognizes Canada coverage from the #5960/#6604 source pack', () => {
