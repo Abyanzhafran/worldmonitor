@@ -124,15 +124,12 @@ export const DIRECT_WRITE_PATTERNS = [
  */
 export const LEGACY_DIRECT_CONTENT_WRITES = [
   'src/components/AirlineIntelPanel.ts :: setTrustedHtml(this.content, …) x8',
-  'src/components/CountersPanel.ts :: this.content.appendChild(…) x1',
-  'src/components/CountersPanel.ts :: this.content.innerHTML = … x1',
   'src/components/DeductionPanel.ts :: replaceChildren(this.content, …) x1',
   'src/components/DefensePatentsPanel.ts :: replaceChildren(this.content, …) x1',
   'src/components/GdeltIntelPanel.ts :: this.content.insertAdjacentElement(…) x1',
   'src/components/GoodThingsDigestPanel.ts :: setTrustedHtml(this.content, …) x2',
   'src/components/GoodThingsDigestPanel.ts :: this.content.appendChild(…) x1',
   'src/components/HeroSpotlightPanel.ts :: setTrustedHtml(this.content, …) x1',
-  'src/components/InternetDisruptionsPanel.ts :: replaceChildren(this.content, …) x1',
   'src/components/LatestBriefPanel.ts :: clearChildren(this.content) x1',
   'src/components/LatestBriefPanel.ts :: replaceChildren(this.content, …) x1',
   'src/components/LatestBriefPanel.ts :: this.content.appendChild(…) x1',
