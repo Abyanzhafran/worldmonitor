@@ -7,12 +7,14 @@ import YAML from 'yaml';
 import { __testing__ as healthTesting } from '../api/health.js';
 import {
   applyAcceptanceBaseline,
+  buildAcceptanceObservation,
   findOperationalProblems,
   formatAcceptanceReport,
   isOnDemandProblem,
   validateAcceptanceBaseline,
   validateCompactHealthPayload,
 } from '../scripts/check-seed-freshness.mjs';
+import { buildSeedHealthStatuses } from '../scripts/update-seed-health-statuses.mjs';
 import { validateHealthProbeCutovers } from '../scripts/check-health-probe-cutovers.mts';
 
 const COMMITTED_BASELINE_URL = new URL('../scripts/seed-freshness-baseline.json', import.meta.url);
@@ -28,6 +30,127 @@ const readCommittedBaseline = () => JSON.parse(readFileSync(COMMITTED_BASELINE_U
 const readRailwayServices = () => JSON.parse(readFileSync(RAILWAY_SERVICES_URL, 'utf8'));
 
 describe('scheduled seed freshness monitor', () => {
+  it('projects stable per-source statuses without putting changing ages in the incident identity', () => {
+    const base = {
+      blocking: [
+        { name: 'consumerPricesCoverageUS', status: 'COVERAGE_DEGRADED', seedAgeMin: 925 },
+        { name: 'jodiGas', status: 'STALE_CONTENT', seedAgeMin: 9266 },
+      ],
+      acknowledged: [{ name: 'mineralProduction', status: 'EMPTY', issue: 6439 }],
+      cleared: [],
+      escalated: [],
+      expired: false,
+      expiresAt: '2026-08-27',
+    };
+    const statuses = buildSeedHealthStatuses(base);
+    assert.deepEqual(statuses, [
+      {
+        context: 'ingestion/seed/acceptance',
+        state: 'pending',
+        description: '2 source incidents remain active',
+      },
+      {
+        context: 'ingestion/seed/consumerPricesCoverageUS',
+        state: 'failure',
+        description: 'COVERAGE_DEGRADED blocks operational acceptance',
+      },
+      {
+        context: 'ingestion/seed/jodiGas',
+        state: 'failure',
+        description: 'STALE_CONTENT blocks operational acceptance',
+      },
+      {
+        context: 'ingestion/seed/mineralProduction',
+        state: 'pending',
+        description: 'EMPTY acknowledged by #6439',
+      },
+    ]);
+
+    const olderAges = structuredClone(base);
+    olderAges.blocking[0].seedAgeMin = 1;
+    olderAges.blocking[1].seedAgeMin = 2;
+    assert.deepEqual(buildSeedHealthStatuses(olderAges), statuses);
+  });
+
+  it('makes an expired suppression and a clean recovery machine-visible', () => {
+    assert.deepEqual(buildSeedHealthStatuses({
+      blocking: [],
+      acknowledged: [],
+      cleared: [],
+      escalated: [],
+      expired: true,
+      expiresAt: '2026-08-27',
+    }), [
+      {
+        context: 'ingestion/seed/acceptance',
+        state: 'pending',
+        description: 'accepted-problem baseline requires review',
+      },
+      {
+        context: 'ingestion/seed/baseline',
+        state: 'failure',
+        description: 'accepted-problem baseline expired on 2026-08-27',
+      },
+    ]);
+
+    assert.deepEqual(buildSeedHealthStatuses({
+      blocking: [],
+      acknowledged: [],
+      cleared: [],
+      escalated: [],
+      expired: false,
+      expiresAt: '2026-08-27',
+    }), [{
+      context: 'ingestion/seed/acceptance',
+      state: 'success',
+      description: 'ingestion operational acceptance passed',
+    }]);
+  });
+
+  it('builds one structured observation from the same strict acceptance split as the text report', () => {
+    const payload = {
+      status: 'WARNING',
+      checkedAt: '2026-08-17T20:00:00+02:00',
+      problems: { submarineCables: { status: 'EMPTY', records: 0 } },
+    };
+    const observation = buildAcceptanceObservation(payload, {
+      expiresAt: '2026-08-27',
+      acknowledged: [],
+    }, Date.parse('2026-08-17T18:00:00.000Z'));
+
+    assert.equal(observation.version, 1);
+    assert.equal(observation.checkedAt, '2026-08-17T18:00:00.000Z');
+    assert.deepEqual(observation.acceptance.blocking, [{
+      name: 'submarineCables',
+      status: 'EMPTY',
+      records: 0,
+    }]);
+    assert.equal(observation.report.failed, true);
+  });
+
+  it('refuses an observation without a current valid health timestamp', () => {
+    const now = Date.parse('2026-08-17T18:00:00.000Z');
+    const baseline = { expiresAt: '2026-08-27', acknowledged: [] };
+    const payload = (checkedAt) => ({
+      status: 'HEALTHY',
+      ...(checkedAt === undefined ? {} : { checkedAt }),
+    });
+
+    for (const [label, checkedAt] of [
+      ['missing', undefined],
+      ['malformed', '2026-08-17 18:00:00Z'],
+      ['impossible calendar date', '2026-02-30T18:00:00.000Z'],
+      ['future', '2026-08-17T18:00:00.001Z'],
+      ['expired cache snapshot', '2026-08-17T17:58:39.999Z'],
+    ]) {
+      assert.throws(
+        () => buildAcceptanceObservation(payload(checkedAt), baseline, now),
+        /checkedAt/,
+        `${label} checkedAt must not produce a publishable observation`,
+      );
+    }
+  });
+
   it('grades every actionable status, not only STALE_SEED', () => {
     // The predecessor of this gate filtered on `status === 'STALE_SEED'` alone,
     // so a seeder that errored outright or published an empty key never paged.
