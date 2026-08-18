@@ -1,4 +1,4 @@
-// Content and publishing contract for the /use-cases/ family (issue #6849).
+// Content and publishing contract for the /use-cases/ family (issues #6849, #6850).
 
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -20,11 +20,6 @@ const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 function jsonLdObjects(html) {
   return [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
     .map(([, raw]) => JSON.parse(raw));
-}
-
-function metaContent(html, name) {
-  const match = html.match(new RegExp(`<meta name="${name}" content="([^"]*)"`, 'i'));
-  return match?.[1] ?? null;
 }
 
 function htmlAttributes(source) {
@@ -79,10 +74,11 @@ function executeHandoffPreserve(incomingSearch, initialHrefs) {
   return anchors.map((anchor) => anchor.currentHref());
 }
 
-describe('use-cases corpus (#6849)', () => {
+describe('use-cases corpus (#6849, #6850)', () => {
   let outDir;
   let hubHtml;
-  let pageHtml;
+  let countryRiskHtml;
+  let breakingNewsHtml;
   let manifest;
 
   before(async () => {
@@ -93,8 +89,12 @@ describe('use-cases corpus (#6849)', () => {
       baseUrl: 'https://www.worldmonitor.app',
     });
     hubHtml = readFileSync(join(outDir, 'use-cases', 'index.html'), 'utf8');
-    pageHtml = readFileSync(
+    countryRiskHtml = readFileSync(
       join(outDir, 'use-cases', 'monitor-country-risk', 'index.html'),
+      'utf8',
+    );
+    breakingNewsHtml = readFileSync(
+      join(outDir, 'use-cases', 'verify-breaking-news', 'index.html'),
       'utf8',
     );
   });
@@ -103,46 +103,52 @@ describe('use-cases corpus (#6849)', () => {
     rmSync(outDir, { recursive: true, force: true });
   });
 
-  it('publishes the hub and country-risk page with crawlable discovery', () => {
-    assert.equal(USE_CASE_PAGES.length, 1);
+  it('publishes the hub and child pages with crawlable discovery', () => {
+    assert.equal(USE_CASE_PAGES.length, 2);
+    assert.deepEqual(
+      USE_CASE_PAGES.map((page) => page.path),
+      ['/use-cases/monitor-country-risk/', '/use-cases/verify-breaking-news/'],
+    );
     assert.match(hubHtml, /<h1>Evergreen monitoring workflows<\/h1>/);
     assert.match(hubHtml, /href="\/use-cases\/monitor-country-risk\/"/);
+    assert.match(hubHtml, /href="\/use-cases\/verify-breaking-news\/"/);
     assert.match(hubHtml, /How use cases differ from editorial posts/);
-    assert.match(pageHtml, /<h1>Monitor country risk<\/h1>/);
-    assert.match(pageHtml, /Direct answer:/);
-    assert.match(pageHtml, /End-to-end workflow/);
-    assert.match(pageHtml, /Worked example/);
-    assert.match(pageHtml, /Provenance, freshness, and limits/);
+    assert.match(countryRiskHtml, /<h1>Monitor country risk<\/h1>/);
+    assert.match(breakingNewsHtml, /<h1>Verify breaking news<\/h1>/);
+    assert.match(breakingNewsHtml, /Direct answer:/);
+    assert.match(breakingNewsHtml, /End-to-end workflow/);
+    assert.match(breakingNewsHtml, /Worked example/);
+    assert.match(breakingNewsHtml, /Provenance, freshness, and limits/);
+    assert.match(breakingNewsHtml, /repeated headlines are independent confirmations|equating repetition to proof|repetition as corroboration|Treat wire pickup as reach/i);
+    assert.match(breakingNewsHtml, /Absence of AIS here is weak evidence|quiet sensor|proof the event did not occur/i);
     assert.match(hubHtml, /href="\/use-cases\/"/);
-    assert.match(pageHtml, /href="\/use-cases\/"/);
+    assert.match(countryRiskHtml, /href="\/use-cases\/"/);
+    assert.match(breakingNewsHtml, /href="\/use-cases\/"/);
   });
 
   it('keeps metadata and structured data inside the corpus SEO contract', () => {
-    const hubDesc = metaContent(hubHtml, 'description')
-      ?? hubHtml.match(/<meta name="description" content="([^"]+)">/)?.[1];
-    const pageDesc = pageHtml.match(/<meta name="description" content="([^"]+)">/)?.[1];
-    assert.ok(hubDesc);
-    assert.ok(pageDesc);
-    assert.ok(hubDesc.length >= 155 && hubDesc.length <= 160, `hub description length ${hubDesc.length}`);
-    assert.ok(pageDesc.length >= 155 && pageDesc.length <= 160, `page description length ${pageDesc.length}`);
+    for (const [label, html, canonical] of [
+      ['hub', hubHtml, '/use-cases/'],
+      ['country-risk', countryRiskHtml, '/use-cases/monitor-country-risk/'],
+      ['breaking-news', breakingNewsHtml, '/use-cases/verify-breaking-news/'],
+    ]) {
+      const desc = html.match(/<meta name="description" content="([^"]+)">/)?.[1];
+      assert.ok(desc, `${label} missing description`);
+      assert.ok(desc.length >= 155 && desc.length <= 160, `${label} description length ${desc.length}`);
+      assert.match(
+        html,
+        new RegExp(`rel="canonical" href="https://www\\.worldmonitor\\.app${canonical.replaceAll('/', '\\/')}"`),
+      );
+      assert.match(html, /name="robots" content="index, follow"/);
+      const [ld] = jsonLdObjects(html);
+      assert.notEqual(ld['@type'], 'BlogPosting');
+      assert.match(html, new RegExp(`<meta name="lastmod" content="${USE_CASES_CONTENT_VERSION}">`));
+    }
 
-    assert.match(hubHtml, /rel="canonical" href="https:\/\/www\.worldmonitor\.app\/use-cases\/"/);
-    assert.match(
-      pageHtml,
-      /rel="canonical" href="https:\/\/www\.worldmonitor\.app\/use-cases\/monitor-country-risk\/"/,
-    );
-    assert.match(hubHtml, /name="robots" content="index, follow"/);
-    assert.match(pageHtml, /name="robots" content="index, follow"/);
-
-    const [hubLd, hubBreadcrumb] = jsonLdObjects(hubHtml);
-    const [pageLd, pageBreadcrumb] = jsonLdObjects(pageHtml);
+    const [hubLd] = jsonLdObjects(hubHtml);
+    const [pageLd] = jsonLdObjects(breakingNewsHtml);
     assert.equal(hubLd['@type'], 'CollectionPage');
     assert.equal(pageLd['@type'], 'WebPage');
-    assert.notEqual(hubLd['@type'], 'BlogPosting');
-    assert.notEqual(pageLd['@type'], 'BlogPosting');
-    assert.equal(hubBreadcrumb['@type'], 'BreadcrumbList');
-    assert.equal(pageBreadcrumb['@type'], 'BreadcrumbList');
-    assert.match(pageHtml, new RegExp(`<meta name="lastmod" content="${USE_CASES_CONTENT_VERSION}">`));
   });
 
   it('emits bounded URL and Umami attribution for every product handoff', () => {
@@ -153,42 +159,54 @@ describe('use-cases corpus (#6849)', () => {
       mcp: '/docs/mcp-quickstart',
     };
 
-    for (const destination of ['dashboard', 'pro', 'api', 'mcp']) {
-      const attributes = handoffForDestination(pageHtml, destination);
-      const placement = `use-case-cta-${destination}`;
-      assert.equal(attributes['data-use-case-handoff'], '');
-      assert.equal(attributes['data-wm-content-link'], '');
-      assert.equal(attributes['data-umami-event'], 'use-case-product-cta-click');
-      for (const [field, value] of Object.entries({
-        source: 'worldmonitor-use-cases',
-        medium: 'owned-content',
-        campaign: 'monitor-country-risk',
-        destination,
-        placement,
-      })) {
-        assert.equal(attributes[`data-umami-event-${field}`], value);
-        assert.equal(attributes[`data-umami-event-content-${field}`], value);
+    for (const [label, html, campaign, dashboardParams] of [
+      ['country-risk', countryRiskHtml, 'monitor-country-risk', {
+        country: 'TW',
+        expanded: '1',
+      }],
+      ['breaking-news', breakingNewsHtml, 'verify-breaking-news', {
+        view: 'mena',
+        layers: 'ais,flights,fires,outages,hotspots,natural,military',
+        timeRange: '24h',
+      }],
+    ]) {
+      for (const destination of ['dashboard', 'pro', 'api', 'mcp']) {
+        const attributes = handoffForDestination(html, destination);
+        const placement = `use-case-cta-${destination}`;
+        assert.equal(attributes['data-use-case-handoff'], '', label);
+        assert.equal(attributes['data-wm-content-link'], '', label);
+        assert.equal(attributes['data-umami-event'], 'use-case-product-cta-click', label);
+        for (const [field, value] of Object.entries({
+          source: 'worldmonitor-use-cases',
+          medium: 'owned-content',
+          campaign,
+          destination,
+          placement,
+        })) {
+          assert.equal(attributes[`data-umami-event-${field}`], value, label);
+          assert.equal(attributes[`data-umami-event-content-${field}`], value, label);
+        }
+
+        const url = new URL(attributes.href, 'https://www.worldmonitor.app');
+        assert.equal(url.pathname, expectedPaths[destination], label);
+        assert.equal(url.searchParams.get('utm_source'), 'seo-use-case', label);
+        assert.equal(url.searchParams.get('wm_content_source'), 'worldmonitor-use-cases', label);
+        assert.equal(url.searchParams.get('wm_content_medium'), 'owned-content', label);
+        assert.equal(url.searchParams.get('wm_content_campaign'), campaign, label);
+        assert.equal(url.searchParams.get('wm_content_destination'), destination, label);
+        assert.equal(url.searchParams.get('wm_content_placement'), placement, label);
+        assert.equal(url.searchParams.has('ref'), false, label);
+        assert.equal(url.searchParams.has('wm_referral'), false, label);
       }
 
-      const url = new URL(attributes.href, 'https://www.worldmonitor.app');
-      assert.equal(url.pathname, expectedPaths[destination]);
-      assert.equal(url.searchParams.get('utm_source'), 'seo-use-case');
-      assert.equal(url.searchParams.get('wm_content_source'), 'worldmonitor-use-cases');
-      assert.equal(url.searchParams.get('wm_content_medium'), 'owned-content');
-      assert.equal(url.searchParams.get('wm_content_campaign'), 'monitor-country-risk');
-      assert.equal(url.searchParams.get('wm_content_destination'), destination);
-      assert.equal(url.searchParams.get('wm_content_placement'), placement);
-      assert.equal(url.searchParams.has('ref'), false);
-      assert.equal(url.searchParams.has('wm_referral'), false);
+      const dashboardUrl = new URL(
+        handoffForDestination(html, 'dashboard').href,
+        'https://www.worldmonitor.app',
+      );
+      for (const [name, value] of Object.entries(dashboardParams)) {
+        assert.equal(dashboardUrl.searchParams.get(name), value, label);
+      }
     }
-
-    const dashboardUrl = new URL(
-      handoffForDestination(pageHtml, 'dashboard').href,
-      'https://www.worldmonitor.app',
-    );
-    assert.equal(dashboardUrl.pathname, '/dashboard');
-    assert.equal(dashboardUrl.searchParams.get('country'), 'TW');
-    assert.equal(dashboardUrl.searchParams.get('expanded'), '1');
   });
 
   it('preserves bounded inbound UTM values without clobbering destination values', () => {
@@ -221,14 +239,18 @@ describe('use-cases corpus (#6849)', () => {
 
   it('records the family in the crawlable corpus manifest and countries hub', () => {
     assert.equal(manifest.sections.useCases.index, '/use-cases/');
-    assert.deepEqual(manifest.sections.useCases.routes, ['/use-cases/monitor-country-risk/']);
+    assert.equal(manifest.sections.useCases.count, 2);
+    assert.deepEqual(manifest.sections.useCases.routes, [
+      '/use-cases/monitor-country-risk/',
+      '/use-cases/verify-breaking-news/',
+    ]);
     const countriesHub = readFileSync(join(outDir, 'countries', 'index.html'), 'utf8');
     assert.match(countriesHub, /href="\/use-cases\/monitor-country-risk\/"/);
     assert.match(countriesHub, /href="\/use-cases\/"/);
   });
 
   it('rejects indexable placeholder copy', () => {
-    for (const html of [hubHtml, pageHtml]) {
+    for (const html of [hubHtml, countryRiskHtml, breakingNewsHtml]) {
       assert.doesNotMatch(html, /TODO|lorem ipsum|coming soon|placeholder/i);
     }
   });
