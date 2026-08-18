@@ -1672,7 +1672,9 @@
     "breakingNews": {
       "critical": "緊急",
       "high": "重要",
-      "dismiss": "閉じる"
+      "dismiss": "閉じる",
+      "alertsRegion": "Breaking news alerts",
+      "viewPanel": "View related panel"
     },
     "intelligenceFindings": {
       "breakingAlerts": "速報アラート",
@@ -3262,7 +3264,8 @@
     "retry": "Retry",
     "refresh": "Refresh",
     "all": "すべて",
-    "cancel": "キャンセル"
+    "cancel": "キャンセル",
+    "dismiss": "Dismiss"
   },
   "preferences": {
     "display": "ディスプレイ",

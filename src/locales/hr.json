@@ -1967,7 +1967,9 @@
       "critical": "KRITIČNO",
       "high": "VISOKO",
       "dismiss": "Odbaci",
-      "enableNotifications": "Omogući obavijesti na računalu"
+      "enableNotifications": "Omogući obavijesti na računalu",
+      "alertsRegion": "Breaking news alerts",
+      "viewPanel": "View related panel"
     },
     "intelligenceFindings": {
       "breakingAlerts": "Slomljivi alarmi",
@@ -3546,7 +3548,8 @@
     "currentVariant": "(trenutno)",
     "retry": "Pokušaj ponovno",
     "refresh": "Osvježi",
-    "all": "Sve"
+    "all": "Sve",
+    "dismiss": "Dismiss"
   },
   "connectivity": {
     "offlineCached": "Offline — prikazujem memorizirane podatke od {{freshness}}.",

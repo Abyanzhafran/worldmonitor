@@ -1498,7 +1498,9 @@
     "breakingNews": {
       "critical": "KRITISK",
       "dismiss": "Avfärda",
-      "high": "HÖG"
+      "high": "HÖG",
+      "alertsRegion": "Breaking news alerts",
+      "viewPanel": "View related panel"
     },
     "giving": {
       "activityIndex": "Aktivitetsindex",
@@ -2972,7 +2974,8 @@
     "all": "Alla",
     "loadingGiving": "Laddar global givmildhetsdata",
     "rateLimitedMarket": "Marknadsdata tillfälligt otillgänglig (hastighetsbegränsad) — försöker igen snart",
-    "cancel": "Avbryt"
+    "cancel": "Avbryt",
+    "dismiss": "Dismiss"
   },
   "header": {
     "world": "VÄRLD",

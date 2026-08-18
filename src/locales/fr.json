@@ -1800,7 +1800,9 @@
     "breakingNews": {
       "critical": "CRITIQUE",
       "dismiss": "Fermer",
-      "high": "URGENT"
+      "high": "URGENT",
+      "alertsRegion": "Breaking news alerts",
+      "viewPanel": "View related panel"
     },
     "giving": {
       "activityIndex": "Indice d'activité",
@@ -3280,7 +3282,8 @@
     "all": "Tous",
     "loadingGiving": "Chargement des données de dons...",
     "rateLimitedMarket": "Données de marché temporairement limitées — nouvelle tentative automatique",
-    "cancel": "Annuler"
+    "cancel": "Annuler",
+    "dismiss": "Dismiss"
   },
   "preferences": {
     "display": "Affichage",
