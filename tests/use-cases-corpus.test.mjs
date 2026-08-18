@@ -1,4 +1,4 @@
-// Content and publishing contract for the /use-cases/ family (issues #6849, #6850).
+// Content and publishing contract for the /use-cases/ family (issues #6849, #6850, #6851).
 
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -74,11 +74,12 @@ function executeHandoffPreserve(incomingSearch, initialHrefs) {
   return anchors.map((anchor) => anchor.currentHref());
 }
 
-describe('use-cases corpus (#6849, #6850)', () => {
+describe('use-cases corpus (#6849, #6850, #6851)', () => {
   let outDir;
   let hubHtml;
   let countryRiskHtml;
   let breakingNewsHtml;
+  let supplyChainHtml;
   let manifest;
 
   before(async () => {
@@ -97,6 +98,10 @@ describe('use-cases corpus (#6849, #6850)', () => {
       join(outDir, 'use-cases', 'verify-breaking-news', 'index.html'),
       'utf8',
     );
+    supplyChainHtml = readFileSync(
+      join(outDir, 'use-cases', 'monitor-supply-chain-disruptions', 'index.html'),
+      'utf8',
+    );
   });
 
   after(() => {
@@ -104,14 +109,19 @@ describe('use-cases corpus (#6849, #6850)', () => {
   });
 
   it('publishes the hub and child pages with crawlable discovery', () => {
-    assert.equal(USE_CASE_PAGES.length, 2);
+    assert.equal(USE_CASE_PAGES.length, 3);
     assert.deepEqual(
       USE_CASE_PAGES.map((page) => page.path),
-      ['/use-cases/monitor-country-risk/', '/use-cases/verify-breaking-news/'],
+      [
+        '/use-cases/monitor-country-risk/',
+        '/use-cases/verify-breaking-news/',
+        '/use-cases/monitor-supply-chain-disruptions/',
+      ],
     );
     assert.match(hubHtml, /<h1>Evergreen monitoring workflows<\/h1>/);
     assert.match(hubHtml, /href="\/use-cases\/monitor-country-risk\/"/);
     assert.match(hubHtml, /href="\/use-cases\/verify-breaking-news\/"/);
+    assert.match(hubHtml, /href="\/use-cases\/monitor-supply-chain-disruptions\/"/);
     assert.match(hubHtml, /How use cases differ from editorial posts/);
     assert.match(countryRiskHtml, /<h1>Monitor country risk<\/h1>/);
     assert.match(breakingNewsHtml, /<h1>Verify breaking news<\/h1>/);
@@ -121,9 +131,14 @@ describe('use-cases corpus (#6849, #6850)', () => {
     assert.match(breakingNewsHtml, /Provenance, freshness, and limits/);
     assert.match(breakingNewsHtml, /repeated headlines are independent confirmations|equating repetition to proof|repetition as corroboration|Treat wire pickup as reach/i);
     assert.match(breakingNewsHtml, /Absence of AIS here is weak evidence|quiet sensor|proof the event did not occur/i);
-    assert.match(hubHtml, /href="\/use-cases\/"/);
-    assert.match(countryRiskHtml, /href="\/use-cases\/"/);
-    assert.match(breakingNewsHtml, /href="\/use-cases\/"/);
+    assert.match(supplyChainHtml, /<h1>Monitor supply-chain disruptions<\/h1>/);
+    assert.match(supplyChainHtml, /Routine monitoring checklist/);
+    assert.match(supplyChainHtml, /Incident-response checklist/);
+    assert.match(supplyChainHtml, /Observed:|observed evidence|Separate evidence classes/i);
+    assert.match(supplyChainHtml, /cannot prove[\s\S]*price|shortage|delay|customer impact/i);
+    for (const html of [hubHtml, countryRiskHtml, breakingNewsHtml, supplyChainHtml]) {
+      assert.match(html, /href="\/use-cases\/"/);
+    }
   });
 
   it('keeps metadata and structured data inside the corpus SEO contract', () => {
@@ -131,6 +146,7 @@ describe('use-cases corpus (#6849, #6850)', () => {
       ['hub', hubHtml, '/use-cases/'],
       ['country-risk', countryRiskHtml, '/use-cases/monitor-country-risk/'],
       ['breaking-news', breakingNewsHtml, '/use-cases/verify-breaking-news/'],
+      ['supply-chain', supplyChainHtml, '/use-cases/monitor-supply-chain-disruptions/'],
     ]) {
       const desc = html.match(/<meta name="description" content="([^"]+)">/)?.[1];
       assert.ok(desc, `${label} missing description`);
@@ -146,7 +162,7 @@ describe('use-cases corpus (#6849, #6850)', () => {
     }
 
     const [hubLd] = jsonLdObjects(hubHtml);
-    const [pageLd] = jsonLdObjects(breakingNewsHtml);
+    const [pageLd] = jsonLdObjects(supplyChainHtml);
     assert.equal(hubLd['@type'], 'CollectionPage');
     assert.equal(pageLd['@type'], 'WebPage');
   });
@@ -167,6 +183,11 @@ describe('use-cases corpus (#6849, #6850)', () => {
       ['breaking-news', breakingNewsHtml, 'verify-breaking-news', {
         view: 'mena',
         layers: 'ais,flights,fires,outages,hotspots,natural,military',
+        timeRange: '24h',
+      }],
+      ['supply-chain', supplyChainHtml, 'monitor-supply-chain-disruptions', {
+        chokepoint: 'bab_el_mandeb',
+        layers: 'ais,tradeRoutes,hotspots,sanctions,flights,cables',
         timeRange: '24h',
       }],
     ]) {
@@ -219,7 +240,6 @@ describe('use-cases corpus (#6849, #6850)', () => {
         'http://[',
       ],
     );
-
     const dashboardUrl = new URL(dashboardHref, 'https://www.worldmonitor.app');
     assert.equal(dashboardUrl.searchParams.get('utm_source'), 'destination');
     assert.equal(dashboardUrl.searchParams.get('utm_medium'), 'existing');
@@ -239,10 +259,11 @@ describe('use-cases corpus (#6849, #6850)', () => {
 
   it('records the family in the crawlable corpus manifest and countries hub', () => {
     assert.equal(manifest.sections.useCases.index, '/use-cases/');
-    assert.equal(manifest.sections.useCases.count, 2);
+    assert.equal(manifest.sections.useCases.count, 3);
     assert.deepEqual(manifest.sections.useCases.routes, [
       '/use-cases/monitor-country-risk/',
       '/use-cases/verify-breaking-news/',
+      '/use-cases/monitor-supply-chain-disruptions/',
     ]);
     const countriesHub = readFileSync(join(outDir, 'countries', 'index.html'), 'utf8');
     assert.match(countriesHub, /href="\/use-cases\/monitor-country-risk\/"/);
@@ -250,7 +271,7 @@ describe('use-cases corpus (#6849, #6850)', () => {
   });
 
   it('rejects indexable placeholder copy', () => {
-    for (const html of [hubHtml, countryRiskHtml, breakingNewsHtml]) {
+    for (const html of [hubHtml, countryRiskHtml, breakingNewsHtml, supplyChainHtml]) {
       assert.doesNotMatch(html, /TODO|lorem ipsum|coming soon|placeholder/i);
     }
   });
