@@ -539,6 +539,10 @@ const STANDALONE_KEYS = {
   intelHistoryIngestEnergyIntelligence:  'intel-history:ingest-health:energy:intelligence:v1',
   // VIA Rail Tracker unofficial live JSON (#6615). No dashboard consumer.
   viarailLive:           'transit:viarail:live',
+  // #7012 TPS Open Data — on-demand only. Retrospective MCI + annual Calls
+  // Attended. Not live CAD, not bootstrap, not a Canada-bundle member.
+  tpsMci: 'safety:toronto:tps-mci:v1',
+  tpsCallsAttended: 'safety:toronto:tps-calls-attended:v1',
   // Seeded and health-monitored; no transit panel yet (#6623).
   ttcAlerts: 'transit:ttc:alerts:v1',
   // Official Toronto Fire Services live CAD (#6682). Own key; not folded into
@@ -864,6 +868,11 @@ const SEED_META = {
   // :v1 stripped. The colon form probed a key the seeder never writes, which reads
   // absent forever no matter how healthy the seeder is.
   ttcAlerts:        { key: 'seed-meta:transit:ttc-alerts',         maxStaleMin: 30, cutover: { mode: 'expiring-ack', fromKey: null, issue: 6623, status: 'EMPTY' } }, // 5min bundle member; 30 = 6× interval. Empty until first Railway tick is an expiring acknowledgement, not a crit.
+  // #7012 on-demand TPS Open Data. Retrospective batch; 14d absorbs a missed
+  // portal refresh without treating fetch time as freshness. GTA Update is
+  // intentionally absent: its writer is disabled pending the rights gate.
+  tpsMci:           { key: 'seed-meta:safety:tps-mci',             maxStaleMin: 20160, cutover: { mode: 'expiring-ack', fromKey: null, issue: 7035, status: 'EMPTY' } },
+  tpsCallsAttended: { key: 'seed-meta:safety:tps-calls-attended',  maxStaleMin: 20160, cutover: { mode: 'expiring-ack', fromKey: null, issue: 7036, status: 'EMPTY' } },
   torontoTfs: {
     key: 'seed-meta:safety:toronto-tfs',
     maxStaleMin: 15, // TFS live CAD refreshes every ~5min; 15 = 3× interval
@@ -1434,6 +1443,10 @@ const ON_DEMAND_KEYS = new Set([
   'intelHistoryIngestConflictAcled',
   'intelHistoryIngestMilitaryCrossStrait',
   'intelHistoryIngestEnergyIntelligence',
+  // #7012 TPS Open Data is on-demand. Absence before the first explicit fetch
+  // is pending, not CRIT. GTA Update is not registered: writer disabled.
+  'tpsMci',
+  'tpsCallsAttended',
 ]);
 
 // Legacy broad empty-data exemptions. classifyKey uses this set in both the

@@ -122,6 +122,8 @@ const SOURCE_DOMAIN_OVERRIDES = new Map([
   ['Bank of Canada', 'finance'],
   ['bothsidesofthetable.com', 'technology'],
   ['City of Toronto Open Data', 'infrastructure'],
+  ['Toronto Police Service Open Data', 'geopolitics'],
+  ['GTA Update', 'geopolitics'],
   ['contxto.com', 'technology'],
   ['corridorrisk.io', 'infrastructure'],
   ['CWFIS / CWFIF (NRCan)', 'environment'],
