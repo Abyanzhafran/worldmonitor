@@ -140,7 +140,9 @@ import { isDesktopRuntime, toApiUrl } from '@/services/runtime';
 import { filterFeedsByLanguage } from '@/services/feed-language';
 import { getAiFlowSettings } from '@/services/ai-flow-settings';
 import { t, getCurrentLanguage } from '@/services/i18n';
-import { getHydratedData } from '@/services/bootstrap';
+import { ensureHydrated, getHydratedData } from '@/services/bootstrap';
+import { ensurePipelineRegistriesHydrated } from '@/shared/pipeline-registry-store';
+import { ensureStorageFacilityRegistryHydrated } from '@/shared/storage-facility-registry-store';
 import { publicRpcFetch } from '@/services/public-rpc-fetch';
 import type { ListFeedDigestResponse } from '@/generated/client/worldmonitor/news/v1/service_client';
 import type { GetSectorSummaryResponse, ListMarketQuotesResponse, ListCommodityQuotesResponse } from '@/generated/client/worldmonitor/market/v1/service_client';
@@ -1010,6 +1012,8 @@ export class DataLoaderManager implements AppModule {
     if (shouldLoad('economic')) tasks.push({ name: 'economicStress', task: () => runGuarded('economicStress', () => this.loadEconomicStress()) });
     if (SITE_VARIANT !== 'happy' && this.ctx.mapLayers.weather) tasks.push({ name: 'weather', task: () => runGuarded('weather', () => this.loadWeatherAlerts()) });
     if (SITE_VARIANT !== 'happy' && this.ctx.mapLayers.canadaRoads) tasks.push({ name: 'canadaRoads', task: () => runGuarded('canadaRoads', () => this.loadCanadaRoads()) });
+    if (SITE_VARIANT !== 'happy' && this.ctx.mapLayers.pipelines) tasks.push({ name: 'pipelineRegistries', task: () => runGuarded('pipelineRegistries', () => this.loadPipelineRegistries()) });
+    if (SITE_VARIANT !== 'happy' && this.ctx.mapLayers.storageFacilities) tasks.push({ name: 'storageFacilities', task: () => runGuarded('storageFacilities', () => this.loadStorageFacilities()) });
     if (SITE_VARIANT !== 'happy' && this.ctx.mapLayers.canadaAlerts) tasks.push({ name: 'canadaAlerts', task: () => runGuarded('canadaAlerts', () => this.loadCanadaAlerts()) });
     if (SITE_VARIANT !== 'happy' && !isDesktopRuntime() && this.ctx.mapLayers.ais) tasks.push({ name: 'ais', task: () => runGuarded('ais', () => this.loadAisSignals()) });
     if (SITE_VARIANT !== 'happy' && this.ctx.mapLayers.cables) tasks.push({ name: 'cables', task: () => runGuarded('cables', () => this.loadCableActivity()) });
@@ -1096,6 +1100,12 @@ export class DataLoaderManager implements AppModule {
           break;
         case 'canadaRoads':
           await this.loadCanadaRoads();
+          break;
+        case 'pipelines':
+          await this.loadPipelineRegistries();
+          break;
+        case 'storageFacilities':
+          await this.loadStorageFacilities();
           break;
         case 'canadaAlerts':
           await this.loadCanadaAlerts();
@@ -2734,7 +2744,7 @@ export class DataLoaderManager implements AppModule {
 
   async loadForecasts(): Promise<void> {
     try {
-      const hydrated = getHydratedData('forecasts') as { predictions?: import('@/generated/client/worldmonitor/forecast/v1/service_client').Forecast[]; generatedAt?: number } | undefined;
+      const hydrated = await ensureHydrated('forecasts') as { predictions?: import('@/generated/client/worldmonitor/forecast/v1/service_client').Forecast[]; generatedAt?: number } | undefined;
       if (hydrated?.predictions?.length) {
         this.callPanel('forecast', 'updateForecasts', hydrated.predictions, {
           generatedAt: hydrated.generatedAt || 0,
@@ -2744,14 +2754,15 @@ export class DataLoaderManager implements AppModule {
         });
         return;
       }
-      const { fetchForecastFeed } = await import('@/services/forecast');
-      const feed = await fetchForecastFeed();
-      this.callPanel('forecast', 'updateForecasts', feed.forecasts, {
-        generatedAt: feed.generatedAt,
-        degraded: feed.degraded,
-        stale: feed.stale,
-        error: feed.error,
+      // The unfiltered dashboard projection is the same shared seed payload.
+      // Keep a public-bootstrap miss from falling through to an origin RPC.
+      this.callPanel('forecast', 'updateForecasts', [], {
+        generatedAt: hydrated?.generatedAt || 0,
+        degraded: false,
+        stale: false,
+        error: 'forecast_bootstrap_unavailable',
       });
+      this.callPanel('forecast', 'showError', t('common.failedToLoad'), () => void this.loadForecasts());
     } catch {
       this.callPanel('forecast', 'updateForecasts', [], {
         generatedAt: 0,
@@ -2759,6 +2770,7 @@ export class DataLoaderManager implements AppModule {
         stale: false,
         error: 'forecast_request_failed',
       });
+      this.callPanel('forecast', 'showError', t('common.failedToLoad'), () => void this.loadForecasts());
     }
   }
 
@@ -2867,6 +2879,28 @@ export class DataLoaderManager implements AppModule {
       this.ctx.map?.setTechEvents([]);
       this.ctx.map?.setLayerReady('techEvents', false);
       this.ctx.statusPanel?.updateFeed('Tech Events', { status: 'error', errorMessage: String(error) });
+    }
+  }
+
+  async loadPipelineRegistries(options: { refresh?: boolean } = {}): Promise<void> {
+    try {
+      const registries = await ensurePipelineRegistriesHydrated(options);
+      const hasData = Boolean(registries.gas || registries.oil);
+      this.ctx.map?.setLayerReady('pipelines', hasData);
+      this.ctx.map?.render();
+    } catch {
+      this.ctx.map?.setLayerReady('pipelines', false);
+    }
+  }
+
+  async loadStorageFacilities(options: { refresh?: boolean } = {}): Promise<void> {
+    try {
+      const { registry } = await ensureStorageFacilityRegistryHydrated(options);
+      const hasData = Boolean(registry?.facilities && Object.keys(registry.facilities).length > 0);
+      this.ctx.map?.setLayerReady('storageFacilities', hasData);
+      this.ctx.map?.render();
+    } catch {
+      this.ctx.map?.setLayerReady('storageFacilities', false);
     }
   }
 
