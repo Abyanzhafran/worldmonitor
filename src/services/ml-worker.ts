@@ -214,6 +214,11 @@ export class MLWorkerManager {
           return;
         }
 
+        if (data.type === 'reset-complete') {
+          this.loadedModels.clear();
+          return;
+        }
+
         if (data.type === 'error') {
           const pending = data.id ? this.pendingRequests.get(data.id) : null;
           if (pending) {
@@ -516,7 +521,6 @@ export class MLWorkerManager {
     try {
       return await this.requestModelUnload(modelId);
     } catch {
-      this.loadedModels.delete(modelId);
       return false;
     }
   }
@@ -633,7 +637,6 @@ export class MLWorkerManager {
     this.desiredModels.clear();
     if (this.worker) {
       this.worker.postMessage({ type: 'reset' });
-      this.loadedModels.clear();
     }
   }
 
