@@ -214,10 +214,15 @@ async function fetchEurostatRelease(datasetId, today, toDate) {
 }
 
 async function fetchFredReleaseDates(releaseId, apiKey, today, toDate) {
+  // FRED returns release dates oldest-first under sort_order=asc, so
+  // asc + limit=1000 captures only the OLDEST 1000 dates (decades of
+  // history) and the upcoming-30d filter below sees nothing for
+  // long-history releases. desc puts scheduled future releases (included
+  // via include_release_dates_with_no_data=true) at the front of the page.
   const url =
     `https://api.stlouisfed.org/fred/release/dates` +
     `?release_id=${releaseId}` +
-    `&sort_order=asc` +
+    `&sort_order=desc` +
     `&limit=1000` +
     `&include_release_dates_with_no_data=true` +
     `&api_key=${apiKey}` +

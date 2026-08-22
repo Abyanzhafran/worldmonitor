@@ -283,6 +283,10 @@ function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 function cosineSimilarityF32(a: Float32Array, b: Float32Array): number {
+  // Dimension mismatch (e.g. a stored vector from an older embedding model)
+  // would read past the end of b and poison every term with NaN. Treat it
+  // as zero similarity - searchVectors also filters non-finite scores.
+  if (a.length === 0 || a.length !== b.length) return 0;
   let dot = 0;
   let nA = 0;
   let nB = 0;
