@@ -99,13 +99,17 @@ function makeFixture({
   const env = hookEnv(bin);
   const git = (args) => execFileSync('git', args, { cwd: root, env, encoding: 'utf8' });
 
-  for (const dir of ['.husky', 'scripts', 'tests', 'node_modules']) {
+  for (const dir of ['.husky', 'scripts', 'scripts/lib', 'tests', 'node_modules']) {
     mkdirSync(join(root, dir), { recursive: true });
   }
   copyFileSync(HOOK, join(root, '.husky', 'pre-push'));
   for (const script of ['prepush-admission.mjs', 'prepush-attest.sh', 'prepush-changed-tests.sh']) {
     copyFileSync(join(REPO_ROOT, 'scripts', script), join(root, 'scripts', script));
   }
+  copyFileSync(
+    join(REPO_ROOT, 'scripts', 'lib', 'main-module.mjs'),
+    join(root, 'scripts', 'lib', 'main-module.mjs'),
+  );
   // Fault injection: make one attest mode fail while its siblings still work,
   // so the hook's handling of a broken enumeration can be executed rather than
   // reasoned about.
@@ -226,7 +230,7 @@ function pushWithPoisonedSharedHooksPath() {
   git(main, ['config', 'user.name', 'Prepush Hook Fixture']);
   git(main, ['remote', 'add', 'origin', remote]);
 
-  for (const dir of ['.husky', 'scripts', 'node_modules']) {
+  for (const dir of ['.husky', 'scripts', 'scripts/lib', 'node_modules']) {
     mkdirSync(join(main, dir), { recursive: true });
   }
   copyFileSync(HOOK, join(main, '.husky', 'pre-push'));
@@ -239,6 +243,10 @@ function pushWithPoisonedSharedHooksPath() {
   ]) {
     copyFileSync(join(REPO_ROOT, 'scripts', script), join(main, 'scripts', script));
   }
+  copyFileSync(
+    join(REPO_ROOT, 'scripts', 'lib', 'main-module.mjs'),
+    join(main, 'scripts', 'lib', 'main-module.mjs'),
+  );
   writeFileSync(join(main, 'package.json'), '{"name":"fixture"}\n');
   writeFileSync(join(main, 'README.md'), 'base\n');
   git(main, ['add', '-A']);
