@@ -78,9 +78,78 @@ const ALLOWED_COMMANDS = new Set([
   'APPEND', 'STRLEN',
 ]);
 
+// EVAL stays blocked as a class — arbitrary server-side Lua is exactly what
+// the allowlist exists to prevent — with ONE pinned exception: the digest
+// last-good publish gate. The edge handler needs its read-decide-write to be
+// atomic (two isolates racing a plain SET pair can let a narrower snapshot
+// clobber a richer one), and the only sound way to allow that through a
+// command allowlist is to pin the exact script text.
+//
+// PINNED COPY of shared/digest-lastgood-publish-script.mjs. This image
+// bundles only this file, so it cannot import the shared module — a parity
+// test (tests/digest-lastgood.test.mts) asserts the two stay byte-identical.
+// Change them together or that test goes red.
+const DIGEST_LASTGOOD_PUBLISH_SCRIPT = [
+  'local revoked = {}',
+  "for _, url in ipairs(redis.call('SMEMBERS', KEYS[2])) do revoked[url] = true end",
+  'local function countData(data)',
+  "  if type(data) ~= 'table' or type(data.categories) ~= 'table' then return nil end",
+  '  local categories = 0',
+  '  local items = 0',
+  '  for _, bucket in pairs(data.categories) do',
+  '    categories = categories + 1',
+  "    if type(bucket) == 'table' and type(bucket.items) == 'table' then",
+  '      for _, item in ipairs(bucket.items) do',
+  "        local isRevoked = type(item) == 'table' and type(item.link) == 'string' and revoked[item.link]",
+  '        if not isRevoked then items = items + 1 end',
+  '      end',
+  '    end',
+  '  end',
+  '  return { categories = categories, items = items }',
+  'end',
+  'local okCandidate, candidateData = pcall(cjson.decode, ARGV[5])',
+  'local candidate = nil',
+  'if okCandidate then candidate = countData(candidateData) end',
+  'if not candidate or candidate.categories < 1 or candidate.items < 1 then return -1 end',
+  "local currentRaw = redis.call('GET', KEYS[1])",
+  'if currentRaw then',
+  '  local okCurrent, snapshot = pcall(cjson.decode, currentRaw)',
+  "  if okCurrent and type(snapshot) == 'table' then",
+  '    local current = countData(snapshot.data)',
+  '    if current then',
+  '      local delta = tonumber(ARGV[1]) - (tonumber(snapshot.acceptedAt) or 0)',
+  '      local live = delta >= 0 and delta <= tonumber(ARGV[2])',
+  '      if live and (candidate.categories < current.categories or candidate.items < current.items) then return 0 end',
+  '    end',
+  '  end',
+  'end',
+  // String-splice, never cjson.encode: ARGV[5] must reach Redis unchanged.
+  // '%.0f' rather than '%d': Redis ships Lua 5.1 (where a float coerces) but
+  // 5.3+ rejects '%d' on a non-integer-representable number, and tonumber on
+  // a string yields a float. '%.0f' is exact for every ms timestamp and count
+  // we produce, and behaves identically on both.
+  "local stored = '{\"acceptedAt\":' .. string.format('%.0f', tonumber(ARGV[3]) or 0)",
+  "  .. ',\"categoryCount\":' .. string.format('%.0f', candidate.categories)",
+  "  .. ',\"itemCount\":' .. string.format('%.0f', candidate.items)",
+  '  .. \',"data":\' .. ARGV[5] .. \'}\'',
+  "redis.call('SET', KEYS[1], stored, 'EX', ARGV[4])",
+  'return 1',
+].join('\n');
+const ALLOWED_EVAL_SCRIPTS = new Set([DIGEST_LASTGOOD_PUBLISH_SCRIPT]);
+
+// Exact-text pin, not a pattern: any change to the script — including
+// whitespace — must land in both copies deliberately.
+function isAllowedEval(args) {
+  return args.length >= 2 && ALLOWED_EVAL_SCRIPTS.has(String(args[1]));
+}
+
 async function runCommand(args) {
   const cmd = args[0].toUpperCase();
-  if (!ALLOWED_COMMANDS.has(cmd)) {
+  if (cmd === 'EVAL') {
+    if (!isAllowedEval(args)) {
+      throw new Error('Command not allowed: EVAL (script not in the pinned allowlist)');
+    }
+  } else if (!ALLOWED_COMMANDS.has(cmd)) {
     throw new Error(`Command not allowed: ${cmd}`);
   }
   const cmdArgs = args.slice(1);
