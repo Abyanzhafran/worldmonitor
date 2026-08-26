@@ -23195,6 +23195,7 @@ body.has-breaking-alert .panels-grid {
   z-index: 10;
   transition: background 0.15s ease;
   flex-shrink: 0;
+  touch-action: none;
 }
 
 .map-width-resize-handle::after {
@@ -23222,13 +23223,46 @@ body.map-width-resizing {
   user-select: none;
 }
 
-@media (min-width: 1600px) {
+/* The map-side toggle only means something in the split layout. */
+.map-side-btn {
+  display: none;
+}
+
+/* In a narrow map column the absolutely-centered clock overlaps the header
+   actions; the width-resize handler toggles this class. */
+.map-section.map-col-narrow .header-clock {
+  display: none;
+}
+
+/* 900px mirrors SPLIT_LAYOUT_MIN_WIDTH (src/app/split-layout.ts) — one
+   threshold for web and desktop since #6417 (the Tauri window minimum width
+   keeps the desktop app above it, so this block covers both). The map track
+   pins both pixel floors: 220px = MAP_COL_MIN_PX and 306px = PANELS_COL_MIN_PX
+   + MAP_COL_DIVIDER_PX. tests/responsive-zone-listener.test.mjs pins the
+   alignment. */
+@media (min-width: 900px) {
   .main-content {
     display: grid;
-    grid-template-columns: var(--map-col-width, 60%) 6px 1fr;
+    grid-template-columns: min(max(var(--map-col-width, 60%), 220px), calc(100% - 306px)) 6px 1fr;
     grid-template-rows: 1fr auto;
     gap: 4px 0;
     overflow: hidden;
+  }
+
+  .main-content.map-right:not(.map-hidden) {
+    grid-template-columns: 1fr 6px min(max(var(--map-col-width, 60%), 220px), calc(100% - 306px));
+  }
+
+  .main-content.map-right .map-section {
+    grid-column: 3;
+  }
+
+  .main-content.map-right .panels-grid {
+    grid-column: 1;
+  }
+
+  .map-side-btn {
+    display: inline-flex;
   }
 
   .map-width-resize-handle {
@@ -23310,76 +23344,6 @@ body.map-width-resizing {
     align-content: start;
     overflow-y: auto;
   }
-}
-
-/* Desktop app grid layout (active at any width >= 900px via JS class) */
-.main-content.desktop-grid {
-  display: grid;
-  grid-template-columns: var(--map-col-width, 60%) 6px 1fr;
-  grid-template-rows: 1fr auto;
-  gap: 4px 0;
-  overflow: hidden;
-}
-
-.main-content.desktop-grid .map-width-resize-handle {
-  display: flex;
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.main-content.desktop-grid.map-hidden {
-  grid-template-columns: 1fr;
-}
-
-.main-content.desktop-grid.map-hidden .panels-grid {
-  grid-column: 1;
-}
-
-.main-content.desktop-grid.map-hidden .map-width-resize-handle {
-  display: none;
-}
-
-.main-content.desktop-grid .map-section {
-  grid-column: 1;
-  grid-row: 1;
-  height: 100% !important;
-  min-height: 0;
-  max-height: none;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  border-bottom: none;
-}
-
-.main-content.desktop-grid .panels-grid {
-  grid-column: 3;
-  grid-row: 1;
-  min-height: 0;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  grid-auto-rows: minmax(var(--dashboard-panel-row-min), var(--dashboard-panel-row-max));
-  align-content: start;
-  overflow-y: auto;
-}
-
-.main-content.desktop-grid .map-resize-handle {
-  position: relative;
-  bottom: auto;
-  left: auto;
-  right: auto;
-  height: 12px;
-  background: var(--border-subtle);
-  margin: 0;
-  cursor: ns-resize;
-  display: flex;
-}
-
-.main-content.desktop-grid .map-resize-handle:hover {
-  background: var(--accent);
-}
-
-.main-content.desktop-grid .map-bottom-grid:empty {
-  border-top: none;
-  padding: 0;
 }
 
 /* ==========================================================================
