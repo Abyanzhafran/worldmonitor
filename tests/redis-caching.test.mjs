@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createTempDir, removeTempDir } from './helpers/temp-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
@@ -76,7 +77,7 @@ async function importPatchedTsModule(relPath, replacements) {
     return targetPath ? `from '${pathToFileURL(targetPath).href}'` : match;
   });
 
-  const tempDir = mkdtempSync(join(tmpdir(), 'wm-ts-module-'));
+  const tempDir = createTempDir('wm-ts-module-');
   const tempPath = join(tempDir, basename(sourcePath));
   writeFileSync(tempPath, source);
 
@@ -84,7 +85,7 @@ async function importPatchedTsModule(relPath, replacements) {
   return {
     module,
     cleanup() {
-      rmSync(tempDir, { recursive: true, force: true });
+      removeTempDir(tempDir);
     },
   };
 }
