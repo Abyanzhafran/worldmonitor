@@ -138,6 +138,40 @@ describe('WebMCP registry behavioral contract', () => {
     ]);
   });
 
+  it('marks registration settlement so a probe can read the inventory in one call', async () => {
+    // Chrome's WebMCP origin-trial build wedges every later getTools() call
+    // once one has read a pre-registration (empty) inventory, so a discovery
+    // probe must not poll getTools(). This mark is the page-side signal that
+    // says "read now, once" — see e2e/webmcp.spec.ts.
+    const previousWindow = Object.hasOwn(globalThis, 'window') ? globalThis.window : undefined;
+    const hadWindow = Object.hasOwn(globalThis, 'window');
+    const marks = [];
+    globalThis.window = { __wmLcpDebug: { enabled: true, marks } };
+    try {
+      const provider = new FakeWebMcpModelContext({ supportsTargetExecutionSignal: true });
+      const harness = trackedRuntime(provider);
+      registerWebMcpTools(createBindings(), harness.runtime);
+      assert.equal(
+        marks.some(({ name }) => name === 'wm:webmcp:registered'),
+        false,
+        'the mark must not appear before registration settles',
+      );
+      await settlePromises();
+
+      const registered = marks.filter(({ name }) => name === 'wm:webmcp:registered');
+      assert.equal(registered.length, 1, 'registration settles exactly once');
+      assert.deepEqual(registered[0].detail, { toolCount: WEBMCP_SPA_TOOL_NAMES.length });
+      assert.deepEqual(
+        (await provider.getTools()).map(({ name }) => name),
+        [...WEBMCP_SPA_TOOL_NAMES].sort((left, right) => left.localeCompare(right)),
+        'the mark must not fire before the inventory is actually readable',
+      );
+    } finally {
+      if (hadWindow) globalThis.window = previousWindow;
+      else delete globalThis.window;
+    }
+  });
+
   it('does not enter a registered callback for a pre-aborted invocation', async () => {
     let mutationCalls = 0;
     const provider = new FakeWebMcpModelContext({ supportsTargetExecutionSignal: true });

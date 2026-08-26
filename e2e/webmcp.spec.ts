@@ -99,54 +99,70 @@ async function installColdStartContextProbe(page: Page): Promise<void> {
       }
     };
 
+    // Chrome's origin-trial build wedges every later getTools() call once one
+    // has read an empty inventory, so the probe must not poll for discovery.
+    // It waits for the page's own registration mark and then reads once.
+    const registrationSettled = (): boolean => (
+      target.__wmLcpDebug?.getSnapshot?.().marks
+        .some((mark) => mark.name === 'wm:webmcp:registered') ?? false
+    );
+    const withTimeout = async <T>(work: Promise<T>, ms: number, label: string): Promise<T> => (
+      await Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`${label} did not settle within ${ms}ms.`)), ms);
+        }),
+      ])
+    );
+
     const probe = new Promise<ColdStartContextProbe>((resolve, reject) => {
       const deadline = performance.now() + 60_000;
-      let invocationStarted = false;
-      const discoverAndInvoke = async (): Promise<void> => {
-        if (invocationStarted) return;
-        try {
-          const provider = document.modelContext as ExecutableModelContext | undefined;
-          if (provider && typeof provider.executeTool === 'function') {
-            const tool = (await provider.getTools())
-              .find((candidate) => candidate.name === 'get_dashboard_context');
-            if (tool) {
-              invocationStarted = true;
-              const discoveredAt = performance.now();
-              const invokedBeforeUiReady = !isUiReady();
-              try {
-                const context = parseOutput(await provider.executeTool(tool, '{}'));
-                resolve({
-                  context,
-                  discoveredAt,
-                  invokedBeforeUiReady,
-                  settledAt: performance.now(),
-                  targetCancellationSupported: Boolean(
-                    target.__wmLcpDebug?.getSnapshot?.().marks
-                      .filter((mark) => (
-                        mark.name === 'wm:webmcp:tool-start'
-                        && mark.detail?.tool === 'get_dashboard_context'
-                      ))
-                      .at(-1)?.detail?.targetCancellationSupported,
-                  ),
-                  uiReadyAtSettlement: isUiReady(),
-                });
-              } catch (error) {
-                reject(error);
-              }
-              return;
-            }
-          }
-        } catch {
-          // The experimental provider can reject discovery while it is being
-          // initialised. Retry until the bounded page-side deadline.
+
+      // Runs exactly once, after registration settled. Every exit path either
+      // resolves or throws — nothing here may retry, because a second
+      // getTools() is precisely what the origin-trial build cannot serve.
+      const readInventoryOnce = async (provider: ExecutableModelContext): Promise<void> => {
+        const tools = await withTimeout(provider.getTools(), 15_000, 'getTools()');
+        const tool = tools.find((candidate) => candidate.name === 'get_dashboard_context');
+        if (!tool) {
+          const names = tools.map((candidate) => candidate.name).join(', ') || 'empty inventory';
+          throw new Error(`get_dashboard_context absent after registration settled (${names}).`);
         }
-        if (performance.now() >= deadline) {
-          reject(new Error('get_dashboard_context was not discovered within 60000ms.'));
+        const discoveredAt = performance.now();
+        const invokedBeforeUiReady = !isUiReady();
+        const context = parseOutput(
+          await withTimeout(provider.executeTool(tool, '{}'), 30_000, 'executeTool()'),
+        );
+        resolve({
+          context,
+          discoveredAt,
+          invokedBeforeUiReady,
+          settledAt: performance.now(),
+          targetCancellationSupported: Boolean(
+            target.__wmLcpDebug?.getSnapshot?.().marks
+              .filter((mark) => (
+                mark.name === 'wm:webmcp:tool-start'
+                && mark.detail?.tool === 'get_dashboard_context'
+              ))
+              .at(-1)?.detail?.targetCancellationSupported,
+          ),
+          uiReadyAtSettlement: isUiReady(),
+        });
+      };
+
+      const awaitRegistration = (): void => {
+        const provider = document.modelContext as ExecutableModelContext | undefined;
+        if (provider && typeof provider.executeTool === 'function' && registrationSettled()) {
+          void readInventoryOnce(provider).catch(reject);
           return;
         }
-        setTimeout(() => { void discoverAndInvoke(); }, 5);
+        if (performance.now() >= deadline) {
+          reject(new Error('WebMCP registration did not settle within 60000ms.'));
+          return;
+        }
+        setTimeout(awaitRegistration, 5);
       };
-      void discoverAndInvoke();
+      awaitRegistration();
     });
     // Keep a rejection observed until Playwright awaits the retained promise.
     void probe.catch(() => undefined);
@@ -186,16 +202,27 @@ async function installColdStartCancellationProbe(
         return value;
       }
     };
+    // Same single-read rule as the cold-start context probe: poll the page's
+    // registration mark, never getTools(), or the origin-trial build wedges.
+    const registrationSettled = (): boolean => (
+      target.__wmLcpDebug?.getSnapshot?.().marks
+        .some((mark) => mark.name === 'wm:webmcp:registered') ?? false
+    );
     const deadline = performance.now() + 60_000;
     let invocationStarted = false;
     const discoverAndInvoke = async (): Promise<void> => {
       if (invocationStarted) return;
       try {
         const provider = document.modelContext as ExecutableModelContext | undefined;
-        if (provider && typeof provider.executeTool === 'function') {
-          const tool = (await provider.getTools()).find((candidate) => candidate.name === name);
+        if (provider && typeof provider.executeTool === 'function' && registrationSettled()) {
+          invocationStarted = true;
+          const tool = (await Promise.race([
+            provider.getTools(),
+            new Promise<never>((_, rejectRead) => {
+              setTimeout(() => rejectRead(new Error('getTools() did not settle within 15000ms.')), 15_000);
+            }),
+          ])).find((candidate) => candidate.name === name);
           if (tool) {
-            invocationStarted = true;
             const controller = new AbortController();
             target.__wmWebMcpCancellationController = controller;
             const invokedBeforeUiReady = !isUiReady();
@@ -223,9 +250,12 @@ async function installColdStartCancellationProbe(
           }
         }
       } catch {
-        // Retry transient discovery failures until the bounded deadline.
+        // Discovery is committed once registration settled, so a failure here
+        // is terminal: leaving the terminal promise unset makes the test's own
+        // tool-start poll report it rather than spinning to its timeout.
+        return;
       }
-      if (performance.now() >= deadline) return;
+      if (invocationStarted || performance.now() >= deadline) return;
       setTimeout(() => { void discoverAndInvoke(); }, 5);
     };
     void discoverAndInvoke();

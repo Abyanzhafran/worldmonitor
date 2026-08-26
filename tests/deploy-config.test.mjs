@@ -2044,6 +2044,38 @@ describe('security header guardrails', () => {
     );
   });
 
+  it('every shipped CSP directive name is a real CSP directive', () => {
+    // A detect-secrets pragma once leaked into the header value itself
+    // (`object-src 'none'; x-allowlist // pragma: allowlist secret;
+    // form-action ...`), which Chrome reported on every production page load
+    // as "Unrecognized Content-Security-Policy directive 'x-allowlist'". JSON
+    // has no comment syntax, so any such annotation ships to browsers.
+    const KNOWN_CSP_DIRECTIVES = new Set([
+      'base-uri', 'block-all-mixed-content', 'child-src', 'connect-src',
+      'default-src', 'font-src', 'form-action', 'frame-ancestors', 'frame-src',
+      'img-src', 'manifest-src', 'media-src', 'object-src', 'prefetch-src',
+      'report-to', 'report-uri', 'require-trusted-types-for', 'sandbox',
+      'script-src', 'script-src-attr', 'script-src-elem', 'style-src',
+      'style-src-attr', 'style-src-elem', 'trusted-types',
+      'upgrade-insecure-requests', 'worker-src',
+    ]);
+    const surfaces = [
+      ['vercel', getHeaderValue('Content-Security-Policy')],
+      ['docker/nginx', getNginxHeaderValue('Content-Security-Policy')],
+    ];
+    for (const [label, csp] of surfaces) {
+      assert.ok(csp, `${label} must define a Content-Security-Policy`);
+      for (const segment of csp.split(';')) {
+        const name = segment.trim().split(/\s+/)[0];
+        if (!name) continue;
+        assert.ok(
+          KNOWN_CSP_DIRECTIVES.has(name),
+          `${label} CSP ships unrecognized directive "${name}" — browsers ignore it and log an error on every page load`,
+        );
+      }
+    }
+  });
+
   it('CSP connect-src does not allow unencrypted WebSocket (ws:)', () => {
     const csp = getHeaderValue('Content-Security-Policy');
     const connectSrc = csp.match(/connect-src\s+([^;]+)/)?.[1] ?? '';

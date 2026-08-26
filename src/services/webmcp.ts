@@ -1052,6 +1052,12 @@ function startRegistration(
   void Promise.all(registrations).then((accepted) => {
     if (controller.signal.aborted) return;
     const toolCount = accepted.filter(Boolean).length;
+    // Emitted for EVERY settled registration pass, including the zero-tool
+    // one. A discovery probe that polls getTools() before this point observes
+    // an empty inventory, and on the Chrome origin-trial path that empty read
+    // wedges every later getTools() call for the lifetime of the page. Waiting
+    // on this mark is how a probe reaches the inventory in one call instead.
+    markLcpDebug('wm:webmcp:registered', { toolCount });
     if (toolCount === 0) return;
     reportWebMcpEvent(trackEvent, 'webmcp-registered', {
       toolCount,

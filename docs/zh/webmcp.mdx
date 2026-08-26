@@ -57,6 +57,10 @@ Boolean(document.modelContext?.registerTool)
 
 本地开发由该 flag 代替 Origin Trial 注册。WorldMonitor 仍会发送 API 所需的源隔离与权限策略响应头。
 
+<Warning>
+在 Origin Trial 构建上，请在页面完成工具注册**之后**再调用 `getTools()`，不要更早。若某次 `getTools()` 以空清单 resolve（即在注册完成前发起），该页面之后的每一次 `getTools()` 都会永远处于 pending。`executeTool()` 不受影响，在卡死前取得的工具描述符仍可继续使用。这是浏览器侧行为：在 Chrome 151.0.7922.174 上针对已加入 Origin Trial 的页面可稳定复现，而同一页面改用 `chrome://flags/#enable-webmcp-testing` 启用时不会出现。在页面加载时接入的代理应等待文档加载完成后再发起首次发现调用，且不应轮询 `getTools()`。
+</Warning>
+
 Chrome 149–151 可能已经暴露 `registerTool()`，也会取消调用方的 `executeTool()` Promise，却不会把调用级 `AbortSignal` 传给页面中已注册的回调。在这些版本中，WorldMonitor 仍允许使用只读仪表板工具，但会修改仪表板的工具会在进入应用绑定前安全拒绝。完整的修改能力要求浏览器回调采用当前的 `execute(input, { signal })` 形式。该安全边界可防止看似已取消的操作稍后继续修改 UI。
 
 <Note>
