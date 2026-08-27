@@ -2391,13 +2391,24 @@ export const RPC_TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _execute: async (params, base, context, execution) => {
       // Scope is mandatory server-side (a 400 from the handler). Checking it
-      // here turns an opaque downstream failure into an actionable message and
-      // saves the round-trip; the handler stays the enforcing authority.
+      // here turns an opaque downstream failure into actionable -32602
+      // violations (RpcValidationError) and saves the round-trip; the handler
+      // stays the enforcing authority. A plain Error would land as -32603 +
+      // Sentry error (WORLDMONITOR-10Y).
       const domain = typeof params.domain === 'string' ? params.domain.trim() : '';
       const country = normalizeCountry(params.country);
       assertIntelHistoryCountry('get-intel-timeline', country);
       if (!domain && !country) {
-        throw new Error('get_intel_timeline requires at least one of domain ("conflict", "military", or "energy") or country (ISO 3166-1 alpha-2) — those are the two indexed scopes on the history store.');
+        throw new RpcValidationError('get-intel-timeline', [
+          {
+            field: 'domain',
+            description: 'Required unless country is set. One of conflict, military, or energy.',
+          },
+          {
+            field: 'country',
+            description: 'Required unless domain is set. ISO 3166-1 alpha-2, uppercase (e.g. UA).',
+          },
+        ]);
       }
 
       const query = new URLSearchParams();
