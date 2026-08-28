@@ -26,6 +26,16 @@ const v8 = require('v8');
 const { WebSocketServer, WebSocket } = require('ws');
 const { parseProxyConfig, resolveProxyString, resolveProxyStringForAttempt } = require('./_proxy-utils.cjs');
 const {
+  GROQ_DEFAULT_MODEL,
+  OPENROUTER_FREE_BACKUP_MODEL,
+  OPENROUTER_FREE_PRIMARY_MODEL,
+  OPENROUTER_PROVIDER_ROUTING,
+} = require('./lib/llm-model-policy.cjs');
+const xNewsAccounts = require('./lib/x-news-accounts.cjs');
+const { createPollGenerationGuard } = require('./lib/poll-generation-guard.cjs');
+const { createXPollCycle } = require('./lib/x-poll-cycle.cjs');
+const { buildClassifyCandidateMap, isStaleDigestReplay } = require('./lib/digest-stale-gate.cjs');
+const {
   YahooQuoteSummaryClient,
   buildSectorSeedMeta,
   buildSectorValuationCoverage,
@@ -48,7 +58,24 @@ const {
 const { maintainClosedMarketEquityKeys: maintainClosedMarketEquityKeysWithDeps } = require('./shared/closed-market-equity-maintenance.cjs');
 const { getUsEquitySession, isMultiMarketEquityTradingDay } = require('./shared/market-hours.cjs');
 const { mergeLastGoodQuotes, planYahooRefresh } = require('./shared/market-quote-refresh.cjs');
+// ESM module loaded via require(esm) (Node >= 22.12; relay image is node:24).
+// Same implementation the RPC handler scores with — see the module header for
+// why it lives in shared/ rather than beside the other scoring helpers.
+const { detectTrafficAnomaly } = require('../shared/chokepoint-traffic-anomaly.js');
+const { CHOKEPOINT_THREAT_LEVELS } = require('../shared/chokepoint-threat-levels.js');
+const { classifyVesselType } = require('../shared/ais-vessel-type.js');
+const { CORRIDOR_RISK_NAME_MAP, deriveCorridorRiskLevel } = require('../shared/corridor-risk.js');
 const chinaCountryStockIndexHelpersPromise = import('./_country-stock-index.mjs');
+// Terminal handler attached AT DECLARATION. This promise is created at module
+// load but not awaited until seedWeatherAlerts() runs, so without a .catch()
+// here a rejection is an UNHANDLED rejection: under Node's default
+// --unhandled-rejections=throw the relay exits 1 at container start, taking AIS,
+// market and RSS with it, rather than degrading one seed. seedWeatherAlerts()
+// turns the null into a loud, monitor-visible failure (see below).
+const weatherAlertSelectPromise = import('./_weather-alert-select.mjs').catch((e) => {
+  console.error('[Weather] location helper failed to load:', e?.message || e);
+  return null;
+});
 const parseProxyUrl = parseProxyConfig;
 
 const httpsKeepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 6, timeout: 60_000 });
@@ -589,6 +616,42 @@ function upstashReleaseLockIfOwner(key, owner) {
   });
 }
 
+function upstashPublishXIfLockOwner({ lockKey, owner, snapshotKey, snapshot, pollStateKey, pollState, ttlSeconds, metaKey, meta, metaTtlSeconds }) {
+  return new Promise((resolve) => {
+    if (!UPSTASH_ENABLED) return resolve(false);
+    const url = new URL('/', UPSTASH_REDIS_REST_URL);
+    const script = [
+      'if redis.call("get",KEYS[1]) ~= ARGV[1] then return 0 end',
+      'redis.call("set",KEYS[2],ARGV[2],"EX",ARGV[4])',
+      'redis.call("set",KEYS[3],ARGV[3],"EX",ARGV[4])',
+      'if ARGV[5] == "1" then redis.call("set",KEYS[4],ARGV[6],"EX",ARGV[7]) end',
+      'return 1',
+    ].join(' ');
+    const body = JSON.stringify([
+      'EVAL', script, '4', lockKey, snapshotKey, pollStateKey, metaKey,
+      owner, JSON.stringify(snapshot), JSON.stringify(pollState), String(ttlSeconds),
+      meta ? '1' : '0', JSON.stringify(meta || {}), String(metaTtlSeconds),
+    ]);
+    const req = UPSTASH_HTTP_MODULE.request(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${UPSTASH_REDIS_REST_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 5000,
+    }, (resp) => {
+      let data = '';
+      resp.on('data', (chunk) => { data += chunk; });
+      resp.on('end', () => {
+        try { resolve(Number(JSON.parse(data)?.result) === 1); } catch { resolve(false); }
+      });
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.end(body);
+  });
+}
+
 // ─────────────────────────────────────────────────────────────
 // Seed envelope — canonical { _seed, data } shape. Mirrored from
 // scripts/_seed-envelope-source.mjs (ESM; can't be require()'d from CJS).
@@ -675,6 +738,11 @@ function deriveWeatherCoalesceKey(vtec) {
   const m = vtec.match(/\/[OTEX]\.[A-Z]+\.([A-Z]{4})\.([A-Z]{2})\.([A-Z])\.(\d{4})\./);
   if (!m) return undefined;
   return `nws:${m[1]}.${m[2]}.${m[3]}.${m[4]}`;
+}
+
+function nwsVtec(p) {
+  const vtec = Array.isArray(p?.parameters?.VTEC) ? p.parameters.VTEC[0] : undefined;
+  return vtec;
 }
 
 async function publishNotificationEvent({ eventType, payload, severity, variant, dedupTtl = 1800 }) {
@@ -1196,6 +1264,178 @@ function startTelegramPollLoop() {
     setInterval(guardedTelegramPoll, TELEGRAM_POLL_INTERVAL_MS).unref?.();
     console.log('[Relay] Telegram poll loop started');
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Curated X news-account monitoring (Track A / #6654)
+// Official X API user-timeline + since_id. Cadence 5–15 min.
+// Requires env: X_BEARER_TOKEN (same Bearer as company-monitoring-worker).
+// ─────────────────────────────────────────────────────────────
+const X_BEARER_TOKEN = String(process.env.X_BEARER_TOKEN || '').trim();
+const X_ENABLED = Boolean(X_BEARER_TOKEN);
+const X_POLL_INTERVAL_MS = xNewsAccounts.clampPollIntervalMs(process.env.X_POLL_INTERVAL_MS || xNewsAccounts.DEFAULT_POLL_INTERVAL_MS);
+// `Number('abc')` is NaN, and Math.max(50, NaN) is NaN — which reaches
+// mergeAndDedup as `.slice(0, NaN)` and silently publishes an EMPTY feed every
+// cycle with no error anywhere. Coerce non-numeric env values to the default.
+const X_MAX_FEED_ITEMS = Math.max(50, Number(process.env.X_MAX_FEED_ITEMS) || xNewsAccounts.DEFAULT_MAX_FEED_ITEMS);
+const X_MAX_TEXT_CHARS = Math.max(200, Number(process.env.X_MAX_TEXT_CHARS) || 800);
+const X_TRACK_A_ACCOUNT_BUDGET = 64;
+const X_FEED_CACHE_KEY = 'intelligence:x-feed:v1';
+const X_FEED_META_KEY = 'seed-meta:intelligence:x-feed:v1';
+const X_FEED_POLL_STATE_KEY = 'intelligence:x-feed:poll-state:v1';
+const X_FEED_POLL_LOCK_KEY = 'intelligence:x-feed:poll-lock:v1';
+const X_FEED_TTL_SECONDS = 5400;
+const X_FEED_META_TTL_SECONDS = 3600;
+const X_FEED_POLL_LOCK_TTL_SECONDS = Math.ceil((X_POLL_INTERVAL_MS + 120_000) / 1000);
+// The stuck-poll abort has to fire while the Redis lease above is still HELD,
+// and the guard only re-evaluates when a scheduled tick calls it. A threshold at
+// or above the cadence therefore pushes the first evaluation out to 2x the
+// cadence — well past the lease TTL — so between TTL expiry and that tick this
+// replica keeps issuing requests on a lapsed lease while a peer's SETNX
+// succeeds: both drain the shared bearer's quota and both write the whole cursor
+// map. Sitting a minute under the cadence (clamped to 5-15min, so 4-14min here)
+// makes the very next tick abort the run, with the lease still ours to release.
+// Derived from the same constant as the TTL so the invariant
+// X_POLL_STUCK_AFTER_MS < X_POLL_INTERVAL_MS < X_FEED_POLL_LOCK_TTL_SECONDS * 1000
+// cannot drift the way two independently tuned literals can.
+const X_POLL_STUCK_AFTER_MS = X_POLL_INTERVAL_MS - 60_000;
+
+const xState = {
+  accounts: [],
+  cursorByAccountId: Object.create(null),
+  accountIdByHandle: Object.create(null),
+  catchupByAccountId: Object.create(null),
+  items: [],
+  lookupOffset: 0,
+  accountOffset: 0,
+  // Persisted snapshot version, published to Redis and to /status. NOT the poll
+  // guard's run counter — see xPollGeneration below for why the two must stay
+  // apart.
+  generation: 0,
+  lastPollAt: 0,
+  lastHealthyAt: 0,
+  lastCoverage: null,
+  lastError: null,
+  rateLimitedUntil: 0,
+  rateLimitAttempt: 0,
+  backoffCause: null,
+  // True when a Redis read failed, so last-good state is present but unreadable.
+  // Blocks polling/publishing until a clean read (see the cycle's hydrate()).
+  hydrationFailed: false,
+  startedAt: Date.now(),
+};
+
+// The poll guard's in-process run counter, deliberately NOT xState.generation.
+// The guard stamps each run with this value and, in its `.finally`, only clears
+// the in-flight flag while the stamp still matches. The cycle's hydrate() runs INSIDE
+// a live poll (the lease-conflict and hydration-retry paths) and overwrites the
+// persisted snapshot version from Redis — when both meanings shared one field
+// that overwrite retired the run the guard was fencing on, so inFlight was never
+// cleared, the next tick returned early, and a whole cycle was skipped until
+// stuckAfterMs force-cleared it with a misleading "X poll stuck" warning.
+let xPollGeneration = 0;
+
+function loadXAccounts() {
+  const p = path.join(__dirname, '..', 'data', 'x-accounts.json');
+  const set = String(process.env.X_CHANNEL_SET || '').trim().toLowerCase();
+  try {
+    const raw = JSON.parse(readFileSync(p, 'utf8'));
+    const enabledTotal = xNewsAccounts.countEnabledAccounts(raw);
+    if (enabledTotal > X_TRACK_A_ACCOUNT_BUDGET) {
+      console.warn(`[Relay] X registry has ${enabledTotal} enabled accounts; Track A budget is ~${X_TRACK_A_ACCOUNT_BUDGET}. Re-run spend math before growing the set.`);
+    }
+    xState.accounts = set
+      ? xNewsAccounts.loadXAccounts(raw, { set })
+      : xNewsAccounts.loadXAccounts(raw);
+    if (!xState.accounts.length) {
+      console.warn(`[Relay] X account set "${set || 'all'}" is empty — no accounts to poll`);
+    }
+    return xState.accounts;
+  } catch (e) {
+    xState.accounts = [];
+    xState.lastError = `failed to load x-accounts.json: ${e?.message || String(e)}`;
+    return [];
+  }
+}
+
+// hydrate / publish / pollOnce live in scripts/lib/x-poll-cycle.cjs so a test can
+// EXECUTE them. This file has no module.exports and no require.main guard, so
+// importing it to reach those functions boots the whole relay — which is why the
+// only coverage they ever had was regex-on-source, and why a generation-field
+// collision, a lease handoff that dropped a peer's posts, and a stuck-abort
+// threshold that outlived the Redis lease all shipped unnoticed. Built once here
+// with the relay's real Redis helpers, constants and state object;
+// tests/x-poll-cycle.test.mjs drives the same factory with stubs.
+const xPollCycle = createXPollCycle({
+  xState,
+  xNewsAccounts,
+  loadXAccounts,
+  upstashGet,
+  upstashSetNx,
+  upstashPublishXIfLockOwner,
+  upstashReleaseLockIfOwner,
+  // The guard's run counter, never xState.generation — see the comment on
+  // `let xPollGeneration` above. Passed as an accessor so the cycle module
+  // cannot reach the module-level mutable itself.
+  getPollGeneration: () => xPollGeneration,
+  scheduleRetry: (retryAfterLeaseConflict) => guardedXPoll(retryAfterLeaseConflict),
+  randomId: () => crypto.randomBytes(4).toString('hex'),
+  X_ENABLED,
+  X_BEARER_TOKEN,
+  X_FEED_CACHE_KEY,
+  X_FEED_META_KEY,
+  X_FEED_POLL_STATE_KEY,
+  X_FEED_POLL_LOCK_KEY,
+  X_FEED_TTL_SECONDS,
+  X_FEED_META_TTL_SECONDS,
+  X_FEED_POLL_LOCK_TTL_SECONDS,
+  X_MAX_FEED_ITEMS,
+  X_MAX_TEXT_CHARS,
+  log: (message) => console.log(message),
+  warn: (message) => console.warn(message),
+});
+
+const xPollGuard = createPollGenerationGuard({
+  poll: (context) => xPollCycle.pollOnce(context),
+  getGeneration: () => xPollGeneration,
+  setGeneration: (generation) => { xPollGeneration = generation; },
+  stuckAfterMs: X_POLL_STUCK_AFTER_MS,
+  warn: (stuckMs, error) => {
+    if (error) {
+      console.warn('[Relay] X poll error:', error?.message || error);
+    } else {
+      console.warn(`[Relay] X poll stuck for ${Math.round(stuckMs / 1000)}s — force-clearing in-flight flag`);
+    }
+  },
+});
+
+function guardedXPoll(retryAfterLeaseConflict = false) {
+  xPollGuard.run({ retryAfterLeaseConflict });
+}
+
+async function startXPollLoop() {
+  loadXAccounts();
+  await xPollCycle.hydrate();
+  if (!X_ENABLED) {
+    console.warn('[Relay] X news-account poll skipped — X_BEARER_TOKEN is not configured on ais-relay');
+    return;
+  }
+  const nextDueAt = Math.max(
+    xState.lastPollAt ? xState.lastPollAt + X_POLL_INTERVAL_MS : 0,
+    xState.rateLimitedUntil || 0,
+  );
+  const startupDelayMs = Math.max(0, nextDueAt - Date.now());
+  const startInterval = () => {
+    guardedXPoll();
+    setInterval(guardedXPoll, X_POLL_INTERVAL_MS).unref?.();
+  };
+  if (startupDelayMs > 0) {
+    const timer = setTimeout(startInterval, startupDelayMs);
+    timer.unref?.();
+  } else {
+    startInterval();
+  }
+  console.log(`[Relay] X poll loop started (${Math.round(X_POLL_INTERVAL_MS / 60000)} min cadence)`);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2125,8 +2365,25 @@ function _parseYahooChartJson(body) {
     const price = meta.regularMarketPrice;
     const prevClose = meta.chartPreviousClose || meta.previousClose || price;
     const change = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
+    // Round to 7 significant digits like the cron seeders' roundSparkline
+    // (_seed-utils.mjs). Raw float64 noise made these FAST-tier keys ~2x the
+    // rounded size, and whichever writer wins the relay/cron race decides
+    // what every visitor downloads on cold load.
+    //
+    // The guard below MIRRORS toSignificantDigits in _seed-utils.mjs exactly:
+    // non-numbers, non-finite values and 0 pass through untouched so a malformed
+    // upstream degrades identically on both writers. Without it a string close
+    // ("N/A") becomes NaN and serialises to null, denting the curve on the relay
+    // path only. CJS cannot import the ESM helper, so the copy is deliberate and
+    // tests/ais-relay-sparkline-precision.test.mjs pins the two in lockstep.
     const closes = result.indicators?.quote?.[0]?.close;
-    const sparkline = Array.isArray(closes) ? closes.filter((v) => v != null) : [];
+    const sparkline = Array.isArray(closes)
+      ? closes.filter((v) => v != null).map((v) => (
+        typeof v === 'number' && Number.isFinite(v) && v !== 0
+          ? Number(v.toPrecision(7))
+          : v
+      ))
+      : [];
     return { price, change, sparkline };
   } catch { return null; }
 }
@@ -2340,10 +2597,14 @@ async function seedMarketQuotes() {
   const skipped = !FINNHUB_API_KEY && !coveredByYahoo;
   const payload = { quotes, finnhubSkipped: skipped, skipReason: skipped ? 'FINNHUB_API_KEY not configured' : '', rateLimited: false };
   const redisKey = `market:quotes:v1:${[...MARKET_SYMBOLS].sort().join(',')}`;
-  const ok = await envelopeWrite(redisKey, payload, MARKET_SEED_TTL, { recordCount: quotes.length, sourceVersion: 'market-stocks' });
+  // Compute once and thread through every write below so the envelopes'
+  // _seed.fetchedAt and seed-meta.fetchedAt agree for this one publish,
+  // instead of each awaited round-trip sampling Date.now() independently.
+  const fetchedAt = Date.now();
+  const ok = await envelopeWrite(redisKey, payload, MARKET_SEED_TTL, { fetchedAt, recordCount: quotes.length, sourceVersion: 'market-stocks' });
   // Bootstrap-friendly fixed key — frontend hydrates from /api/bootstrap without RPC
-  const ok2 = await envelopeWrite('market:stocks-bootstrap:v1', payload, MARKET_SEED_TTL, { recordCount: quotes.length, sourceVersion: 'market-stocks' });
-  const ok3 = await upstashSet('seed-meta:market:stocks', { fetchedAt: Date.now(), recordCount: quotes.length }, 604800);
+  const ok2 = await envelopeWrite('market:stocks-bootstrap:v1', payload, MARKET_SEED_TTL, { fetchedAt, recordCount: quotes.length, sourceVersion: 'market-stocks' });
+  const ok3 = await upstashSet('seed-meta:market:stocks', { fetchedAt, recordCount: quotes.length }, 604800);
   if (freshQuotes.some((quote) => quote.symbol === CHINA_COUNTRY_STOCK_SYMBOL)) {
     try {
       await writeChinaCountryStockIndex();
@@ -2402,15 +2663,19 @@ async function seedCommodityQuotes() {
 
   const payload = { quotes };
   const redisKey = `market:commodities:v1:${[...COMMODITY_SYMBOLS].sort().join(',')}`;
-  const ok = await envelopeWrite(redisKey, payload, MARKET_SEED_TTL, { recordCount: quotes.length, sourceVersion: 'market-commodities' });
+  // Compute once and thread through every write below so the envelopes'
+  // _seed.fetchedAt and seed-meta.fetchedAt agree for this one publish,
+  // instead of each awaited round-trip sampling Date.now() independently.
+  const fetchedAt = Date.now();
+  const ok = await envelopeWrite(redisKey, payload, MARKET_SEED_TTL, { fetchedAt, recordCount: quotes.length, sourceVersion: 'market-commodities' });
   // Also write under market:quotes:v1: key — the frontend routes commodities through
   // listMarketQuotes RPC, which constructs this key pattern (not market:commodities:v1:)
   const quotesKey = `market:quotes:v1:${[...COMMODITY_SYMBOLS].sort().join(',')}`;
   const quotesPayload = { quotes, finnhubSkipped: false, skipReason: '', rateLimited: false };
-  const ok2 = await envelopeWrite(quotesKey, quotesPayload, MARKET_SEED_TTL, { recordCount: quotes.length, sourceVersion: 'market-commodities' });
+  const ok2 = await envelopeWrite(quotesKey, quotesPayload, MARKET_SEED_TTL, { fetchedAt, recordCount: quotes.length, sourceVersion: 'market-commodities' });
   // Bootstrap-friendly fixed key — frontend hydrates from /api/bootstrap without RPC
-  const ok3 = await envelopeWrite('market:commodities-bootstrap:v1', quotesPayload, MARKET_SEED_TTL, { recordCount: quotes.length, sourceVersion: 'market-commodities' });
-  const ok4 = await upstashSet('seed-meta:market:commodities', { fetchedAt: Date.now(), recordCount: quotes.length }, 604800);
+  const ok3 = await envelopeWrite('market:commodities-bootstrap:v1', quotesPayload, MARKET_SEED_TTL, { fetchedAt, recordCount: quotes.length, sourceVersion: 'market-commodities' });
+  const ok4 = await upstashSet('seed-meta:market:commodities', { fetchedAt, recordCount: quotes.length }, 604800);
   console.log(`[Market] Seeded ${quotes.length}/${COMMODITY_SYMBOLS.length} commodities (redis: ${ok && ok2 && ok3 && ok4 ? 'OK' : 'PARTIAL'})`);
   const movingCommodities = quotes.filter(q => Math.abs(q.change ?? 0) >= 5).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
   for (const q of movingCommodities.slice(0, 3)) {
@@ -2784,8 +3049,10 @@ async function seedCryptoQuotes() {
 const _stablecoinCfg = requireShared('stablecoins.json');
 const STABLECOIN_IDS = _stablecoinCfg.ids.join(',');
 const STABLECOIN_PAPRIKA_MAP = _stablecoinCfg.coinpaprika;
-const STABLECOIN_ON_PEG_MAX = _stablecoinCfg.pegThresholds.onPegMaxDeviation;
-const STABLECOIN_SLIGHT_DEPEG_MAX = _stablecoinCfg.pegThresholds.slightDepegMaxDeviation;
+// Row shaping and peg classification live in ONE module shared with the
+// primary seeder and the RPC gap path — a private variant here means the
+// stored value depends on which writer ran last. (#6319, extends #6308)
+const { classifyStablecoin } = requireShared('stablecoin-classifier.cjs');
 const STABLECOIN_SEED_TTL = 7200; // 2h — 1h buffer over 5min cron cadence (was 1h = 55min buffer)
 
 async function fetchStablecoinCoinPaprika() {
@@ -2813,12 +3080,7 @@ async function seedStablecoinMarkets() {
     console.warn(`[Stablecoin] CoinGecko failed: ${err.message} — trying CoinPaprika`);
     try { data = await fetchStablecoinCoinPaprika(); } catch (e2) { console.warn(`[Stablecoin] CoinPaprika also failed: ${e2.message} — skipping`); return 0; }
   }
-  const stablecoins = data.map((coin) => {
-    const price = coin.current_price || 0;
-    const deviation = Math.abs(price - 1.0);
-    const pegStatus = deviation <= STABLECOIN_ON_PEG_MAX ? 'ON PEG' : deviation <= STABLECOIN_SLIGHT_DEPEG_MAX ? 'SLIGHT DEPEG' : 'DEPEGGED';
-    return { id: coin.id, symbol: (coin.symbol || '').toUpperCase(), name: coin.name, price, deviation: +(deviation * 100).toFixed(3), pegStatus, marketCap: coin.market_cap || 0, volume24h: coin.total_volume || 0, change24h: coin.price_change_percentage_24h || 0, change7d: coin.price_change_percentage_7d_in_currency || 0, image: coin.image || '' };
-  });
+  const stablecoins = data.map((coin) => classifyStablecoin(coin));
   const totalMarketCap = stablecoins.reduce((s, c) => s + c.marketCap, 0);
   const totalVolume24h = stablecoins.reduce((s, c) => s + c.volume24h, 0);
   const depeggedCount = stablecoins.filter((c) => c.pegStatus === 'DEPEGGED').length;
@@ -3425,16 +3687,21 @@ const RELAY_RECENCY_MS = 15 * 60 * 1000; // 15 min — matches client-side recen
 // tests/importance-score-parity.test.mjs.
 // Formula constants + computeImportanceScore mirror list-feed-digest.ts; parity
 // is enforced by tests/importance-score-parity.test.mjs.
-const RELAY_SOURCE_TIERS = requireShared('source-tiers.json');
+const RELAY_SOURCE_TIERS = {
+  ...requireShared('source-tiers.json'),
+  ...requireShared('x-account-source-tiers.json'),
+};
+const {
+  createExplicitTierFourSourceSet,
+  shouldDropRelaySourceForTier,
+} = requireShared('source-tier-policy.cjs');
 
 function relayGetSourceTier(sourceName) {
   return RELAY_SOURCE_TIERS[sourceName] ?? 4;
 }
 
 // Derived from the tier map so the tier-4 gate and the tier map stay in lockstep.
-const RELAY_TIER4_SOURCES = new Set(
-  Object.entries(RELAY_SOURCE_TIERS).filter(([, t]) => t === 4).map(([s]) => s),
-);
+const RELAY_TIER4_SOURCES = createExplicitTierFourSourceSet(RELAY_SOURCE_TIERS);
 
 const RELAY_SCORE_WEIGHTS = { severity: 0.55, sourceTier: 0.2, corroboration: 0.15, recency: 0.1 };
 const RELAY_SEVERITY_SCORES = { critical: 100, high: 75, medium: 50, low: 25, info: 0 };
@@ -3675,9 +3942,8 @@ function classifyCacheKey(title) {
 }
 
 // LLM provider fallback chain — mirrors seed-insights.mjs LLM_PROVIDERS
-// Order: ollama → openrouter → groq (canonical chain since #4944, mirrors
-// server/_shared/llm.ts: DeepSeek V4 Flash primary with reasoning disabled,
-// groq llama-3.3-70b-versatile as the free-tier/outage fallback).
+// Order mirrors server/_shared/llm.ts: paid OpenRouter, two fixed free
+// OpenRouter variants, then Groq.
 const CLASSIFY_LLM_PROVIDERS = [
   {
     name: 'ollama',
@@ -3699,14 +3965,32 @@ const CLASSIFY_LLM_PROVIDERS = [
     apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
     model: 'deepseek/deepseek-v4-flash',
     headers: (key) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://worldmonitor.app', 'X-Title': 'World Monitor', 'User-Agent': CHROME_UA }),
-    extraBody: { reasoning: { enabled: false } },
+    extraBody: { reasoning: { enabled: false }, provider: OPENROUTER_PROVIDER_ROUTING },
+    timeout: 30000,
+  },
+  {
+    name: 'openrouter-free',
+    envKey: 'OPENROUTER_API_KEY',
+    apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
+    model: OPENROUTER_FREE_PRIMARY_MODEL,
+    headers: (key) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://worldmonitor.app', 'X-Title': 'World Monitor', 'User-Agent': CHROME_UA }),
+    extraBody: { reasoning: { enabled: false }, provider: OPENROUTER_PROVIDER_ROUTING },
+    timeout: 30000,
+  },
+  {
+    name: 'openrouter-free-backup',
+    envKey: 'OPENROUTER_API_KEY',
+    apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
+    model: OPENROUTER_FREE_BACKUP_MODEL,
+    headers: (key) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://worldmonitor.app', 'X-Title': 'World Monitor', 'User-Agent': CHROME_UA }),
+    extraBody: { reasoning: { enabled: false }, provider: OPENROUTER_PROVIDER_ROUTING },
     timeout: 30000,
   },
   {
     name: 'groq',
     envKey: 'GROQ_API_KEY',
     apiUrl: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'llama-3.3-70b-versatile',
+    model: GROQ_DEFAULT_MODEL,
     headers: (key) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'User-Agent': CHROME_UA }),
     timeout: 30000,
   },
@@ -3800,26 +4084,25 @@ async function seedClassifyForVariant(variant, seenTitles) {
     return { total: 0, classified: 0, skipped: 0 };
   }
 
-  // Map of title → item metadata; recency gate: skip articles older than 6h
-  const RECENCY_GATE_MS = 6 * 60 * 60 * 1000;
-  const now6h = Date.now() - RECENCY_GATE_MS;
-  const allTitles = new Map();
-  if (digest?.categories) {
-    for (const bucket of Object.values(digest.categories)) {
-      for (const item of bucket?.items ?? []) {
-        if (!item?.title) continue;
-        if (item.publishedAt && item.publishedAt < now6h) continue; // stale item
-        if (!allTitles.has(item.title)) {
-          allTitles.set(item.title, {
-            source: item.source ?? variant,
-            publishedAt: item.publishedAt ?? Date.now(),
-            corroborationCount: item.corroborationCount ?? 1,
-            link: item.link ?? '',
-          });
-        }
-      }
-    }
+  // #7084: stale RSS titles already had their alert pass when served fresh.
+  // Exclude only those digest-derived candidates; fresh X candidates remain
+  // eligible because they are an independent input to the combined pass.
+  if (isStaleDigestReplay(digest)) {
+    console.log(`[Classify] digest is a stale replay (${digest.coverage.staleReason || 'unknown'}, ${digest.coverage.staleAgeSeconds ?? 0}s) — skipping digest-derived candidates for ${variant}`);
   }
+
+  // Map of title → item metadata; recency gate: skip articles older than 6h.
+  // The pure helper keeps the stale-RSS plus fresh-X behavior executable in
+  // tests without importing this boot-on-require relay.
+  const RECENCY_GATE_MS = 6 * 60 * 60 * 1000;
+  const classifyNow = Date.now();
+  const xCandidates = xNewsAccounts.collectXAlertCandidates(
+    xState.items,
+    RELAY_SOURCE_TIERS,
+    classifyNow,
+    RECENCY_GATE_MS,
+  );
+  const allTitles = buildClassifyCandidateMap(digest, xCandidates, variant, classifyNow, RECENCY_GATE_MS);
   if (allTitles.size === 0) return { total: 0, classified: 0, skipped: 0 };
 
   const titleArr = [...allTitles.keys()];
@@ -3897,8 +4180,13 @@ async function seedClassifyForVariant(variant, seenTitles) {
         };
         // Relay gates: when RELAY_GATES_READY is set the relay enforces source tier and
         // recency checks that the client path previously handled.
+        // Explicit tier-4 keys only — unlisted names (including platform source
+        // "telegram") are NOT in this set even though getSourceTier() defaults
+        // them to 4. Any future Telegram alert path must use the public display
+        // label from shared/telegram-channel-trust.ts (#6600). #6654 should do
+        // the same for X account labels rather than a generic "x" platform key.
+        if (shouldDropRelaySourceForTier(RELAY_GATES_READY, meta.source, RELAY_TIER4_SOURCES)) continue;
         if (RELAY_GATES_READY) {
-          if (RELAY_TIER4_SOURCES.has(meta.source ?? '')) continue;
           const ageMs = Date.now() - (meta.publishedAt ?? 0);
           if (meta.publishedAt && ageMs > RELAY_RECENCY_MS) continue;
         }
@@ -4650,7 +4938,7 @@ async function seedTheaterPosture() {
     console.warn(`[TheaterPosture] Rejected empty publication: no military flights or vessels; preserving last-known-good data [${elapsed}s]`);
     return;
   }
-  const payload = { theaters };
+  const payload = { theaters, provider: flightSource };
   const publicationId = `ais-relay:${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const lockResult = await upstashSetNx(THEATER_POSTURE_LOCK_KEY, publicationId, THEATER_POSTURE_LOCK_TTL_SECONDS);
   if (lockResult !== 'new') {
@@ -4866,7 +5154,9 @@ function startCableHealthWarmPingLoop() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Weather Alerts Seed — NWS API → Redis every 15 min
+// Weather Alerts Seed — NWS + ECCC + WMO SWIC → weather:alerts:v1 every 15 min
+// One key, one panel, one weather_alert event. Additional official CAP sources
+// are adapters on this pipeline (#6271), not a second weather product.
 // ─────────────────────────────────────────────────────────────
 const WEATHER_SEED_INTERVAL_MS = 15 * 60 * 1000; // 15 min
 const WEATHER_REDIS_KEY = 'weather:alerts:v1';
@@ -4878,63 +5168,158 @@ async function seedWeatherAlerts() {
   weatherSeedInFlight = true;
   const t0 = Date.now();
   try {
-    const weatherUrl = 'https://api.weather.gov/alerts/active';
-    let data;
-    try {
-      const resp = await fetch(weatherUrl, {
-        headers: { Accept: 'application/geo+json', 'User-Agent': CHROME_UA },
-        signal: AbortSignal.timeout(15_000),
+    const {
+      ECCC_MAX_BYTES,
+      NWS_ALERTS_URL,
+      NWS_HOST,
+      SWIC_MAX_BYTES,
+      WEATHER_ALERTS_SOURCE_VERSION,
+      fetchApprovedWeatherJson,
+      fetchEcccAlertFeatures,
+      fetchSwicAlertCatalog,
+      mergeAlertSources,
+      rankEligibleAlerts,
+      requireAlertFeatures,
+      selectEcccAlerts,
+      selectSwicAlerts,
+      weatherAlertNotifyCountryCode,
+      weatherAlertNotifyLocation,
+      weatherAlertNotifySource,
+    } = (await weatherAlertSelectPromise) || (() => {
+      throw new Error('weather alert select module unavailable');
+    })();
+
+    const fetchNwsFeatures = async () => {
+      const weatherUrl = NWS_ALERTS_URL;
+      try {
+        const data = await fetchApprovedWeatherJson(weatherUrl, {
+          allowedHosts: [NWS_HOST],
+          maxBytes: ECCC_MAX_BYTES,
+          userAgent: CHROME_UA,
+          fetchFn: fetch,
+        });
+        return requireAlertFeatures(data);
+      } catch (directErr) {
+        if (!PROXY_URL) throw directErr;
+        console.warn(`[Weather] NWS direct failed (${directErr.message}) — retrying via proxy`);
+        const { proxyFetch } = require('./_proxy-utils.cjs');
+        const proxy = { ...parseProxyUrl(PROXY_URL), tls: true };
+        const result = await proxyFetch(weatherUrl, proxy, { accept: 'application/geo+json', headers: { 'User-Agent': CHROME_UA }, timeoutMs: 15_000 });
+        if (!result.ok) throw new Error(`HTTP ${result.status}`);
+        return requireAlertFeatures(JSON.parse(result.buffer.toString('utf8')));
+      }
+    };
+
+    // A PARTIAL ECCC fetch is rejected here on purpose. This writer purges —
+    // it always overwrites so ended alerts clear — which is only correct when
+    // the source answered in full. Publishing `issued` without `continued`
+    // would DELETE every ongoing Canadian warning from the live key. Rejecting
+    // routes it into the same carry-forward path as a total ECCC outage below,
+    // which keeps the last-good Canadian slice until a complete fetch returns.
+    const fetchEcccFeatures = async () => {
+      const result = await fetchEcccAlertFeatures({
+        fetchFn: fetch,
+        userAgent: CHROME_UA,
+        maxBytes: ECCC_MAX_BYTES,
       });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      data = await resp.json();
-    } catch (directErr) {
-      if (!PROXY_URL) { console.warn(`[Weather] Seed failed: ${directErr.message}`); return; }
-      console.warn(`[Weather] Direct failed (${directErr.message}) — retrying via proxy`);
-      const { proxyFetch } = require('./_proxy-utils.cjs');
-      const proxy = { ...parseProxyUrl(PROXY_URL), tls: true };
-      const result = await proxyFetch(weatherUrl, proxy, { accept: 'application/geo+json', headers: { 'User-Agent': CHROME_UA }, timeoutMs: 15_000 });
-      if (!result.ok) { console.warn(`[Weather] Proxy also failed: HTTP ${result.status}`); return; }
-      data = JSON.parse(result.buffer.toString('utf8'));
+      if (result.partial) {
+        throw new Error(
+          `ECCC partial fetch — status ${result.failedStatuses.join(', ')} failed: ${result.failureDetail}`,
+        );
+      }
+      return result.features;
+    };
+
+    const fetchSwicCatalog = async () => fetchSwicAlertCatalog({
+      fetchFn: fetch,
+      userAgent: CHROME_UA,
+      maxBytes: SWIC_MAX_BYTES,
+    });
+
+    const [nwsResult, ecccResult, swicResult] = await Promise.allSettled([
+      fetchNwsFeatures(),
+      fetchEcccFeatures(),
+      fetchSwicCatalog(),
+    ]);
+    if (nwsResult.status === 'rejected') {
+      console.warn(`[Weather] NWS fetch failed: ${nwsResult.reason?.message || nwsResult.reason}`);
     }
-    const features = data.features || [];
-    const alerts = features
-      .filter((f) => f?.properties?.severity !== 'Unknown')
-      .slice(0, 50)
-      .map((f) => {
-        const p = f.properties;
-        let coords = [];
-        try {
-          const g = f.geometry;
-          if (g?.type === 'Polygon') coords = g.coordinates[0]?.map((c) => [c[0], c[1]]) || [];
-          else if (g?.type === 'MultiPolygon') coords = g.coordinates[0]?.[0]?.map((c) => [c[0], c[1]]) || [];
-        } catch { /* ignore */ }
-        const centroid = coords.length > 0
-          ? [coords.reduce((s, c) => s + c[0], 0) / coords.length, coords.reduce((s, c) => s + c[1], 0) / coords.length]
-          : undefined;
-        // Slot B: NWS VTEC string. NWS wraps VTEC in an array under
-        // properties.parameters.VTEC; pick the first entry (most alerts have one;
-        // multi-VTEC alerts use the primary). Used to derive a coalesce family key
-        // so adjacent-zone alerts for the same logical event collapse at the
-        // publisher and at the per-user dedup.
-        const vtec = Array.isArray(p?.parameters?.VTEC) ? p.parameters.VTEC[0] : undefined;
-        return {
-          id: f.id || '', event: p.event || '', severity: p.severity || 'Unknown',
-          headline: p.headline || '', description: (p.description || '').slice(0, 500),
-          areaDesc: p.areaDesc || '', onset: p.onset || '', expires: p.expires || '',
-          coordinates: coords, centroid, vtec,
-        };
-      });
-    if (alerts.length === 0) {
-      // NWS responded successfully but has no active alerts — valid quiet state.
-      // Still bump seed-meta so health.js knows the loop ran (avoids false STALE_SEED).
-      await upstashSet('seed-meta:weather:alerts', { fetchedAt: Date.now(), recordCount: 0 }, 604800);
-      console.log('[Weather] No active alerts — seed-meta refreshed, existing data preserved');
+    if (ecccResult.status === 'rejected') {
+      console.warn(`[Weather] ECCC fetch failed: ${ecccResult.reason?.message || ecccResult.reason}`);
+    }
+    if (swicResult.status === 'rejected') {
+      console.warn(`[Weather] SWIC fetch failed: ${swicResult.reason?.message || swicResult.reason}`);
+    }
+    if (nwsResult.status === 'rejected' && ecccResult.status === 'rejected' && swicResult.status === 'rejected') {
+      console.warn('[Weather] Seed failed: NWS, ECCC, and SWIC fetches all failed');
       return;
     }
+
+    const nwsFeatures = nwsResult.status === 'fulfilled' ? nwsResult.value : [];
+    const nwsAlerts = nwsResult.status === 'fulfilled'
+      ? rankEligibleAlerts(nwsFeatures).map((alert) => {
+          const feature = nwsFeatures.find((f) => (f.id || '') === alert.id);
+          const p = feature?.properties || {};
+          const vtec = nwsVtec(p);
+          return vtec ? { ...alert, vtec } : alert;
+        })
+      : [];
+    const ecccAlerts = ecccResult.status === 'fulfilled' ? selectEcccAlerts(ecccResult.value) : [];
+    const swicAlerts = swicResult.status === 'fulfilled'
+      ? selectSwicAlerts(swicResult.value.items, swicResult.value.membersByMid)
+      : [];
+
+    // One source failing must not erase the others. The #6607 purge semantics —
+    // always overwrite so ended alerts clear — are only correct for sources that
+    // actually answered. Carry last-good per source, keyed by `source`, so an
+    // NWS outage cannot wipe SWIC or ECCC off the live key.
+    let carriedNws = [];
+    let carriedEccc = [];
+    let carriedSwic = [];
+    if (nwsResult.status === 'rejected' || ecccResult.status === 'rejected' || swicResult.status === 'rejected') {
+      const prev = await envelopeRead(WEATHER_REDIS_KEY, () => null);
+      const prevAlerts = Array.isArray(prev?.alerts) ? prev.alerts : [];
+      if (nwsResult.status === 'rejected') carriedNws = prevAlerts.filter((a) => a?.source === 'nws');
+      if (ecccResult.status === 'rejected') carriedEccc = prevAlerts.filter((a) => a?.source === 'eccc');
+      if (swicResult.status === 'rejected') carriedSwic = prevAlerts.filter((a) => a?.source === 'swic');
+      if (carriedNws.length || carriedEccc.length || carriedSwic.length) {
+        console.warn(`[Weather] carrying last-good forward (nws=${carriedNws.length} eccc=${carriedEccc.length} swic=${carriedSwic.length})`);
+      }
+    }
+
+    const alerts = mergeAlertSources({
+      nws: nwsResult.status === 'fulfilled' ? nwsAlerts : carriedNws,
+      eccc: ecccResult.status === 'fulfilled' ? ecccAlerts : carriedEccc,
+      swic: swicResult.status === 'fulfilled' ? swicAlerts : carriedSwic,
+    });
+
+    // Always write the merged active set (#6607 purge). Do not skip overwrite
+    // when a live source returns 0 — that would leave ended CA alerts cached.
     const payload = { alerts };
-    const ok1 = await envelopeWrite(WEATHER_REDIS_KEY, payload, WEATHER_CACHE_TTL, { recordCount: alerts.length, sourceVersion: 'nws-weather' });
-    const ok2 = await upstashSet('seed-meta:weather:alerts', { fetchedAt: Date.now(), recordCount: alerts.length }, 604800);
-    console.log(`[Weather] Seeded ${alerts.length} alerts (redis: ${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    const ok1 = await envelopeWrite(WEATHER_REDIS_KEY, payload, WEATHER_CACHE_TTL, {
+      recordCount: alerts.length,
+      sourceVersion: WEATHER_ALERTS_SOURCE_VERSION,
+      zeroOk: true,
+    });
+    // A permanently dead source must be visible to /api/health. Without a
+    // sourceState the seed-meta stays fresh forever and the outage is invisible.
+    const failedSources = [
+      nwsResult.status === 'rejected' ? 'nws' : null,
+      ecccResult.status === 'rejected' ? 'eccc' : null,
+      swicResult.status === 'rejected' ? 'swic' : null,
+    ].filter(Boolean);
+    const ok2 = await upstashSet('seed-meta:weather:alerts', {
+      fetchedAt: Date.now(),
+      recordCount: alerts.length,
+      ...(failedSources.length > 0
+        ? {
+          sourceState: 'degraded',
+          errorCode: 'WEATHER_ALERT_SOURCE_INCOMPLETE',
+          failedSources,
+        }
+        : { sourceState: 'ok' }),
+    }, 604800);
+    console.log(`[Weather] Seeded ${alerts.length} alerts (nws=${nwsAlerts.length} eccc=${ecccAlerts.length} swic=${swicAlerts.length}, redis: ${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     const highSeverityAlerts = alerts.filter(a => a.severity === 'Extreme' || a.severity === 'Severe');
     // Pick up to 3 DISTINCT event families before publishing. The naive
     // `slice(0, 3)` would silently lose distinct families: if the first 3 raw
@@ -4948,10 +5333,10 @@ async function seedWeatherAlerts() {
     const distinctFamilyAlerts = [];
     for (const a of highSeverityAlerts) {
       // Family key: prefer VTEC-derived coalesce key; fall back to a stable
-      // identity from the alert (NWS feature.id, then headline/event) so
-      // VTEC-less alerts still deduplicate against themselves.
+      // identity from the alert so VTEC-less / ECCC alerts still deduplicate
+      // against themselves.
       const familyKey = deriveWeatherCoalesceKey(a.vtec)
-        ?? `nws:fallback:${a.id || a.headline || a.event || ''}`;
+        ?? `${a.source || 'weather'}:${a.id || a.headline || a.event || ''}`;
       if (seenFamilyKeys.has(familyKey)) continue;
       seenFamilyKeys.add(familyKey);
       distinctFamilyAlerts.push(a);
@@ -4961,15 +5346,17 @@ async function seedWeatherAlerts() {
       // Slot B: derive a coalesceKey from the NWS VTEC string (when present)
       // so adjacent-zone bulletins for the same logical event collapse to one
       // notification per user. Falls back to title-based dedup when VTEC is
-      // absent (rare advisory types or missing parameters).
+      // absent (ECCC, rare advisory types, or missing parameters).
       const coalesceKey = deriveWeatherCoalesceKey(a.vtec);
+      const countryCode = weatherAlertNotifyCountryCode(a);
       publishNotificationEvent({
         eventType: 'weather_alert',
         payload: {
           title: a.headline || a.event || 'Weather alert',
-          source: 'NWS',
-          countryCode: 'US',
+          source: weatherAlertNotifySource(a),
+          ...(countryCode ? { countryCode } : {}),
           ...(coalesceKey ? { coalesceKey } : {}),
+          ...weatherAlertNotifyLocation(a),
         },
         severity: a.severity === 'Extreme' ? 'critical' : 'high',
         variant: undefined,
@@ -5668,15 +6055,6 @@ const CORRIDOR_RISK_BASE_URL = 'https://corridorrisk.io/api/corridors';
 const CORRIDOR_RISK_REDIS_KEY = 'supply_chain:corridorrisk:v1';
 const CORRIDOR_RISK_TTL = 14400; // 4h (seed runs hourly, gives 3 retries before expiry)
 const CORRIDOR_RISK_SEED_INTERVAL_MS = 60 * 60 * 1000;
-// API name -> canonical chokepoint ID (partial substring match)
-const CORRIDOR_RISK_NAME_MAP = [
-  { pattern: 'hormuz', id: 'hormuz_strait' },
-  { pattern: 'bab-el-mandeb', id: 'bab_el_mandeb' },
-  { pattern: 'red sea', id: 'bab_el_mandeb' },
-  { pattern: 'suez', id: 'suez' },
-  { pattern: 'south china sea', id: 'taiwan_strait' },
-  { pattern: 'black sea', id: 'bosphorus' },
-];
 let corridorRiskSeedInFlight = false;
 let latestCorridorRiskData = null;
 
@@ -5715,7 +6093,7 @@ async function seedCorridorRisk() {
       const mapping = CORRIDOR_RISK_NAME_MAP.find(m => name.includes(m.pattern));
       if (!mapping) continue;
       const score = Number(corridor.score ?? 0);
-      const riskLevel = score >= 70 ? 'critical' : score >= 50 ? 'high' : score >= 30 ? 'elevated' : 'normal';
+      const riskLevel = deriveCorridorRiskLevel(score);
       result[mapping.id] = {
         riskLevel,
         riskScore: score,
@@ -6767,6 +7145,7 @@ const DODO_TIER_CONFIG = GENERATED_PRODUCT_CATALOG.tierConfig;
 const DODO_PUBLIC_TIER_GROUPS = GENERATED_PRODUCT_CATALOG.publicTierGroups;
 const DODO_FALLBACK_PRICES = GENERATED_PRODUCT_CATALOG.fallbackPrices;
 const DODO_PUBLIC_PRODUCT_FACTS = GENERATED_PRODUCT_CATALOG.facts;
+const DODO_PUBLIC_INVENTORY_FACTS = requireShared('inventory-facts.generated.json');
 
 let dodoPriceSeedInFlight = false;
 
@@ -6851,6 +7230,7 @@ async function seedDodoPrices() {
     const now = Date.now();
     const payload = {
       ...DODO_PUBLIC_PRODUCT_FACTS,
+      capabilities: DODO_PUBLIC_INVENTORY_FACTS.capabilities,
       tiers,
       fetchedAt: now,
       cachedUntil: now + DODO_PRICE_SEED_TTL * 1000,
@@ -7550,12 +7930,6 @@ const CHOKEPOINTS = [
   { name: 'Kerch Strait', lat: 45.33, lon: 36.60, radius: 0.5 },
   { name: 'Lombok Strait', lat: -8.47, lon: 115.72, radius: 0.5 },
 ];
-
-function classifyVesselType(shipType) {
-  if (shipType >= 80 && shipType <= 89) return 'tanker';
-  if (shipType >= 70 && shipType <= 79) return 'cargo';
-  return 'other';
-}
 
 const chokepointCrossings = new Map();
 const transitCooldowns = new Map();
@@ -8271,18 +8645,6 @@ const TRANSIT_SUMMARY_HISTORY_KEY_PREFIX = 'supply_chain:transit-summaries:histo
 const TRANSIT_SUMMARY_TTL = 3600; // 1h — 6x interval; survives ~5 consecutive missed pings
 const TRANSIT_SUMMARY_INTERVAL_MS = 10 * 60 * 1000;
 
-// Threat levels for anomaly detection.
-// IMPORTANT: Must stay in sync with CHOKEPOINTS[].threatLevel in
-// server/worldmonitor/supply-chain/v1/get-chokepoint-status.ts
-// Only war_zone and critical trigger anomaly signals.
-const CHOKEPOINT_THREAT_LEVELS = {
-  suez: 'high', malacca_strait: 'normal', hormuz_strait: 'war_zone',
-  bab_el_mandeb: 'critical', panama: 'normal', taiwan_strait: 'elevated',
-  cape_of_good_hope: 'normal', gibraltar: 'normal', bosphorus: 'elevated',
-  korea_strait: 'normal', dover_strait: 'normal', kerch_strait: 'war_zone',
-  lombok_strait: 'normal',
-};
-
 // ID mapping: relay geofence name -> canonical ID
 const RELAY_NAME_TO_ID = {
   'Suez Canal': 'suez', 'Malacca Strait': 'malacca_strait',
@@ -8294,21 +8656,6 @@ const RELAY_NAME_TO_ID = {
   'Lombok Strait': 'lombok_strait',
   'South China Sea': null, 'Black Sea': null, // area geofences, not chokepoints
 };
-
-// Duplicated from server/worldmonitor/supply-chain/v1/_scoring.mjs because
-// ais-relay.cjs is CJS and cannot import .mjs modules. Keep in sync.
-function detectTrafficAnomalyRelay(history, threatLevel) {
-  if (!history || history.length < 37) return { dropPct: 0, signal: false };
-  const sorted = [...history].sort((a, b) => b.date.localeCompare(a.date));
-  let recent7 = 0, baseline30 = 0;
-  for (let i = 0; i < 7 && i < sorted.length; i++) recent7 += sorted[i].total;
-  for (let i = 7; i < 37 && i < sorted.length; i++) baseline30 += sorted[i].total;
-  const baselineAvg7 = (baseline30 / Math.min(30, sorted.length - 7)) * 7;
-  if (baselineAvg7 < 14) return { dropPct: 0, signal: false };
-  const dropPct = Math.round(((baselineAvg7 - recent7) / baselineAvg7) * 100);
-  const isHighThreat = threatLevel === 'war_zone' || threatLevel === 'critical';
-  return { dropPct, signal: dropPct >= 50 && isHighThreat };
-}
 
 async function seedTransitSummaries() {
   let pwFailureReason = null;
@@ -8342,13 +8689,20 @@ async function seedTransitSummaries() {
   // coverage shortfall surfaces via the `pwCovered/N` log + recordCount only.
   const CANONICAL_IDS = Object.keys(CHOKEPOINT_THREAT_LEVELS);
   let pwCovered = 0;
+  // WHICH ids are missing, not just how many. A bare `11/13` cannot be acted on
+  // after the fact: portwatch dropped exactly two chokepoints for ~4.5h on
+  // 2026-08-25 and by the time anyone read the alarm the upstream had recovered,
+  // so the shortfall was unattributable — the count was identical every cycle
+  // and named nothing.
+  const pwMissing = [];
 
   for (const cpId of CANONICAL_IDS) {
     const cpData = pw[cpId];
     if (cpData) pwCovered++;
+    else pwMissing.push(cpId);
     const threatLevel = CHOKEPOINT_THREAT_LEVELS[cpId] || 'normal';
     const history = cpData?.history ?? [];
-    const anomaly = detectTrafficAnomalyRelay(history, threatLevel);
+    const anomaly = detectTrafficAnomaly(history, threatLevel);
 
     // Get relay transit counts for this chokepoint
     let relayTransit = null;
@@ -8406,7 +8760,7 @@ async function seedTransitSummaries() {
   }
 
   if (pwCovered < CANONICAL_IDS.length) {
-    console.warn(`[TransitSummary] portwatch coverage shortfall: ${pwCovered}/${CANONICAL_IDS.length} — missing chokepoints will publish zero-state until next upstream success`);
+    console.warn(`[TransitSummary] portwatch coverage shortfall: ${pwCovered}/${CANONICAL_IDS.length} (missing: ${pwMissing.join(', ')}) — missing chokepoints will publish zero-state until next upstream success`);
   }
 
   const ok = await envelopeWrite(TRANSIT_SUMMARY_REDIS_KEY, { summaries, fetchedAt: now }, TRANSIT_SUMMARY_TTL, { recordCount: pwCovered, sourceVersion: 'transit-summaries' });
@@ -10354,6 +10708,24 @@ const server = http.createServer(async (req, res) => {
         pollInFlight: telegramPollInFlight,
         pollInFlightSince: telegramPollInFlight && telegramPollStartedAt ? new Date(telegramPollStartedAt).toISOString() : null,
       },
+      xFeed: {
+        enabled: X_ENABLED,
+        accounts: xState.accounts?.length || 0,
+        items: xState.items?.length || 0,
+        lastPollAt: xState.lastPollAt ? new Date(xState.lastPollAt).toISOString() : null,
+        hasError: !!xState.lastError,
+        lastError: xState.lastError || null,
+        // Distinguishes "Redis unreadable, refusing to publish" from an ordinary
+        // poll error — otherwise both look like a generic lastError string.
+        hydrationFailed: !!xState.hydrationFailed,
+        generation: xState.generation,
+        coverage: xState.lastCoverage,
+        lastHealthyAt: xState.lastHealthyAt ? new Date(xState.lastHealthyAt).toISOString() : null,
+        pollInFlight: xPollGuard.isInFlight(),
+        pollInFlightSince: xPollGuard.startedAt() ? new Date(xPollGuard.startedAt()).toISOString() : null,
+        rateLimitedUntil: xState.rateLimitedUntil ? new Date(xState.rateLimitedUntil).toISOString() : null,
+        backoffCause: xState.backoffCause || null,
+      },
       oref: {
         enabled: SIREN_ALERTS_ENABLED,
         alertCount: orefState.lastAlerts?.length || 0,
@@ -10560,6 +10932,39 @@ const server = http.createServer(async (req, res) => {
         enabled: TELEGRAM_ENABLED,
         count: filtered.length,
         updatedAt: telegramState.lastPollAt ? new Date(telegramState.lastPollAt).toISOString() : null,
+        items: filtered,
+      }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal error' }));
+    }
+  } else if (pathname === '/x' || pathname.startsWith('/x/')) {
+    try {
+      const url = new URL(req.url, `http://localhost:${PORT}`);
+      const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 50)));
+      const topic = (url.searchParams.get('topic') || '').trim().toLowerCase();
+      const account = (url.searchParams.get('account') || url.searchParams.get('channel') || '').trim().toLowerCase();
+      const includeDeleted = url.searchParams.get('includeDeleted') === '1';
+
+      const items = Array.isArray(xState.items) ? xState.items : [];
+      const filtered = items.filter((it) => {
+        if (!includeDeleted && it.contentState === 'deleted') return false;
+        if (topic && String(it.topic || '').toLowerCase() !== topic) return false;
+        if (account && String(it.account || '').toLowerCase() !== account) return false;
+        return true;
+      }).slice(0, limit);
+
+      sendCompressed(req, res, 200, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'public, max-age=10',
+        'CDN-Cache-Control': 'public, max-age=10',
+      }, JSON.stringify({
+        source: 'x',
+        earlySignal: true,
+        enabled: X_ENABLED,
+        count: filtered.length,
+        updatedAt: xState.lastPollAt ? new Date(xState.lastPollAt).toISOString() : null,
+        coverage: xState.lastCoverage,
         items: filtered,
       }));
     } catch (e) {
@@ -12611,7 +13016,11 @@ server.listen(PORT, () => {
     console.log('[Relay] Test mode enabled — background seed loops are disabled');
     return;
   }
-  startTelegramPollLoop();
+    startTelegramPollLoop();
+    void startXPollLoop().catch((error) => {
+      xState.lastError = `X poll startup failed: ${error?.message || String(error)}`;
+      console.warn('[Relay] X poll startup failed:', error?.message || error);
+    });
   startOrefPollLoop();
   startUcdpSeedLoop();
   startMarketDataSeedLoop();

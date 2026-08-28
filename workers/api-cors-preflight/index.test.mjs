@@ -31,7 +31,7 @@ function makeRequest(method, url, headers = {}) {
 const CANONICAL_FALLBACK = 'https://worldmonitor.app';
 const KNOWN_GOOD = 'https://www.worldmonitor.app';
 const ACAH_EXPECTED = 'Content-Type, Authorization, X-WorldMonitor-Key, X-Api-Key, X-Widget-Key, X-Pro-Key, X-WorldMonitor-Desktop-Timestamp, X-WorldMonitor-Desktop-Signature, Idempotency-Key, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID';
-const ACEH_EXPECTED = 'Mcp-Session-Id, WWW-Authenticate, Retry-After, Idempotency-Key, Idempotent-Replayed, X-Billing-Verification, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-WorldMonitor-Bbox, X-WorldMonitor-Bbox-Missing, X-WorldMonitor-Bbox-Invalid, X-Military-Bbox';
+const ACEH_EXPECTED = 'Mcp-Session-Id, WWW-Authenticate, Retry-After, Idempotency-Key, Idempotent-Replayed, X-Billing-Verification, RateLimit, RateLimit-Policy, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-WorldMonitor-Bbox, X-WorldMonitor-Bbox-Missing, X-WorldMonitor-Bbox-Invalid, X-Military-Bbox';
 // Must be a superset of every method any api/* route advertises. Notably
 // includes DELETE for api/product-catalog.js — pinning this prevents the
 // regression that PR review caught (Worker omitted DELETE → product-catalog
@@ -203,6 +203,47 @@ test('GET response from origin has CORS headers stamped by the Worker', async ()
     assert.equal(resp.headers.get('access-control-allow-credentials'), 'true');
     assert.equal(resp.headers.get('access-control-expose-headers'), ACEH_EXPECTED);
     assert.equal(resp.headers.get('content-type'), 'application/json');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('GET response preserves origin cache variance when the Worker adds Origin variance', async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (request, options) => {
+    calls.push({ request, options });
+    return new Response('<html></html>', {
+      status: 200,
+      headers: request.url.endsWith('/api/story')
+        ? { 'Content-Type': 'text/html; charset=utf-8', Vary: 'User-Agent' }
+        : { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  };
+  try {
+    const storyReq = makeRequest('GET', 'https://api.worldmonitor.app/api/story', {
+      Origin: KNOWN_GOOD,
+      'User-Agent': 'Twitterbot/1.0',
+    });
+    const storyResp = await worker.fetch(storyReq);
+    assert.equal(storyResp.status, 200);
+    assert.equal(storyResp.headers.get('vary'), 'User-Agent, Origin');
+    assert.deepEqual(calls[0].options, {
+      cf: {
+        vary: {
+          default: { action: 'bypass' },
+          headers: {
+            'user-agent': { action: 'passthrough' },
+          },
+        },
+      },
+    });
+
+    const healthReq = makeRequest('GET', 'https://api.worldmonitor.app/api/health', {
+      Origin: KNOWN_GOOD,
+    });
+    await worker.fetch(healthReq);
+    assert.equal(calls[1].options, undefined, 'other API routes must keep the default fetch policy');
   } finally {
     globalThis.fetch = original;
   }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   existsSync,
-  mkdtempSync,
+  
   mkdirSync,
   readFileSync,
   readlinkSync,
@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import {
   assertNoForbiddenEnvDumps,
+  assertNodeModulesNotSymlink,
   bootstrapWorktree,
   decideHooksPathAction,
   linkEnvFiles,
@@ -23,8 +24,9 @@ import {
   parseArgs,
   shouldInstallDependencies,
 } from '../scripts/bootstrap-worktree.mjs';
+import { createTempDir } from './helpers/temp-dir.mjs';
 
-const makeTempDir = (prefix = 'wm-worktree-bootstrap-') => mkdtempSync(join(tmpdir(), prefix));
+const makeTempDir = (prefix = 'wm-worktree-bootstrap-') => createTempDir(prefix);
 const quiet = () => {};
 
 describe('worktree bootstrap helper', () => {
@@ -139,7 +141,7 @@ describe('worktree bootstrap helper', () => {
 
     bootstrapWorktree({ dryRun: true, rootDir: root, skipEnv: true, log: line => logs.push(line) });
     assert.deepEqual(logs, [
-      '[worktree] would run: npm ci --cache /tmp/worldmonitor-npm-cache',
+      '[worktree] would run: npm ci --cache /tmp/worldmonitor-npm-cache --prefer-offline',
       '[worktree] bootstrap complete',
     ]);
 
@@ -152,6 +154,60 @@ describe('worktree bootstrap helper', () => {
       '[worktree] verified npm install present; skipping npm ci',
       '[worktree] bootstrap complete',
     ]);
+  });
+
+  it('seeds pro-test deps when that package is present', () => {
+    const root = makeTempDir();
+    writeFileSync(join(root, 'package.json'), '{}');
+    mkdirSync(join(root, 'pro-test'));
+    writeFileSync(join(root, 'pro-test', 'package.json'), '{}');
+    const logs = [];
+
+    bootstrapWorktree({ dryRun: true, rootDir: root, skipEnv: true, log: line => logs.push(line) });
+    assert.deepEqual(logs, [
+      '[worktree] would run: npm ci --cache /tmp/worldmonitor-npm-cache --prefer-offline',
+      '[worktree] would run: npm ci --cache /tmp/worldmonitor-npm-cache --prefer-offline',
+      '[worktree] bootstrap complete',
+    ]);
+
+    mkdirSync(join(root, 'node_modules'));
+    writeFileSync(join(root, 'node_modules', '.package-lock.json'), '{}');
+    mkdirSync(join(root, 'pro-test', 'node_modules'));
+    writeFileSync(join(root, 'pro-test', 'node_modules', '.package-lock.json'), '{}');
+    logs.length = 0;
+
+    bootstrapWorktree({ rootDir: root, skipEnv: true, log: line => logs.push(line) });
+    assert.deepEqual(logs, [
+      '[worktree] verified npm install present; skipping npm ci',
+      '[worktree] verified pro-test npm install present; skipping npm ci',
+      '[worktree] bootstrap complete',
+    ]);
+  });
+
+  it('refuses a node_modules symlink instead of following it', (t) => {
+    const root = makeTempDir();
+    const target = makeTempDir('wm-stolen-node-modules-');
+    writeFileSync(join(root, 'package.json'), '{}');
+
+    try {
+      symlinkSync(target, join(root, 'node_modules'));
+    } catch (error) {
+      if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+        t.skip('symlink creation is unavailable in this environment');
+        return;
+      }
+      throw error;
+    }
+
+    assert.throws(
+      () => assertNodeModulesNotSymlink(root),
+      /node_modules is a symlink/,
+    );
+    assert.throws(
+      () => bootstrapWorktree({ dryRun: true, rootDir: root, skipEnv: true, log: quiet }),
+      /node_modules is a symlink/,
+    );
+    assert.equal(readlinkSync(join(root, 'node_modules')), target);
   });
 
   it('parses bootstrap flags', () => {

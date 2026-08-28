@@ -14,8 +14,11 @@ import { assessFunnelDiversity } from './_forecast-funnel.mjs';
 import { resolveR2StorageConfig, putR2JsonObject, getR2JsonObject } from './_r2-storage.mjs';
 import { extractFirstJsonObject, extractFirstJsonArray, cleanJsonText } from './_llm-json.mjs';
 import {
+  GROQ_DEFAULT_MODEL,
   getLlmAttemptTimeoutMs,
   isDeepseekV4FlashModel,
+  OPENROUTER_FREE_BACKUP_MODEL,
+  OPENROUTER_FREE_PRIMARY_MODEL,
   OPENROUTER_PROVIDER_ROUTING,
   DEEPSEEK_V4_FLASH_LONG_COMPLETION_TIMEOUT_MS,
 } from './_llm-model-timeouts.mjs';
@@ -87,6 +90,7 @@ const FORECAST_DEEP_TASK_QUEUE_KEY = 'forecast:deep-task-queue:v1';
 const FORECAST_DEEP_LOCK_KEY_PREFIX = 'forecast:deep-lock:v1';
 const FORECAST_DEEP_TASK_TTL_SECONDS = 30 * 60;
 const FORECAST_DEEP_LOCK_TTL_SECONDS = 20 * 60;
+const FORECAST_DEEP_LOCK_HEARTBEAT_INTERVAL_MS = Math.floor((FORECAST_DEEP_LOCK_TTL_SECONDS * 1000) / 3);
 const FORECAST_DEEP_POLL_INTERVAL_MS = 30 * 1000;
 const FORECAST_DEEP_MAX_CANDIDATES = 3;
 const FORECAST_DEEP_RUN_PREFIX = 'seed-data/forecast-traces';
@@ -109,6 +113,7 @@ const SIM_LOCK_STATUS_EXPIRED = 'EXPIRED';
 const SIM_LOCK_STATUS_OWNED_BY_OTHER = 'OWNED_BY_OTHER';
 const SIM_TASK_COMPLETE_STATUS_COMPLETED = 'COMPLETED';
 const SIM_TASK_COMPLETE_STATUS_MISSING_WORKER = 'MISSING_WORKER';
+const DEEP_LOCK_STATUS_RENEW_FAILED = 'RENEW_FAILED';
 const SIMULATION_POLL_INTERVAL_MS = 30 * 1000;
 const PUBLISH_MIN_PROBABILITY = 0;
 // Publish-selection lift for hard-resolvable forecasts (helps the canonical set
@@ -3606,11 +3611,7 @@ async function extractCriticalSignalBundle(inputs) {
   // other's frames within the TTL — strength/confidence magnitudes are
   // model-dependent and probability-coupled.
   const criticalLlmOptions = getForecastLlmCallOptions('critical_signals');
-  const criticalRouteTag = [
-    (criticalLlmOptions.providerOrder || []).join('-') || 'default',
-    criticalLlmOptions.modelOverrides?.openrouter || 'table',
-    criticalLlmOptions.modelOverrides?.groq || 'table',
-  ].join('_').replace(/[^a-zA-Z0-9._/-]/g, '-');
+  const criticalRouteTag = buildCriticalSignalRouteTag(criticalLlmOptions);
   const cacheKey = `forecast:critical-signals:llm:${criticalRouteTag}:${buildCriticalSignalCandidateHash(candidates)}`;
   const fallbackSignalsFromCandidates = (coveredIndexes = new Set()) =>
     extractRegexCriticalNewsSignals(inputs, candidates.filter((item) => !coveredIndexes.has(item.candidateIndex)));
@@ -13526,18 +13527,177 @@ async function claimDeepForecastTask(runId, workerId) {
   return task;
 }
 
-async function completeDeepForecastTask(runId) {
-  if (!runId) return;
-  const { url, token } = getRedisCredentials();
-  await redisCommand(url, token, ['ZREM', FORECAST_DEEP_TASK_QUEUE_KEY, runId]);
-  await redisDel(url, token, buildDeepForecastTaskKey(runId));
-  await redisDel(url, token, buildDeepForecastLockKey(runId));
+// Owner-checked cleanup for the deep-forecast task queue. A worker whose
+// lock expired mid-run (FORECAST_DEEP_LOCK_TTL_SECONDS = 20 min) must not
+// delete a lock that has been re-claimed by another worker: unconditional
+// DELs let a stale worker release someone else's claim and let a third
+// worker double-run the same runId. Mirrors _SIM_TASK_COMPLETE_LUA /
+// _SIM_LOCK_RELEASE_LUA from the simulation pipeline.
+const _DEEP_TASK_COMPLETE_LUA = `
+local owner = redis.call('GET', KEYS[3])
+if not owner then return 'EXPIRED' end
+if owner ~= ARGV[1] then return 'OWNED_BY_OTHER' end
+redis.call('ZREM', KEYS[1], ARGV[2])
+redis.call('DEL', KEYS[2])
+redis.call('DEL', KEYS[3])
+return 'COMPLETED'
+`.trim();
+
+const _DEEP_LOCK_RELEASE_LUA = `
+local owner = redis.call('GET', KEYS[1])
+if not owner then return 'EXPIRED' end
+if owner ~= ARGV[1] then return 'OWNED_BY_OTHER' end
+redis.call('DEL', KEYS[1])
+return 'DELETED'
+`.trim();
+
+function logDeepForecastCleanupStatus(runId, workerId, status) {
+  if (status === 'COMPLETED' || status === 'DELETED') return;
+  if (status === 'EXPIRED') {
+    console.warn(`  [DeepForecast] Cleanup skipped for ${runId}; lock expired before cleanup (${workerId})`);
+  } else if (status === 'OWNED_BY_OTHER') {
+    console.warn(`  [DeepForecast] Cleanup skipped for ${runId}; lock owned by another worker (${workerId})`);
+  } else {
+    console.warn(`  [DeepForecast] Unexpected cleanup status ${status} for ${runId} (${workerId})`);
+  }
 }
 
-async function releaseDeepForecastTask(runId) {
-  if (!runId) return;
+async function renewDeepForecastTaskLease(runId, workerId, ttlSeconds = FORECAST_DEEP_LOCK_TTL_SECONDS) {
+  if (!runId || !workerId) return SIM_LOCK_STATUS_EXPIRED;
+  const lockKey = buildDeepForecastLockKey(runId);
   const { url, token } = getRedisCredentials();
-  await redisDel(url, token, buildDeepForecastLockKey(runId));
+  return redisCompareAndExpireLock(
+    url,
+    token,
+    lockKey,
+    workerId,
+    ttlSeconds,
+    FORECAST_DEEP_LOCK_TTL_SECONDS,
+  );
+}
+
+class DeepForecastLeaseError extends Error {
+  constructor(runId, status, cause = null) {
+    super(`Deep-forecast lease lost for ${runId}: ${status}`);
+    this.name = 'DeepForecastLeaseError';
+    this.code = 'DEEP_FORECAST_LEASE_LOST';
+    this.lockStatus = status;
+    if (cause) this.cause = cause;
+  }
+}
+
+function isDeepForecastLeaseError(error) {
+  return error instanceof DeepForecastLeaseError;
+}
+
+function createDeepForecastLeaseGuard(runId, workerId, options = {}) {
+  const heartbeatIntervalMs = Number.isFinite(options.heartbeatIntervalMs)
+    ? Math.max(1, Math.floor(options.heartbeatIntervalMs))
+    : FORECAST_DEEP_LOCK_HEARTBEAT_INTERVAL_MS;
+  const renewLease = options.renewLease
+    || (() => renewDeepForecastTaskLease(runId, workerId));
+  let stopped = false;
+  let lastStatus = SIM_LOCK_STATUS_EXTENDED;
+  let renewalError = null;
+  let renewalQueue = Promise.resolve(lastStatus);
+
+  const enqueueRenewal = () => {
+    renewalQueue = renewalQueue.then(async () => {
+      if (stopped || lastStatus !== SIM_LOCK_STATUS_EXTENDED) return lastStatus;
+      try {
+        const status = String((await renewLease()) || SIM_LOCK_STATUS_EXPIRED);
+        if (status !== SIM_LOCK_STATUS_EXTENDED) lastStatus = status;
+      } catch (error) {
+        renewalError = error;
+        lastStatus = DEEP_LOCK_STATUS_RENEW_FAILED;
+      }
+      return lastStatus;
+    });
+    return renewalQueue;
+  };
+
+  const heartbeat = setInterval(() => {
+    void enqueueRenewal();
+  }, heartbeatIntervalMs);
+  heartbeat.unref?.();
+
+  return {
+    async assertOwned() {
+      const status = await enqueueRenewal();
+      if (status !== SIM_LOCK_STATUS_EXTENDED) {
+        throw new DeepForecastLeaseError(runId, status, renewalError);
+      }
+    },
+    async stop() {
+      stopped = true;
+      clearInterval(heartbeat);
+      await renewalQueue;
+    },
+  };
+}
+
+async function completeDeepForecastTask(runId, workerId = '') {
+  if (!runId) return;
+  if (_testRedisStore) {
+    // Test path (_testRedisStore set): equivalent JavaScript logic.
+    const taskKey = buildDeepForecastTaskKey(runId);
+    const lockKey = buildDeepForecastLockKey(runId);
+    if (workerId) {
+      const owner = _testRedisStore[lockKey];
+      const status = !owner ? 'EXPIRED' : owner !== workerId ? 'OWNED_BY_OTHER' : 'COMPLETED';
+      logDeepForecastCleanupStatus(runId, workerId, status);
+      if (status !== 'COMPLETED') return;
+    }
+    removeRunIdFromDeepForecastTestQueue(runId);
+    delete _testRedisStore[taskKey];
+    delete _testRedisStore[lockKey];
+    return;
+  }
+  const { url, token } = getRedisCredentials();
+  if (!workerId) {
+    // No worker identity: legacy unconditional cleanup. Only reachable from
+    // callers that never held the claim lock.
+    await redisCommand(url, token, ['ZREM', FORECAST_DEEP_TASK_QUEUE_KEY, runId]);
+    await redisDel(url, token, buildDeepForecastTaskKey(runId));
+    await redisDel(url, token, buildDeepForecastLockKey(runId));
+    return;
+  }
+  const result = String((await redisCommand(url, token, [
+    'EVAL', _DEEP_TASK_COMPLETE_LUA, '3',
+    FORECAST_DEEP_TASK_QUEUE_KEY,
+    buildDeepForecastTaskKey(runId),
+    buildDeepForecastLockKey(runId),
+    workerId,
+    runId,
+  ]))?.result || 'COMPLETED');
+  logDeepForecastCleanupStatus(runId, workerId, result);
+}
+
+async function releaseDeepForecastTask(runId, workerId = '') {
+  if (!runId) return;
+  if (_testRedisStore) {
+    // Test path (_testRedisStore set): equivalent JavaScript logic.
+    const lockKey = buildDeepForecastLockKey(runId);
+    if (workerId) {
+      const owner = _testRedisStore[lockKey];
+      const status = !owner ? 'EXPIRED' : owner !== workerId ? 'OWNED_BY_OTHER' : 'DELETED';
+      logDeepForecastCleanupStatus(runId, workerId, status);
+      if (status !== 'DELETED') return;
+    }
+    delete _testRedisStore[lockKey];
+    return;
+  }
+  const { url, token } = getRedisCredentials();
+  if (!workerId) {
+    await redisDel(url, token, buildDeepForecastLockKey(runId));
+    return;
+  }
+  const result = String((await redisCommand(url, token, [
+    'EVAL', _DEEP_LOCK_RELEASE_LUA, '1',
+    buildDeepForecastLockKey(runId),
+    workerId,
+  ]))?.result || 'DELETED');
+  logDeepForecastCleanupStatus(runId, workerId, result);
 }
 
 function buildDeepForecastSnapshotPayload(data = {}, context = {}) {
@@ -14660,10 +14820,10 @@ function selectForecastsForEnrichment(predictions, options = {}) {
 }
 
 // ── Phase 2: LLM Scenario Enrichment ───────────────────────
-// openrouter-first since #4944 U6: forecast NARRATIVE (never probabilities —
-// detectors own those) runs DeepSeek V4 Flash with reasoning disabled; groq
-// llama-3.3-70b-versatile is the free-tier/outage fallback. Per-stage
-// FORECAST_LLM_*_PROVIDER_ORDER env still overrides.
+// Forecast narrative calls try the paid OpenRouter model, two fixed free
+// OpenRouter variants, then Groq. Separate entries let application validation
+// advance after malformed/empty content; do not replace them with the random
+// `openrouter/free` router. Per-stage FORECAST_LLM_*_PROVIDER_ORDER still overrides.
 const FORECAST_LLM_PROVIDERS = [
   // `provider.sort: 'throughput'` makes OpenRouter dispatch to its fastest backend
   // instead of free-routing. Without it the SAME model lands on backends spanning
@@ -14675,8 +14835,60 @@ const FORECAST_LLM_PROVIDERS = [
   // same entry onto google/gemini-2.5-flash and must keep its 25s window). Flash uses
   // its own completion deadline via getLlmAttemptTimeoutMs — see _llm-model-timeouts.
   { name: 'openrouter', envKey: 'OPENROUTER_API_KEY', apiUrl: 'https://openrouter.ai/api/v1/chat/completions', model: 'deepseek/deepseek-v4-flash', timeout: 25_000, extraBody: { reasoning: { enabled: false }, provider: OPENROUTER_PROVIDER_ROUTING } },
-  { name: 'groq', envKey: 'GROQ_API_KEY', apiUrl: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile', timeout: 20_000 },
+  { name: 'openrouter-free', envKey: 'OPENROUTER_API_KEY', apiUrl: 'https://openrouter.ai/api/v1/chat/completions', model: OPENROUTER_FREE_PRIMARY_MODEL, timeout: 25_000, maxRetries: 0, extraBody: { reasoning: { enabled: false }, provider: OPENROUTER_PROVIDER_ROUTING } },
+  { name: 'openrouter-free-backup', envKey: 'OPENROUTER_API_KEY', apiUrl: 'https://openrouter.ai/api/v1/chat/completions', model: OPENROUTER_FREE_BACKUP_MODEL, timeout: 25_000, maxRetries: 0, extraBody: { reasoning: { enabled: false }, provider: OPENROUTER_PROVIDER_ROUTING } },
+  { name: 'groq', envKey: 'GROQ_API_KEY', apiUrl: 'https://api.groq.com/openai/v1/chat/completions', model: GROQ_DEFAULT_MODEL, timeout: 20_000 },
 ];
+
+// PER-79 (upstream PR 3/3): generic OpenAI-compatible provider for the
+// forecast seeder. Activated ONLY when LLM_API_URL, LLM_API_KEY, and
+// LLM_MODEL are all set AND none of the named providers above (openrouter,
+// openrouter-free, openrouter-free-backup, groq) have a key. Resolved-time
+// append keeps the existing FORECAST_LLM_PROVIDERS table (and its
+// array-shape tests) intact. LLM_API_URL is the FULL chat/completions
+// endpoint verbatim (see SELF_HOSTING.md) and LLM_MODEL is required — the
+// strict all-three gate means there is no default model. Names only — never
+// echo the env values.
+const FORECAST_GENERIC_LLM_PROVIDER_SPEC = Object.freeze({
+  name: 'generic',
+  // envKey points at the BEARER credential, not the URL: the loop body and
+  // the runnable filter both read process.env[provider.envKey] as the
+  // Authorization token. The URL is captured separately in apiUrl below.
+  envKey: 'LLM_API_KEY',
+  envUrlKey: 'LLM_API_URL',
+  envModelKey: 'LLM_MODEL',
+  defaultTimeout: 60_000,
+});
+
+function isForecastGenericLlmReady() {
+  // All three envs must be present AND non-empty; the contract names only the
+  // names of the variables in any debug output, never their values.
+  return Boolean(
+    process.env.LLM_API_URL
+    && process.env.LLM_API_KEY
+    && process.env.LLM_MODEL,
+  );
+}
+
+function buildForecastGenericLlmProvider() {
+  // Caller (resolveForecastLlmProviders) has already asserted all three envs
+  // are non-empty via isForecastGenericLlmReady(), so reading them verbatim
+  // here is safe — no default fallback exists because the strict all-three
+  // gate forbids partial coverage.
+  const apiUrl = process.env.LLM_API_URL;
+  const model = process.env.LLM_MODEL;
+  const headers = { 'Content-Type': 'application/json', 'User-Agent': CHROME_UA };
+  const apiKey = process.env.LLM_API_KEY;
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  return {
+    name: FORECAST_GENERIC_LLM_PROVIDER_SPEC.name,
+    envKey: FORECAST_GENERIC_LLM_PROVIDER_SPEC.envKey,
+    apiUrl,
+    model,
+    headers,
+    timeout: FORECAST_GENERIC_LLM_PROVIDER_SPEC.defaultTimeout,
+  };
+}
 
 // market_implications does NOT fall back to groq. Groq's free tier caps at 100k
 // tokens/day and this stage alone needs ~114k (4,749 tokens x 24 hourly runs), so
@@ -14739,26 +14951,45 @@ function parseForecastProviderOrder(raw) {
   return providers.length > 0 ? providers : null;
 }
 
+function migrateLegacyGlobalProviderOrder(providerOrder) {
+  if (providerOrder.length !== 2
+    || providerOrder[0] !== 'openrouter'
+    || providerOrder[1] !== 'groq') return providerOrder;
+  const paidIndex = providerOrder.indexOf('openrouter');
+  const groqIndex = providerOrder.indexOf('groq');
+  if (paidIndex < 0 || groqIndex < 0 || paidIndex > groqIndex) return providerOrder;
+  const freeProviders = ['openrouter-free', 'openrouter-free-backup'];
+  return providerOrder.flatMap(provider => provider === 'groq'
+    ? [...freeProviders.filter(freeProvider => !providerOrder.includes(freeProvider)), provider]
+    : [provider]);
+}
+
 function getForecastLlmCallOptions(stage = 'default') {
   const defaultProviderOrder = FORECAST_LLM_PROVIDERS.map(provider => provider.name);
   const globalProviderOrder = parseForecastProviderOrder(process.env.FORECAST_LLM_PROVIDER_ORDER);
+  // Production carries the historical global `openrouter,groq` value. Migrate
+  // only that exact legacy default; stage-scoped operator overrides stay exact.
+  const effectiveGlobalProviderOrder = globalProviderOrder
+    ? migrateLegacyGlobalProviderOrder(globalProviderOrder)
+    : null;
   const combinedProviderOrder = parseForecastProviderOrder(process.env.FORECAST_LLM_COMBINED_PROVIDER_ORDER);
   const criticalProviderOrder = parseForecastProviderOrder(process.env.FORECAST_LLM_CRITICAL_PROVIDER_ORDER);
   const impactProviderOrder = parseForecastProviderOrder(process.env.FORECAST_LLM_IMPACT_PROVIDER_ORDER);
   const marketImplicationsProviderOrder = parseForecastProviderOrder(process.env.FORECAST_LLM_MARKET_IMPLICATIONS_PROVIDER_ORDER);
-  const providerOrder = stage === 'combined'
-    ? (combinedProviderOrder || globalProviderOrder || defaultProviderOrder)
+  const configuredProviderOrder = stage === 'combined'
+    ? (combinedProviderOrder || effectiveGlobalProviderOrder || defaultProviderOrder)
     : stage === 'critical_signals'
-      ? (criticalProviderOrder || globalProviderOrder || defaultProviderOrder)
+      ? (criticalProviderOrder || effectiveGlobalProviderOrder || defaultProviderOrder)
       : stage === 'impact_expansion'
-        ? (impactProviderOrder || globalProviderOrder || defaultProviderOrder)
+        ? (impactProviderOrder || effectiveGlobalProviderOrder || defaultProviderOrder)
       // Deliberately does NOT fall through to globalProviderOrder: that env is set
       // to `openrouter,groq` in production, which would re-add the groq fallback
       // this stage must not depend on (see MARKET_IMPLICATIONS_DEFAULT_PROVIDER_ORDER).
       // Its own stage env still overrides.
       : stage === 'market_implications'
         ? (marketImplicationsProviderOrder || MARKET_IMPLICATIONS_DEFAULT_PROVIDER_ORDER)
-      : (globalProviderOrder || defaultProviderOrder);
+      : (effectiveGlobalProviderOrder || defaultProviderOrder);
+  const providerOrder = configuredProviderOrder;
 
   const openrouterModel = stage === 'combined'
     ? (process.env.FORECAST_LLM_COMBINED_MODEL_OPENROUTER || process.env.FORECAST_LLM_MODEL_OPENROUTER)
@@ -14774,16 +15005,16 @@ function getForecastLlmCallOptions(stage = 'default') {
   // strength/confidence flow into state-derived (market/supply_chain)
   // forecast probabilities and publish selection (frames → world signals →
   // pressure/confirmation scores → buildStateDerivedForecast probability).
-  // Hold this stage on the pre-#4944 models so the DeepSeek narrative
-  // migration cannot move probabilities before the #4930 resolver baseline
-  // exists. ONLY the stage-scoped FORECAST_LLM_CRITICAL_PROVIDER_ORDER
+  // Hold this stage on the same provider hosts and OpenRouter fallback. Groq's
+  // decommissioned 8B model moves to its official gpt-oss-20b replacement.
+  // ONLY the stage-scoped FORECAST_LLM_CRITICAL_PROVIDER_ORDER
   // unpins it — a global FORECAST_LLM_PROVIDER_ORDER must not move a
   // probability-coupled stage as a side effect (review finding on #4965).
   if (stage === 'critical_signals' && !criticalProviderOrder) {
     return {
       providerOrder: ['groq', 'openrouter'],
       modelOverrides: {
-        groq: 'llama-3.1-8b-instant',
+        groq: GROQ_DEFAULT_MODEL,
         // ONLY the stage-scoped model env may change the pinned fallback —
         // a global FORECAST_LLM_MODEL_OPENROUTER must not move the
         // probability-coupled stage either (review finding on #4965).
@@ -14840,7 +15071,49 @@ function resolveForecastLlmProviders(options = {}) {
         : provider.extraBody,
     });
   }
+  // PER-79 (upstream PR 3/3): append the generic OpenAI-compatible provider
+  // ONLY when all three envs are set AND the chain above matched no named
+  // provider (envKey for both openrouter and groq unset). The env check uses
+  // ONLY the names — never echo or log the values. Kept out of
+  // FORECAST_LLM_PROVIDERS so existing table-shape tests and the per-stage
+  // pinning in critical_signals / market_implications stay exact.
+  if (isForecastGenericLlmReady()
+    && !process.env.OPENROUTER_API_KEY
+    && !process.env.GROQ_API_KEY
+    && !seen.has(FORECAST_GENERIC_LLM_PROVIDER_SPEC.name)) {
+    const generic = buildForecastGenericLlmProvider();
+    const genericModel = generic.model;
+    const failFastOnTimeout = isDeepseekV4FlashModel(genericModel);
+    providers.push({
+      ...generic,
+      timeout: getLlmAttemptTimeoutMs(
+        genericModel,
+        FORECAST_GENERIC_LLM_PROVIDER_SPEC.defaultTimeout,
+        DEEPSEEK_V4_FLASH_LONG_COMPLETION_TIMEOUT_MS,
+      ),
+      failFastOnTimeout,
+      extraBody: undefined,
+    });
+  }
   return providers.length > 0 ? providers : FORECAST_LLM_PROVIDERS;
+}
+
+// Hosted production must keep the pin-based critical_signals cache tag
+// (#4965): `providerOrder` then the openrouter/groq override slots. Replacing
+// that whole tag with the resolved runnable chain would change the hosted
+// key shape and bust the 20-minute Redis cache for no reason. Append the
+// generic name + model ONLY when generic is actually in the resolved chain
+// (self-host / last-resort). Changing LLM_MODEL then misses the old key
+// instead of serving stale frames into state-derived probabilities.
+function buildCriticalSignalRouteTag(options = {}) {
+  const pinTag = [
+    (options.providerOrder || []).join('-') || 'default',
+    options.modelOverrides?.openrouter || 'table',
+    options.modelOverrides?.groq || 'table',
+  ].join('_');
+  const generic = resolveForecastLlmProviders(options).find((provider) => provider.name === 'generic');
+  const genericSuffix = generic ? `_generic_${generic.model}` : '';
+  return `${pinTag}${genericSuffix}`.replace(/[^a-zA-Z0-9._/-]/g, '-');
 }
 
 function moveForecastLlmProviderToBack(options = {}, providerName = '') {
@@ -15267,7 +15540,7 @@ async function callForecastLLM(systemPrompt, userPrompt, options = {}) {
                 Authorization: `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
                 'User-Agent': CHROME_UA,
-                ...(provider.name === 'openrouter' ? { 'HTTP-Referer': 'https://worldmonitor.app', 'X-Title': 'World Monitor' } : {}),
+                ...(provider.name.startsWith('openrouter') ? { 'HTTP-Referer': 'https://worldmonitor.app', 'X-Title': 'World Monitor' } : {}),
               },
               body: JSON.stringify({
                 model: provider.model,
@@ -15323,7 +15596,7 @@ async function callForecastLLM(systemPrompt, userPrompt, options = {}) {
             }
             throw err;
           }
-        }, providerMaxRetries, retryDelayMs);
+        }, provider.maxRetries ?? providerMaxRetries, retryDelayMs);
 
         let json;
         try {
@@ -16304,7 +16577,10 @@ function buildDeepForecastRejectedPreview(paths = []) {
     }));
 }
 
-async function processDeepForecastTask(task = {}) {
+async function processDeepForecastTask(task = {}, options = {}) {
+  const assertLeaseOwned = typeof options.assertLeaseOwned === 'function'
+    ? options.assertLeaseOwned
+    : async () => {};
   const storageConfig = resolveR2StorageConfig();
   if (!storageConfig) return { status: 'skipped', reason: 'storage_not_configured' };
   const snapshot = await getR2JsonObject(storageConfig, task.snapshotKey);
@@ -16320,6 +16596,7 @@ async function processDeepForecastTask(task = {}) {
     }
     throw new Error(errors.join(';'));
   }
+  await assertLeaseOwned();
   await writeForecastRunStatusArtifact({
     runId: snapshot.runId,
     generatedAt: snapshot.generatedAt,
@@ -16371,11 +16648,13 @@ async function processDeepForecastTask(task = {}) {
       simulationEvidence = mergeResult.simulationEvidence;
       // Awaited so patchPublishedForecastsWithSimDecorations completes before artifact writing
       // continues. Fast path (~200ms Redis ops) so no meaningful delay to artifact export.
+      await assertLeaseOwned();
       await writeSimulationDecorations(mergeResult, snapshot).catch((err) =>
         console.warn(`  [SimulationDecorations] write failed (deep path): ${err.message}`)
       );
     }
   } catch (err) {
+    if (isDeepForecastLeaseError(err)) throw err;
     console.warn('[SimulationMerge] Error during merge:', err.message);
   }
 
@@ -16407,6 +16686,7 @@ async function processDeepForecastTask(task = {}) {
       status: 'completed',
       selectedStateIds: (evaluation.selectedPaths || []).filter((path) => path.type === 'expanded').map((path) => path.candidateStateId),
     };
+    await assertLeaseOwned();
     await writeForecastTraceArtifacts({
       ...dataForWrite,
       forecastDepth: 'deep',
@@ -16436,6 +16716,7 @@ async function processDeepForecastTask(task = {}) {
     status: evaluation.status || 'completed_no_material_change',
     selectedStateIds: snapshot.deepForecast?.selectedStateIds || [],
   };
+  await assertLeaseOwned();
   await writeForecastTraceArtifacts({
     ...dataForWrite,
     forecastDepth: 'deep',
@@ -16458,7 +16739,10 @@ async function processDeepForecastTask(task = {}) {
   return { status: deepForecast.status, deepForecast, convergence };
 }
 
-async function writeFailedDeepForecastArtifacts(task = {}, failureReason = '') {
+async function writeFailedDeepForecastArtifacts(task = {}, failureReason = '', options = {}) {
+  const assertLeaseOwned = typeof options.assertLeaseOwned === 'function'
+    ? options.assertLeaseOwned
+    : async () => {};
   const storageConfig = resolveR2StorageConfig();
   if (!storageConfig || !task?.snapshotKey) return;
   const snapshot = await getR2JsonObject(storageConfig, task.snapshotKey).catch(() => null);
@@ -16472,6 +16756,7 @@ async function writeFailedDeepForecastArtifacts(task = {}, failureReason = '') {
     rejectedPathsPreview: Array.isArray(snapshot.deepForecast?.rejectedPathsPreview) ? snapshot.deepForecast.rejectedPathsPreview : [],
     selectedPathCount: 0,
   };
+  await assertLeaseOwned();
   await writeForecastTraceArtifacts({
     ...snapshot,
     forecastDepth: 'fast',
@@ -16777,17 +17062,40 @@ async function processNextDeepForecastTask(options = {}) {
   for (const runId of queuedRunIds) {
     const task = await claimDeepForecastTask(runId, workerId);
     if (!task) { console.log(`  [DeepForecast] ${runId}: already claimed or completed`); continue; }
+    const leaseGuard = createDeepForecastLeaseGuard(runId, workerId);
     try {
-      const result = await processDeepForecastTask(task);
-      await completeDeepForecastTask(runId);
+      await leaseGuard.assertOwned();
+      const result = await processDeepForecastTask(task, {
+        assertLeaseOwned: () => leaseGuard.assertOwned(),
+      });
+      await completeDeepForecastTask(runId, workerId);
       return result;
     } catch (err) {
+      if (isDeepForecastLeaseError(err)) {
+        const reason = err.lockStatus === SIM_LOCK_STATUS_EXPIRED
+          ? 'lease_expired'
+          : err.lockStatus === SIM_LOCK_STATUS_OWNED_BY_OTHER
+            ? 'lease_ownership_lost'
+            : 'lease_renewal_failed';
+        console.warn(`  [DeepForecast] ${runId}: ${reason}; leaving task for reclaim`);
+        return { status: 'skipped', reason, runId };
+      }
       console.warn(`  [DeepForecast] Task failed for ${runId}: ${err.message}`);
-      await writeFailedDeepForecastArtifacts(task, err.message).catch((writeErr) => {
+      try {
+        await writeFailedDeepForecastArtifacts(task, err.message, {
+          assertLeaseOwned: () => leaseGuard.assertOwned(),
+        });
+      } catch (writeErr) {
+        if (isDeepForecastLeaseError(writeErr)) {
+          console.warn(`  [DeepForecast] ${runId}: lease lost before failure publication; leaving task for reclaim`);
+          return { status: 'skipped', reason: 'lease_lost_before_failure_publish', runId };
+        }
         console.warn(`  [DeepForecast] Failed to write failed-task artifacts for ${runId}: ${writeErr.message}`);
-      });
-      await completeDeepForecastTask(runId);
+      }
+      await completeDeepForecastTask(runId, workerId);
       return { status: 'failed', reason: err.message, runId };
+    } finally {
+      await leaseGuard.stop();
     }
   }
   return { status: 'idle' };
@@ -18092,13 +18400,18 @@ redis.call('DEL', KEYS[3])
 return 'COMPLETED'
 `.trim();
 
-const _SIM_LOCK_EXPIRE_LUA = `
+const _LOCK_EXPIRE_IF_OWNED_LUA = `
 local owner = redis.call('GET', KEYS[1])
 if not owner then return 'EXPIRED' end
 if owner ~= ARGV[1] then return 'OWNED_BY_OTHER' end
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
 return 'EXTENDED'
 `.trim();
+
+function removeRunIdFromDeepForecastTestQueue(runId) {
+  if (!_testRedisStore || !Array.isArray(_testRedisStore[FORECAST_DEEP_TASK_QUEUE_KEY])) return;
+  _testRedisStore[FORECAST_DEEP_TASK_QUEUE_KEY] = _testRedisStore[FORECAST_DEEP_TASK_QUEUE_KEY].filter((entry) => entry !== runId);
+}
 
 function removeRunIdFromTestQueue(runId) {
   if (!_testRedisStore || !Array.isArray(_testRedisStore[SIMULATION_TASK_QUEUE_KEY])) return;
@@ -18201,19 +18514,30 @@ async function redisCompareAndDeleteSimulationLock(url, token, lockKey, workerId
  * @param {number} ttlSeconds
  * @returns {Promise<string>}
  */
-async function redisCompareAndExpireSimulationLock(url, token, lockKey, workerId, ttlSeconds) {
+async function redisCompareAndExpireLock(url, token, lockKey, workerId, ttlSeconds, defaultTtlSeconds) {
   if (!workerId) return SIM_TASK_COMPLETE_STATUS_MISSING_WORKER;
-  const ttl = Number.isFinite(ttlSeconds) ? Math.max(1, Math.floor(ttlSeconds)) : SIMULATION_LOCK_TTL_SECONDS;
+  const ttl = Number.isFinite(ttlSeconds) ? Math.max(1, Math.floor(ttlSeconds)) : defaultTtlSeconds;
   if (_testRedisStore) {
     return simulationLockStatusFromTestStore(lockKey, workerId, SIM_LOCK_STATUS_EXTENDED);
   }
   const result = await redisCommand(url, token, [
-    'EVAL', _SIM_LOCK_EXPIRE_LUA, '1',
+    'EVAL', _LOCK_EXPIRE_IF_OWNED_LUA, '1',
     lockKey,
     workerId,
     String(ttl),
   ]);
   return String(result?.result || SIM_LOCK_STATUS_EXPIRED);
+}
+
+async function redisCompareAndExpireSimulationLock(url, token, lockKey, workerId, ttlSeconds) {
+  return redisCompareAndExpireLock(
+    url,
+    token,
+    lockKey,
+    workerId,
+    ttlSeconds,
+    SIMULATION_LOCK_TTL_SECONDS,
+  );
 }
 
 // Lua script for atomic compare-and-swap patch of the canonical forecast key.
@@ -19079,6 +19403,7 @@ export {
   parseForecastProviderOrder,
   getForecastLlmCallOptions,
   getMarketImplicationsMinRunBudgetMs,
+  buildCriticalSignalRouteTag,
   FORECAST_LLM_RUN_BUDGET_MS,
   FORECAST_SEED_LOCK_TTL_MS,
   resolveForecastLlmProviders,
@@ -19169,6 +19494,10 @@ export {
   SIMULATION_PACKAGE_SCHEMA_VERSION,
   SIMULATION_PACKAGE_LATEST_KEY,
   enqueueDeepForecastTask,
+  completeDeepForecastTask,
+  createDeepForecastLeaseGuard,
+  releaseDeepForecastTask,
+  renewDeepForecastTaskLease,
   processNextDeepForecastTask,
   runDeepForecastWorker,
   SIMULATION_OUTCOME_LATEST_KEY,

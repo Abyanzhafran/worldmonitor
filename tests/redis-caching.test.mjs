@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createTempDir, removeTempDir } from './helpers/temp-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
@@ -44,15 +45,39 @@ async function importRedisFresh() {
   return import(`${REDIS_MODULE_URL}?t=${Date.now()}-${Math.random().toString(16).slice(2)}`);
 }
 
+function resolveRelativeTsModule(fromDir, specifier) {
+  const candidates = [
+    resolve(fromDir, specifier),
+    resolve(fromDir, `${specifier}.ts`),
+    resolve(fromDir, `${specifier}.js`),
+    resolve(fromDir, `${specifier}.mjs`),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate) && statSync(candidate).isFile()) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 async function importPatchedTsModule(relPath, replacements) {
   const sourcePath = resolve(root, relPath);
+  const sourceDir = dirname(sourcePath);
   let source = readFileSync(sourcePath, 'utf-8');
 
   for (const [specifier, targetPath] of Object.entries(replacements)) {
     source = source.replaceAll(`'${specifier}'`, `'${pathToFileURL(targetPath).href}'`);
   }
 
-  const tempDir = mkdtempSync(join(tmpdir(), 'wm-ts-module-'));
+  // The patched file is imported from /tmp. Remaining relative specifiers
+  // (e.g. `./_bounds` after a same-directory extract) still resolve against
+  // that temp dir unless they are rewritten to the original sibling path.
+  source = source.replaceAll(/from '((?:\.\.?\/)[^']+)'/g, (match, specifier) => {
+    const targetPath = resolveRelativeTsModule(sourceDir, specifier);
+    return targetPath ? `from '${pathToFileURL(targetPath).href}'` : match;
+  });
+
+  const tempDir = createTempDir('wm-ts-module-');
   const tempPath = join(tempDir, basename(sourcePath));
   writeFileSync(tempPath, source);
 
@@ -60,7 +85,7 @@ async function importPatchedTsModule(relPath, replacements) {
   return {
     module,
     cleanup() {
-      rmSync(tempDir, { recursive: true, force: true });
+      removeTempDir(tempDir);
     },
   };
 }
@@ -795,6 +820,203 @@ describe('negative-result caching', { concurrency: 1 }, () => {
     }
   });
 
+  it('cachedFetchJson ignores WithMeta-only fields on a superset options object', async () => {
+    const redis = await importRedisFresh();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      USAGE_TELEMETRY: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    const originalWarn = console.warn;
+
+    const writes = [];
+    const warnings = [];
+    globalThis.fetch = async (url, init) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) return jsonResponse({ result: undefined });
+      if (isSetRequest(url, init)) {
+        writes.push(parseSetRequest(url, init));
+        return jsonResponse({ result: 'OK' });
+      }
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+    console.warn = (...args) => { warnings.push(args); };
+
+    let shouldFetchCalls = 0;
+    let callerLocalChecks = 0;
+    let usageWaits = 0;
+    const supersetOpts = {
+      timeoutMs: 500,
+      cacheFetcherErrors: true,
+      shouldFetch: () => {
+        shouldFetchCalls += 1;
+        return true;
+      },
+      cacheFailures: false,
+      inflightKey: 'plain:test:shared-inflight-key',
+      isCallerLocalError: () => {
+        callerLocalChecks += 1;
+        return true;
+      },
+      usage: {
+        provider: 'plain-helper-regression',
+        ctx: {
+          waitUntil() {
+            usageWaits += 1;
+          },
+        },
+      },
+    };
+
+    try {
+      let releaseFetchers;
+      const fetcherGate = new Promise((resolvePromise) => {
+        releaseFetchers = resolvePromise;
+      });
+      const first = redis.cachedFetchJson(
+        'plain:test:first',
+        300,
+        async () => {
+          await fetcherGate;
+          return { value: 'first' };
+        },
+        60,
+        supersetOpts,
+      );
+      const second = redis.cachedFetchJson(
+        'plain:test:second',
+        300,
+        async () => {
+          await fetcherGate;
+          return { value: 'second' };
+        },
+        60,
+        supersetOpts,
+      );
+
+      await new Promise((resolvePromise) => setImmediate(resolvePromise));
+      releaseFetchers();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      assert.deepEqual(firstResult, { value: 'first' });
+      assert.deepEqual(
+        secondResult,
+        { value: 'second' },
+        'plain calls with distinct keys must not share a WithMeta inflightKey',
+      );
+
+      const nullResult = await redis.cachedFetchJson(
+        'plain:test:null',
+        300,
+        async () => null,
+        60,
+        supersetOpts,
+      );
+      assert.equal(nullResult, null);
+
+      const rejection = new Error('plain superset rejection');
+      await assert.rejects(
+        () => redis.cachedFetchJson(
+          'plain:test:rejection',
+          300,
+          async () => {
+            throw rejection;
+          },
+          60,
+          supersetOpts,
+        ),
+        (error) => {
+          assert.strictEqual(error, rejection, 'plain helper must propagate the original fetcher error');
+          return true;
+        },
+      );
+
+      const writesByKey = new Map(writes.map((write) => [write.key, write]));
+      const nullWrite = writesByKey.get('plain:test:null');
+      const rejectionWrite = writesByKey.get('plain:test:rejection');
+      assert.ok(nullWrite, 'plain null results must keep legacy negative caching');
+      assert.ok(rejectionWrite, 'plain fetcher errors must keep legacy negative caching');
+      assert.equal(JSON.parse(nullWrite.value), '__WM_NEG__');
+      assert.equal(JSON.parse(rejectionWrite.value), '__WM_NEG__');
+      assert.equal(shouldFetchCalls, 0, 'plain helper must not evaluate WithMeta shouldFetch');
+      assert.equal(callerLocalChecks, 0, 'plain helper must not evaluate WithMeta isCallerLocalError');
+      assert.equal(usageWaits, 0, 'plain helper must not emit WithMeta usage telemetry');
+      assert.deepEqual(warnings, [[
+        '[redis] cachedFetchJson fetcher failed for "plain:test:rejection":',
+        'plain superset rejection',
+      ]]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      console.warn = originalWarn;
+      restoreEnv();
+    }
+  });
+
+  it('keeps rejected-fetcher warnings attributed to each public cache helper', async () => {
+    const redis = await importRedisFresh();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    const originalWarn = console.warn;
+    const warnings = [];
+
+    globalThis.fetch = async (url, init) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) return jsonResponse({ result: undefined });
+      if (isSetRequest(url, init)) return jsonResponse({ result: 'OK' });
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+    console.warn = (...args) => { warnings.push(args); };
+
+    try {
+      const plainError = new Error('plain helper rejected');
+      await assert.rejects(
+        () => redis.cachedFetchJson(
+          'warn:test:plain',
+          300,
+          async () => {
+            throw plainError;
+          },
+        ),
+        (error) => {
+          assert.strictEqual(error, plainError);
+          return true;
+        },
+      );
+
+      const metaError = new Error('meta helper rejected');
+      await assert.rejects(
+        () => redis.cachedFetchJsonWithMeta(
+          'warn:test:meta',
+          300,
+          async () => {
+            throw metaError;
+          },
+        ),
+        (error) => {
+          assert.strictEqual(error, metaError);
+          return true;
+        },
+      );
+
+      assert.deepEqual(warnings, [
+        ['[redis] cachedFetchJson fetcher failed for "warn:test:plain":', 'plain helper rejected'],
+        ['[redis] cachedFetchJsonWithMeta fetcher failed for "warn:test:meta":', 'meta helper rejected'],
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      console.warn = originalWarn;
+      restoreEnv();
+    }
+  });
+
   it('retries fetcher errors when error negative caching is disabled', async () => {
     const redis = await importRedisFresh();
     const restoreEnv = withEnv({
@@ -1062,6 +1284,8 @@ describe('cachedFetchJson inflight timeout (#3539)', { concurrency: 1 }, () => {
       assert.equal(r1.status, 'rejected');
       assert.equal(r2.status, 'rejected');
       assert.equal(r3.status, 'rejected');
+      assert.ok(r1.reason instanceof redis.CachedFetchTimeoutError);
+      assert.equal(r1.reason.name, 'CachedFetchTimeoutError');
       assert.match(r1.reason.message, /^cachedFetchJson timeout after 50ms for "hang:test:key"$/);
 
       // Critical assertion: a follow-up call after the timeout must trigger a
@@ -1194,7 +1418,11 @@ describe('cachedFetchJson inflight timeout (#3539)', { concurrency: 1 }, () => {
 
       await assert.rejects(
         () => redis.cachedFetchJsonWithMeta('meta:hang:key', 60, () => new Promise(() => {})),
-        /^Error: cachedFetchJsonWithMeta timeout after 50ms for "meta:hang:key"$/,
+        (err) => {
+          assert.ok(err instanceof redis.CachedFetchTimeoutError);
+          assert.match(err.message, /^cachedFetchJsonWithMeta timeout after 50ms for "meta:hang:key"$/);
+          return true;
+        },
       );
 
       // Subsequent call must succeed against a healthy fetcher — proves the
@@ -1330,6 +1558,7 @@ describe('theater posture caching behavior', { concurrency: 1 }, () => {
     return importPatchedTsModule('server/worldmonitor/military/v1/get-theater-posture.ts', {
       './_shared': resolve(root, 'server/worldmonitor/military/v1/_shared.ts'),
       '../../../_shared/constants': resolve(root, 'server/_shared/constants.ts'),
+      '../../../_shared/provider-redistribution': resolve(root, 'server/_shared/provider-redistribution.ts'),
       '../../../_shared/redis': resolve(root, 'server/_shared/redis.ts'),
       '../../../_shared/response-headers': resolve(root, 'server/_shared/response-headers.ts'),
     });
@@ -1373,6 +1602,121 @@ describe('theater posture caching behavior', { concurrency: 1 }, () => {
       const result = await module.getTheaterPosture({ request: new Request('https://worldmonitor.app/api/military/v1/get-theater-posture') }, {});
       assert.equal(openskyFetchCount, 0, 'must not call upstream APIs (Redis-read-only)');
       assert.deepEqual(result, liveData, 'should return live Redis data');
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('keeps OpenSky posture in the product but excludes it from API responses', async () => {
+    const { module, cleanup } = await importTheaterPosture();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+    });
+    const originalFetch = globalThis.fetch;
+    const openskyData = {
+      provider: 'OpenSky Network',
+      theaters: [{ theater: 'product-only', postureLevel: 'elevated', activeFlights: 2 }],
+    };
+
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) {
+        const key = decodeURIComponent(raw.split('/get/').pop() || '');
+        return jsonResponse({
+          result: key === 'theater-posture:sebuf:v1' ? JSON.stringify(openskyData) : undefined,
+        });
+      }
+      return jsonResponse({}, false);
+    };
+
+    try {
+      const product = await module.getTheaterPosture({
+        request: new Request('https://worldmonitor.app/api/military/v1/get-theater-posture'),
+      }, {});
+      assert.deepEqual(product, { theaters: openskyData.theaters });
+
+      const api = await module.getTheaterPosture({
+        request: new Request('https://worldmonitor.app/api/military/v1/get-theater-posture', {
+          headers: { 'X-WorldMonitor-Key': 'wm_commercial-api-key' },
+        }),
+      }, {});
+      assert.deepEqual(api, { theaters: [] });
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('serves provider-attributed Wingbits posture to API callers', async () => {
+    const { module, cleanup } = await importTheaterPosture();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+    });
+    const originalFetch = globalThis.fetch;
+    const wingbitsData = {
+      provider: 'wingbits',
+      theaters: [{ theater: 'redistributable', postureLevel: 'normal', activeFlights: 1 }],
+    };
+
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) {
+        const key = decodeURIComponent(raw.split('/get/').pop() || '');
+        return jsonResponse({
+          result: key === 'theater-posture:sebuf:v1' ? JSON.stringify(wingbitsData) : undefined,
+        });
+      }
+      return jsonResponse({}, false);
+    };
+
+    try {
+      const result = await module.getTheaterPosture({
+        request: new Request('https://worldmonitor.app/api/military/v1/get-theater-posture', {
+          headers: { 'X-WorldMonitor-Key': 'wm_commercial-api-key' },
+        }),
+      }, {});
+      assert.deepEqual(result, { theaters: wingbitsData.theaters });
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('fails closed for an unattributed posture requested by an API caller', async () => {
+    const { module, cleanup } = await importTheaterPosture();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+    });
+    const originalFetch = globalThis.fetch;
+    const unattributedData = {
+      theaters: [{ theater: 'unknown-provider', postureLevel: 'elevated', activeFlights: 3 }],
+    };
+
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) {
+        const key = decodeURIComponent(raw.split('/get/').pop() || '');
+        return jsonResponse({
+          result: key === 'theater-posture:sebuf:v1' ? JSON.stringify(unattributedData) : undefined,
+        });
+      }
+      return jsonResponse({}, false);
+    };
+
+    try {
+      const result = await module.getTheaterPosture({
+        request: new Request('https://worldmonitor.app/api/military/v1/get-theater-posture', {
+          headers: { 'X-WorldMonitor-Key': 'wm_commercial-api-key' },
+        }),
+      }, {});
+      assert.deepEqual(result, { theaters: [] });
     } finally {
       cleanup();
       globalThis.fetch = originalFetch;
@@ -1527,11 +1871,21 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
     return { request: new Request(url) };
   }
 
-  function installIntelFetchMock({ store, setKeys, userPrompts, counters }) {
+  function installIntelFetchMock({ store, setKeys, userPrompts, counters, revoked = [] }) {
     globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
       if (raw === 'https://api.groq.com') {
         return jsonResponse({});
+      }
+      // #7084: the shared country context now reads the operator revocation
+      // set before grounding, so every reader of news:digest:v1:* filters the
+      // same way. Without this branch the mock threw, the read reported
+      // unreadable, and grounding fail-closed to empty.
+      if (raw.includes('/pipeline')) {
+        const commands = JSON.parse(String(init.body || '[]'));
+        return jsonResponse(commands.map(([verb]) => (
+          String(verb).toUpperCase() === 'SMEMBERS' ? { result: revoked } : { result: null }
+        )));
       }
       if (raw.includes('api.groq.com/openai/v1/chat/completions')) {
         counters.groqCalls += 1;
@@ -1565,6 +1919,61 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
     VERCEL_ENV: undefined,
     VERCEL_GIT_COMMIT_SHA: undefined,
   };
+
+  it('an operator-revoked URL never reaches the country brief (#7084)', async () => {
+    // The digest body is stored UNFILTERED on purpose (a lifted revocation has
+    // to restore its items), so every reader of news:digest:v1:* must apply the
+    // suppression set itself. This handler read that key directly and did not,
+    // which published a revoked URL in the brief's sources[] -- and the brief
+    // is cached for six hours, so it outlived the digest's own TTL.
+    const { module, cleanup } = await importCountryIntelBrief();
+    const restoreEnv = withEnv(INTEL_TEST_ENV);
+    const originalFetch = globalThis.fetch;
+
+    const store = new Map();
+    store.set('news:digest:v1:full:en', JSON.stringify({
+      categories: {
+        conflict: {
+          items: [
+            { title: 'Israel retracted report', source: 'Reuters', link: 'https://example.com/il-revoked', pubDate: '2026-07-05T06:00:00.000Z' },
+            { title: 'Israel announces new security framework', source: 'Reuters', link: 'https://example.com/il-ok', pubDate: '2026-07-05T06:00:00.000Z' },
+          ],
+        },
+      },
+    }));
+    const setKeys = [];
+    const userPrompts = [];
+    const counters = { groqCalls: 0 };
+    installIntelFetchMock({
+      store, setKeys, userPrompts, counters,
+      revoked: ['https://example.com/il-revoked'],
+    });
+
+    try {
+      const out = await module.getCountryIntelBrief(
+        makeCtx('https://example.com/api/intelligence/v1/get-country-intel-brief?country_code=IL'),
+        { countryCode: 'IL' },
+      );
+      assert.ok(
+        !userPrompts[0]?.includes('Israel retracted report'),
+        'a revoked headline must not reach the LLM prompt',
+      );
+      assert.ok(
+        !userPrompts[0]?.includes('il-revoked'),
+        'a revoked URL must not reach the LLM prompt',
+      );
+      assert.equal(
+        out.sources.some((entry) => String(entry?.url).includes('il-revoked')), false,
+        'a revoked URL must not be published in the brief sources',
+      );
+      // Positive control: suppression must be surgical, not a blanket wipe.
+      assert.match(userPrompts[0], /Israel announces new security framework/);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+      await cleanup?.();
+    }
+  });
 
   it('anon callers share one digest-grounded cache entry regardless of client context', async () => {
     const { module, cleanup } = await importCountryIntelBrief();
@@ -1712,6 +2121,7 @@ describe('aviation aircraft provider priority', { concurrency: 1 }, () => {
       './_shared': resolve(root, 'server/_shared/relay.ts'),
       '../../../_shared/constants': resolve(root, 'server/_shared/constants.ts'),
       '../../../_shared/redis': resolve(root, 'server/_shared/redis.ts'),
+      '../../../_shared/provider-redistribution': resolve(root, 'server/_shared/provider-redistribution.ts'),
     });
   }
 
@@ -1929,10 +2339,12 @@ describe('aviation aircraft provider priority', { concurrency: 1 }, () => {
       UPSTASH_REDIS_REST_TOKEN: undefined,
     });
     const originalFetch = globalThis.fetch;
+    let openskyCalls = 0;
 
     globalThis.fetch = async (url) => {
       const raw = String(url);
       if (raw.includes('/opensky/states/all') && raw.includes('icao24=')) {
+        openskyCalls += 1;
         return jsonResponse({
           states: [['4b1805', 'TEST1', null, null, null, 10.5, 20.5, 30000, false, 420, 180]],
         });
@@ -1953,6 +2365,56 @@ describe('aviation aircraft provider priority', { concurrency: 1 }, () => {
       assert.equal(result.positions[0].icao24, '4b1805');
       assert.equal(result.positions[0].lat, 20.5);
       assert.equal(result.positions[0].lon, 10.5);
+      assert.equal(openskyCalls, 1);
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('keeps OpenSky in the product but excludes it from API-key responses', async () => {
+    const { module, cleanup } = await importTrackAircraft();
+    const restoreEnv = withEnv({
+      WS_RELAY_URL: 'wss://relay.test',
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    let openskyCalls = 0;
+
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/opensky/states/all') && raw.includes('icao24=')) {
+        openskyCalls += 1;
+        return jsonResponse({
+          states: [['4b1805', 'TEST1', null, null, null, 10.5, 20.5, 30000, false, 420, 180]],
+        });
+      }
+      return jsonResponse({}, false);
+    };
+
+    try {
+      const product = await module.trackAircraft({
+        request: new Request('https://wm.test/api/aviation/v1/track-aircraft', {
+          headers: { 'X-WorldMonitor-Key': 'wms_browser-session' },
+        }),
+      }, {
+        icao24: '4b1805', swLat: 0, swLon: 0, neLat: 0, neLon: 0,
+      });
+      const api = await module.trackAircraft({
+        request: new Request('https://wm.test/api/aviation/v1/track-aircraft', {
+          headers: { 'X-Api-Key': 'wm_customer-key' },
+        }),
+      }, {
+        icao24: '4b1805', swLat: 0, swLon: 0, neLat: 0, neLon: 0,
+      });
+
+      assert.equal(product.source, 'opensky');
+      assert.equal(product.positions.length, 1, 'the dashboard product keeps its OpenSky observation');
+      assert.equal(api.source, 'none');
+      assert.deepEqual(api.positions, [], 'programmatic API responses must not redistribute OpenSky data');
+      assert.equal(openskyCalls, 1, 'only the dashboard request may spend an OpenSky fallback call');
     } finally {
       cleanup();
       globalThis.fetch = originalFetch;
@@ -2052,10 +2514,12 @@ describe('military flights bbox behavior', { concurrency: 1 }, () => {
   async function importListMilitaryFlights() {
     return importPatchedTsModule('server/worldmonitor/military/v1/list-military-flights.ts', {
       './_shared': resolve(root, 'server/worldmonitor/military/v1/_shared.ts'),
+      './_bounds': resolve(root, 'server/worldmonitor/military/v1/_bounds.ts'),
       '../../../_shared/constants': resolve(root, 'server/_shared/constants.ts'),
       '../../../_shared/redis': resolve(root, 'server/_shared/redis.ts'),
       '../../../_shared/relay': resolve(root, 'server/_shared/relay.ts'),
       '../../../_shared/response-headers': resolve(root, 'server/_shared/response-headers.ts'),
+      '../../../_shared/provider-redistribution': resolve(root, 'server/_shared/provider-redistribution.ts'),
     });
   }
 
@@ -2140,6 +2604,112 @@ describe('military flights bbox behavior', { concurrency: 1 }, () => {
       assert.deepEqual(result.flights.map((flight) => flight.id), ['adsb-ae0301']);
       assert.equal(result.flights[0].hexCode, 'AE0301');
       assert.equal(result.flights[0].source, 'adsb.lol');
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('filters OpenSky seed rows from API-key responses while retaining redistributable providers', async () => {
+    const { module, cleanup } = await importListMilitaryFlights();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      LOCAL_API_MODE: undefined,
+      WS_RELAY_URL: 'wss://relay.test',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    const redisKeys = [];
+
+    globalThis.fetch = async (url, init) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) {
+        const key = decodeURIComponent(raw.split('/get/')[1] || '');
+        redisKeys.push(key);
+        if (key === 'military:flights:v1') {
+          return jsonResponse({
+            result: JSON.stringify({
+              flights: [
+                { id: 'open-1', hexCode: 'OPEN01', callsign: 'RCH101', lat: 20.2, lon: 10.2, sourceMeta: { source: 'opensky-auth' } },
+                { id: 'wing-1', hexCode: 'WING01', callsign: 'RCH102', lat: 20.3, lon: 10.3, sourceMeta: { source: 'wingbits' } },
+                { id: 'adsb-1', hexCode: 'ADSB01', callsign: 'RCH103', lat: 20.4, lon: 10.4, sourceMeta: { source: 'adsb.lol' } },
+                { id: 'unknown-1', hexCode: 'UNKNOWN01', callsign: 'RCH104', lat: 20.5, lon: 10.5 },
+              ],
+              coverage: 'global',
+              fetchedAt: Date.now(),
+            }),
+          });
+        }
+        return jsonResponse({ result: null });
+      }
+      if (isSetRequest(url, init)) return jsonResponse({ result: 'OK' });
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+
+    try {
+      const result = await module.listMilitaryFlights({
+        request: new Request('https://wm.test/api/military/v1/list-military-flights', {
+          headers: { 'X-WorldMonitor-Key': 'wm_customer-key' },
+        }),
+      }, seededRequest);
+
+      assert.deepEqual(result.flights.map((flight) => flight.id), ['wing-1', 'adsb-1']);
+      assert.deepEqual(result.flights.map((flight) => flight.source), ['wingbits', 'adsb.lol']);
+      assert.deepEqual(result.pagination, { nextCursor: '', totalCount: 2 });
+      assert.match(redisKeys[0], /:redistributable$/, 'API results must not share a cache entry with the product fallback policy');
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('fails closed for unattributed flights inside cached API clusters', async () => {
+    const { module, cleanup } = await importListMilitaryFlights();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    const wingbits = { ...cachedMilitaryFlight('wing-cached', 20.2, 10.2), source: 'wingbits' };
+    const unattributed = { ...cachedMilitaryFlight('unknown-cached', 20.3, 10.3), source: '' };
+
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) {
+        const key = decodeURIComponent(raw.split('/get/')[1] || '');
+        if (key.endsWith(':redistributable')) {
+          return jsonResponse({
+            result: JSON.stringify({
+              flights: [wingbits, unattributed],
+              clusters: [
+                { id: 'mixed', flightCount: 2, flights: [wingbits, unattributed] },
+                { id: 'unknown-only', flightCount: 1, flights: [unattributed] },
+              ],
+            }),
+          });
+        }
+        return jsonResponse({ result: null });
+      }
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+
+    try {
+      const result = await module.listMilitaryFlights({
+        request: new Request('https://wm.test/api/military/v1/list-military-flights', {
+          headers: { 'X-WorldMonitor-Key': 'wm_customer-key' },
+        }),
+      }, seededRequest);
+
+      assert.deepEqual(result.flights.map((flight) => flight.id), ['wing-cached']);
+      assert.deepEqual(result.clusters.map((cluster) => cluster.id), ['mixed']);
+      assert.equal(result.clusters[0].flightCount, 1);
+      assert.deepEqual(result.clusters[0].flights.map((flight) => flight.id), ['wing-cached']);
     } finally {
       cleanup();
       globalThis.fetch = originalFetch;
@@ -3000,6 +3570,45 @@ describe('military flights bbox behavior', { concurrency: 1 }, () => {
     }
   });
 
+  it('does not use OpenSky recovery for an API-key request when the seed is missing', async () => {
+    const { module, cleanup } = await importListMilitaryFlights();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      LOCAL_API_MODE: undefined,
+      WS_RELAY_URL: 'wss://relay.test',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    let openskyCalls = 0;
+
+    globalThis.fetch = async (url, init) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) return jsonResponse({ result: null });
+      if (isSetRequest(url, init)) return jsonResponse({ result: 'OK' });
+      if (raw.includes('/opensky')) {
+        openskyCalls += 1;
+        return jsonResponse({ states: [] });
+      }
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+
+    try {
+      const result = await module.listMilitaryFlights({
+        request: new Request('https://wm.test/api/military/v1/list-military-flights', {
+          headers: { 'X-Api-Key': 'wm_customer-key' },
+        }),
+      }, request);
+      assert.equal(openskyCalls, 0, 'programmatic traffic must not trigger OpenSky recovery');
+      assert.deepEqual(result, { flights: [], clusters: [], pagination: { nextCursor: '', totalCount: 0 } });
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
   it('keeps global request recovery within legal OpenSky bounds', async () => {
     const { module, cleanup } = await importListMilitaryFlights();
     const restoreEnv = withEnv({
@@ -3697,6 +4306,44 @@ describe('bounded JSON-list history storage', { concurrency: 1 }, () => {
         (await redis.readCachedJsonList('history:key', 16)).status,
         'error',
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+});
+
+describe('allowlisted Redis transactions', { concurrency: 1 }, () => {
+  it('uses /multi-exec and preserves preview key prefixes', async () => {
+    const redis = await importRedisFresh();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: 'preview',
+      VERCEL_GIT_COMMIT_SHA: 'abcdef1234567890',
+    });
+    const originalFetch = globalThis.fetch;
+    const captured = [];
+    globalThis.fetch = async (url, init) => {
+      captured.push({ url: String(url), init });
+      return jsonResponse([{ result: 'OK' }, { result: 0 }]);
+    };
+
+    try {
+      const results = await redis.runRedisTransaction([
+        ['SET', 'generation:data', '{}', 'EX', 600],
+        ['DEL', 'generation:old'],
+      ]);
+
+      assert.deepEqual(results, [{ result: 'OK' }, { result: 0 }]);
+      assert.equal(captured[0].url, 'https://redis.test/multi-exec');
+      assert.deepEqual(JSON.parse(String(captured[0].init.body)), [
+        ['SET', 'preview:abcdef12:generation:data', '{}', 'EX', 600],
+        ['DEL', 'preview:abcdef12:generation:old'],
+      ]);
+      const proxy = readFileSync(resolve(root, 'docker/redis-rest-proxy.mjs'), 'utf8');
+      assert.match(proxy, /req\.url === '\/multi-exec'/);
+      assert.match(proxy, /'GET', 'SET', 'DEL'/);
     } finally {
       globalThis.fetch = originalFetch;
       restoreEnv();
