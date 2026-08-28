@@ -266,7 +266,13 @@ export async function setCachedJson(key: string, value: unknown, ttlSeconds: num
  * could not be confirmed. Callers that need the persisted winner must GET
  * after this and fail closed on a miss.
  */
-export async function setCachedJsonIfAbsent(key: string, value: unknown, ttlSeconds: number, raw = false): Promise<boolean> {
+export async function setCachedJsonIfAbsent(
+  key: string,
+  value: unknown,
+  ttlSeconds: number,
+  raw = false,
+  onError?: (error: unknown) => void,
+): Promise<boolean> {
   if (process.env.LOCAL_API_MODE === 'tauri-sidecar') {
     const { sidecarCacheSetIfAbsent } = await import('./sidecar-cache');
     return sidecarCacheSetIfAbsent(key, value, ttlSeconds);
@@ -297,6 +303,8 @@ export async function setCachedJsonIfAbsent(key: string, value: unknown, ttlSeco
     }
     return data?.result === 'OK';
   } catch (err) {
+    // sentry-coverage-ok: onError receives the original exception before the fail-closed return.
+    onError?.(err);
     console.warn('[redis] setCachedJsonIfAbsent failed:', errMsg(err));
     return false;
   }

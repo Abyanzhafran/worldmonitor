@@ -4570,6 +4570,37 @@ describe('setCachedJson wire shape and failure reporting', { concurrency: 1 }, (
       restoreEnv();
     }
   });
+
+  it('passes first-writer transport exceptions to the caller error reporter', async () => {
+    const redis = await importRedisFresh();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+    });
+    const originalFetch = globalThis.fetch;
+    const originalWarn = console.warn;
+    const reported = [];
+    globalThis.fetch = async () => { throw new Error('redis transport down'); };
+    console.warn = () => {};
+
+    try {
+      const created = await redis.setCachedJsonIfAbsent(
+        'k',
+        { v: 1 },
+        30,
+        false,
+        (error) => { reported.push(error); },
+      );
+
+      assert.equal(created, false, 'transport failure must remain fail-closed');
+      assert.equal(reported.length, 1, 'transport exception must reach the caller reporter');
+      assert.equal(reported[0]?.message, 'redis transport down');
+    } finally {
+      globalThis.fetch = originalFetch;
+      console.warn = originalWarn;
+      restoreEnv();
+    }
+  });
 });
 
 describe('bounded JSON-list history storage', { concurrency: 1 }, () => {
