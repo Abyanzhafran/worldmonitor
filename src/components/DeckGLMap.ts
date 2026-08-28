@@ -75,7 +75,7 @@ import { getCachedFuelShortageRegistry } from '@/shared/fuel-shortage-registry-s
 import { tokenizeForMatch, matchKeyword, matchesAnyKeyword, findMatchingKeywords } from '@/utils/keyword-match';
 import { t } from '@/services/i18n';
 import { debounce, rafSchedule, getCurrentTheme } from '@/utils/index';
-import { isInputPending, scheduleYield } from '@/utils/after-paint';
+import { isInputPending, scheduleIdle, scheduleYield } from '@/utils/after-paint';
 import { showLayerWarning } from '@/utils/layer-warning';
 import { localizeMapLabels } from '@/utils/map-locale';
 import {
@@ -116,6 +116,7 @@ import {
   getLayersForVariant,
   resolveLayerLabel,
   bindLayerSearch,
+  bindLayerPanelCollapse,
   getLayerExplanation,
   hasCuratedLayerExplanation,
   isLayerEntitled,
@@ -570,6 +571,14 @@ export class DeckGLMap {
   private aptGroupsLoaded = false;
   private _unsubscribeAuthState: (() => void) | null = null;
   private _unsubscribeEntitlement: (() => void) | null = null;
+  private layerTogglesMounted = false;
+  private cancelLayerTogglesIdleMount: (() => void) | null = null;
+  private layerTogglesMountTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  // Per-layer panel state pushed in before the panel exists (#5160). Recorded
+  // here so the deferred mount can replay it instead of dropping it.
+  private hiddenLayerToggles = new Set<keyof MapLayers>();
+  private layerToggleLoading = new Map<keyof MapLayers, boolean>();
+  private layerToggleReady = new Map<keyof MapLayers, boolean>();
   private aptGroupsLayerFailed = false;
   private satelliteImageryLayerFailed = false;
   private iranEvents: IranEvent[] = [];
@@ -878,7 +887,7 @@ export class DeckGLMap {
     if (this.chrome) {
       this.createControls();
       this.createTimeSlider();
-      this.createLayerToggles();
+      this.scheduleLayerTogglesMount();
       this.createLegend();
     }
 
@@ -5435,7 +5444,66 @@ export class DeckGLMap {
     });
   }
 
+  /**
+   * Mount the layer panel once the basemap has settled rather than inside the
+   * map's init burst (#5160).
+   *
+   * `createLayerToggles()` used to run synchronously one line after
+   * `initMapLibre()` was kicked off, so the panel painted — and started taking
+   * clicks — while the main thread was still busy with MapLibre style parse,
+   * WebGL shader compile and the first deck.gl commits. The DeckGL renderer only
+   * mounts on demand (MapContainer's renderer gate), so that burst lines up
+   * exactly with the user reaching for the map: clicks landed with multi-second
+   * input delay, which is what made this panel the worst desktop INP target in
+   * the field. Building it, ~30 rows deep, *was* itself part of that burst.
+   *
+   * Order is basemap `load` -> idle slot -> build. `MOUNT_DEADLINE_MS` is a hard
+   * ceiling so the panel still appears when `load` never fires — the tile-failure
+   * path recreates the MapLibre map, and its `load` listener with it, leaving the
+   * listener registered here on an instance that is already gone.
+   *
+   * The ceiling sits deliberately high, just under the 10s style watchdog below.
+   * A tighter one would fire first on exactly the slow, CPU-throttled sessions
+   * that produced these INP events and drop the panel back into the burst. It
+   * costs little: before the basemap draws there is nothing for a layer toggle
+   * to act on.
+   */
+  private scheduleLayerTogglesMount(): void {
+    const MOUNT_DEADLINE_MS = 8000;
+
+    const mount = (): void => {
+      if (this.layerTogglesMounted || this.destroyed) return;
+      if (this.layerTogglesMountTimeoutId !== null) {
+        clearTimeout(this.layerTogglesMountTimeoutId);
+        this.layerTogglesMountTimeoutId = null;
+      }
+      this.cancelLayerTogglesIdleMount?.();
+      this.cancelLayerTogglesIdleMount = null;
+      this.createLayerToggles();
+    };
+
+    this.layerTogglesMountTimeoutId = setTimeout(mount, MOUNT_DEADLINE_MS);
+
+    const mountWhenIdle = (): void => {
+      if (this.layerTogglesMounted || this.destroyed) return;
+      this.cancelLayerTogglesIdleMount = scheduleIdle(mount);
+    };
+
+    void this.initPromise
+      .then(() => {
+        if (this.layerTogglesMounted || this.destroyed) return;
+        const map = this.maplibreMap;
+        if (!map) { mount(); return; }
+        if (map.loaded()) { mountWhenIdle(); return; }
+        map.once('load', mountWhenIdle);
+      })
+      .catch(() => { /* init failed; MOUNT_DEADLINE_MS still mounts the panel */ });
+  }
+
   private createLayerToggles(): void {
+    if (this.destroyed || this.layerTogglesMounted) return;
+    this.layerTogglesMounted = true;
+
     const toggles = document.createElement('div');
     toggles.className = 'layer-toggles deckgl-layer-toggles';
 
@@ -5454,7 +5522,7 @@ export class DeckGLMap {
       <div class="toggle-header">
         <span>${t('components.deckgl.layersTitle')}</span>
         <button class="layer-help-btn" aria-label="${t('components.deckgl.layerGuide')}">?</button>
-        <button class="toggle-collapse">&#9660;</button>
+        <button type="button" class="toggle-collapse" aria-label="${t('components.deckgl.layersTitle')}" aria-expanded="true">&#9660;</button>
       </div>
       <input type="text" class="layer-search" placeholder="${t('components.deckgl.layerSearch')}" autocomplete="off" spellcheck="false" />
       <div class="toggle-list" style="max-height: 32vh; overflow-y: auto; scrollbar-width: thin;">
@@ -5589,8 +5657,6 @@ export class DeckGLMap {
     const helpBtn = toggles.querySelector('.layer-help-btn');
     helpBtn?.addEventListener('click', () => this.showLayerHelp());
 
-    // Collapse toggle
-    const collapseBtn = toggles.querySelector('.toggle-collapse');
     const toggleList = toggles.querySelector('.toggle-list');
 
     // Manual scroll: intercept wheel, prevent map zoom, scroll the list ourselves
@@ -5603,13 +5669,17 @@ export class DeckGLMap {
       toggles.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: false });
     }
     bindLayerSearch(toggles);
-    const searchEl = toggles.querySelector('.layer-search') as HTMLElement | null;
+    // #5160: the collapse target is the whole header, not just the chevron.
+    bindLayerPanelCollapse(toggles);
 
-    collapseBtn?.addEventListener('click', () => {
-      toggleList?.classList.toggle('collapsed');
-      if (searchEl) searchEl.style.display = toggleList?.classList.contains('collapsed') ? 'none' : '';
-      if (collapseBtn) setTrustedHtml(collapseBtn, trustedHtml(toggleList?.classList.contains('collapsed') ? '&#9654;' : '&#9660;', "legacy direct innerHTML migration"));
-    });
+    // The panel mounts after the basemap settles now, so replay the per-layer UI
+    // state that MapContainer.rehydrateActiveMap() and the data loaders pushed
+    // while there was no panel to receive it.
+    for (const layer of this.hiddenLayerToggles) this.hideLayerToggle(layer);
+    for (const [layer, loading] of this.layerToggleLoading) this.setLayerLoading(layer, loading);
+    for (const [layer, hasData] of this.layerToggleReady) this.setLayerReady(layer, hasData);
+    this.enforceLayerLimit();
+    this.updateZoomHints();
   }
 
   private showLayerExplanation(layer: keyof MapLayers): void {
@@ -7193,6 +7263,7 @@ export class DeckGLMap {
 
   // UI visibility methods
   public hideLayerToggle(layer: keyof MapLayers): void {
+    this.hiddenLayerToggles.add(layer);
     const toggle = this.container.querySelector(`.layer-toggle[data-layer="${layer}"]`);
     if (toggle) {
       const row = toggle.closest('.layer-toggle-row') as HTMLElement | null;
@@ -7203,11 +7274,13 @@ export class DeckGLMap {
   }
 
   public setLayerLoading(layer: keyof MapLayers, loading: boolean): void {
+    this.layerToggleLoading.set(layer, loading);
     const toggle = this.container.querySelector(`.layer-toggle[data-layer="${layer}"]`);
     if (toggle) toggle.classList.toggle('loading', loading);
   }
 
   public setLayerReady(layer: keyof MapLayers, hasData: boolean): void {
+    this.layerToggleReady.set(layer, hasData);
     const toggle = this.container.querySelector(`.layer-toggle[data-layer="${layer}"]`);
     if (!toggle) return;
 
@@ -7882,6 +7955,13 @@ export class DeckGLMap {
       clearTimeout(this.styleLoadTimeoutId);
       this.styleLoadTimeoutId = null;
     }
+
+    if (this.layerTogglesMountTimeoutId !== null) {
+      clearTimeout(this.layerTogglesMountTimeoutId);
+      this.layerTogglesMountTimeoutId = null;
+    }
+    this.cancelLayerTogglesIdleMount?.();
+    this.cancelLayerTogglesIdleMount = null;
     this.stopPulseAnimation();
     this.stopDayNightTimer();
     this.stopWeatherRadar();

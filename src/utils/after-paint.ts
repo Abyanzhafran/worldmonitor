@@ -107,3 +107,34 @@ export function scheduleYield(run: () => void): () => void {
   });
   return () => { aborted = true; };
 }
+
+/**
+ * Run `task` in the first idle slot, with a cancel handle and a hard deadline.
+ *
+ * Same fire-once/cancel shape as `scheduleYield`, but waits for genuine idle
+ * rather than the next task. Use it for work that must not land inside a frame
+ * the browser is already committing — deferring UI chrome past a renderer's
+ * init burst, for instance (#5160) — where `yieldToMain()` would resume too
+ * eagerly and re-enter the very burst being avoided.
+ *
+ * `requestIdleCallback` is Chromium/Firefox-only; Safari and node fall back to
+ * a `setTimeout` of the same deadline, so callers get at-most-`timeoutMs`
+ * latency everywhere.
+ */
+export function scheduleIdle(task: () => void, timeoutMs = 500): () => void {
+  let cancelled = false;
+  const run = (): void => {
+    if (cancelled) return;
+    cancelled = true;
+    task();
+  };
+
+  const ric = (globalThis as unknown as { requestIdleCallback?: RequestIdleCallback }).requestIdleCallback;
+  if (typeof ric === 'function') {
+    ric(run, { timeout: timeoutMs });
+  } else {
+    setTimeout(run, timeoutMs);
+  }
+
+  return () => { cancelled = true; };
+}

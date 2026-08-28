@@ -18077,6 +18077,16 @@ a.prediction-link:hover {
   text-transform: uppercase;
   letter-spacing: 1px;
   flex-shrink: 0;
+  /* #5160: the whole header collapses the panel, not just the chevron. Without
+     the pointer cursor the header still looked inert, which is what produced
+     the dead-click/re-click loop behind this selector's field INP. */
+  cursor: pointer;
+  user-select: none;
+}
+
+/* The help button opts back out — it has its own action. */
+.deckgl-layer-toggles .toggle-header .layer-help-btn {
+  cursor: help;
 }
 
 .deckgl-layer-toggles .toggle-collapse {
@@ -18085,6 +18095,12 @@ a.prediction-link:hover {
   color: var(--text-dim);
   cursor: pointer;
   font-size: calc(10px * var(--wm-panel-effective-scale, 1));
+}
+
+.deckgl-layer-toggles .toggle-collapse:focus-visible {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: 1px;
+  border-radius: 2px;
 }
 
 .deckgl-layer-toggles .toggle-list {

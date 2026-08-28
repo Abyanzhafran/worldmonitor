@@ -687,3 +687,50 @@ export function bindLayerSearch(container: HTMLElement): void {
     });
   });
 }
+
+/** Collapsed / expanded chevron glyphs for the layer panel header. */
+const COLLAPSE_GLYPH = { collapsed: '\u25B6', expanded: '\u25BC' } as const;
+
+/**
+ * Bind expand/collapse for a layer panel to the whole `.toggle-header`, not just
+ * the chevron button (#5160).
+ *
+ * The header is the panel's largest affordance — it carries the title *and* the
+ * chevron — but only the ~10px `button.toggle-collapse` was ever wired up. A click
+ * that landed on the header itself did nothing and gave no feedback, so users
+ * clicked again. Every one of those dead clicks is its own INP interaction, and
+ * web-vitals attributes an interaction to the element the pointer hit rather than
+ * to the listener that ran — which is how `deckgl-layer-toggles > .toggle-header`,
+ * an element carrying no listener at all, became the worst desktop INP target in
+ * the field.
+ *
+ * `button.toggle-collapse` stays the accessible control: a real focusable
+ * `<button>` carrying `aria-expanded`. The header is only an extra pointer surface
+ * that forwards to it, so this adds no second tab stop. Clicks on `.layer-help-btn`
+ * (DeckGL only) are excluded — that button owns its own handler.
+ */
+export function bindLayerPanelCollapse(container: HTMLElement): void {
+  const header = container.querySelector('.toggle-header') as HTMLElement | null;
+  const list = container.querySelector('.toggle-list') as HTMLElement | null;
+  if (!header || !list) return;
+
+  const button = container.querySelector('.toggle-collapse') as HTMLElement | null;
+  const search = container.querySelector('.layer-search') as HTMLElement | null;
+
+  const apply = (collapsed: boolean): void => {
+    list.classList.toggle('collapsed', collapsed);
+    if (search) search.style.display = collapsed ? 'none' : '';
+    if (button) {
+      // textContent, not innerHTML: the glyph is the button's entire label.
+      button.textContent = collapsed ? COLLAPSE_GLYPH.collapsed : COLLAPSE_GLYPH.expanded;
+      button.setAttribute('aria-expanded', String(!collapsed));
+    }
+  };
+
+  apply(list.classList.contains('collapsed'));
+
+  header.addEventListener('click', (event) => {
+    if ((event.target as Element | null)?.closest('.layer-help-btn')) return;
+    apply(!list.classList.contains('collapsed'));
+  });
+}

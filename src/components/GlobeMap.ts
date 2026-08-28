@@ -30,6 +30,7 @@ import {
   hasCuratedLayerExplanation,
   resolveLayerLabel,
   bindLayerSearch,
+  bindLayerPanelCollapse,
   type MapVariant,
 } from '@/config/map-layer-definitions';
 import { renderLayerExplanationCard } from '@/utils/layer-explanation-card';
@@ -1965,7 +1966,7 @@ export class GlobeMap {
     setTrustedHtml(el, trustedHtml(`
       <div class="toggle-header">
         <span>${t('components.deckgl.layersTitle')}</span>
-        <button class="toggle-collapse">&#9660;</button>
+        <button type="button" class="toggle-collapse" aria-label="${t('components.deckgl.layersTitle')}" aria-expanded="true">&#9660;</button>
       </div>
       <input type="text" class="layer-search" placeholder="${t('components.deckgl.layerSearch')}" autocomplete="off" spellcheck="false" />
       <div class="toggle-list" style="max-height:32vh;overflow-y:auto;scrollbar-width:thin;">
@@ -2066,17 +2067,11 @@ export class GlobeMap {
     this.enforceLayerLimit();
 
     bindLayerSearch(el);
-    const searchEl = el.querySelector('.layer-search') as HTMLElement | null;
+    // #5160: the collapse target is the whole header, not just the chevron. Shared
+    // with DeckGLMap so the two panels cannot drift apart again.
+    bindLayerPanelCollapse(el);
 
-    const collapseBtn = el.querySelector('.toggle-collapse');
     const list = el.querySelector('.toggle-list') as HTMLElement | null;
-    let collapsed = false;
-    collapseBtn?.addEventListener('click', () => {
-      collapsed = !collapsed;
-      if (list) list.style.display = collapsed ? 'none' : '';
-      if (searchEl) searchEl.style.display = collapsed ? 'none' : '';
-      if (collapseBtn) setTrustedHtml((collapseBtn as HTMLElement), trustedHtml(collapsed ? '&#9654;' : '&#9660;', "legacy direct innerHTML migration"));
-    });
 
     // Intercept wheel on layer panel — scroll list, don't zoom globe
     el.addEventListener('wheel', (e) => {
