@@ -27,6 +27,7 @@ import {
   shouldDeferFreeTierEnforcement,
   FREE_MAX_PANELS,
   FREE_MAX_SOURCES,
+  countFreePanelCapUsage,
 } from '@/config';
 import {
   sanitizeLayersForVariant,
@@ -172,6 +173,7 @@ import {
   WEBMCP_UI_READY_TIMEOUT_MS,
   waitForWebMcpUiReady,
 } from '@/app/webmcp-dashboard';
+import { getWebMcpAccessContext, openWebMcpSignIn } from '@/app/webmcp-access';
 import { runDashboardActionBinding } from '@/app/dashboard-action-binding';
 import { refreshDataFreshnessFromHealth } from '@/services/health-freshness';
 import { scheduleAfterFirstPaint } from '@/utils/after-paint';
@@ -1915,6 +1917,7 @@ export class App {
             applyLayerChange: (layer, enabled, source) => (
               this.eventHandlers.applyMapLayerChange(layer, enabled, source)
             ),
+            requireMapModePersistence: true,
           },
           syncUrlStateNow: () => this.eventHandlers.syncUrlStateNow(),
         });
@@ -1965,6 +1968,24 @@ export class App {
           () => this.waitForDashboardReady(true, execution?.signal),
           execution?.signal,
         );
+      },
+      getAccessContext: async (execution) => {
+        throwIfWebMcpAborted(execution?.signal);
+        if (this.state.isDestroyed) {
+          throw new DashboardBindingError('app_destroyed', 'Dashboard is no longer available.');
+        }
+        return getWebMcpAccessContext({
+          enabledPanelUsed: countFreePanelCapUsage(this.state.panelSettings),
+          dashboardTabCount: this.panelLayout.getDashboardTabCount(),
+          freeTierFallbackActive: this.freeTierGate.authSettleDeadlineExceeded,
+        });
+      },
+      openSignIn: async (execution) => {
+        throwIfWebMcpAborted(execution?.signal);
+        if (this.state.isDestroyed) {
+          throw new DashboardBindingError('app_destroyed', 'Dashboard is no longer available.');
+        }
+        return openWebMcpSignIn(execution?.signal);
       },
     });
 

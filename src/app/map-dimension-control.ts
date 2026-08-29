@@ -17,6 +17,11 @@ export interface MapDimensionApplyResult {
   alreadyActive: boolean;
   adjustedLayers: MapDimensionLayerAdjustment[];
   fellBack: boolean;
+  persisted: boolean;
+}
+
+export interface MapDimensionApplyOptions {
+  requirePersistence?: boolean;
 }
 
 export function dashboardMapModeToPreference(mode: DashboardMapMode): MapModePreference {
@@ -45,34 +50,43 @@ function syncMapDimensionToggle(preference: MapModePreference): void {
   });
 }
 
-function persistJson(key: string, value: unknown): void {
+function persistJson(key: string, value: unknown): boolean {
   // Keep this off the `@/utils` barrel. That module loads `proxy.ts`, which
   // reads Vite's `import.meta.env.DEV` at import time and cannot run under tsx.
   // Import quota helpers from `storage-quota` directly so a full origin still
   // stops later persistent-cache writes, matching `saveToStorage()`.
-  if (typeof localStorage === 'undefined') return;
+  if (typeof localStorage === 'undefined') return false;
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch (error) {
     if (isQuotaError(error)) {
       markStorageQuotaExceeded();
-      return;
+      return false;
     }
     console.warn(`Failed to save ${key} to storage:`, error);
+    return false;
   }
 }
 
-function disableIncompatibleResilienceLayer(ctx: AppContext): MapDimensionLayerAdjustment[] {
-  if (!ctx.mapLayers.resilienceScore || ctx.map?.isDeckGLActive?.()) return [];
+function disableIncompatibleResilienceLayer(ctx: AppContext): {
+  adjustments: MapDimensionLayerAdjustment[];
+  persisted: boolean;
+} {
+  if (!ctx.mapLayers.resilienceScore || ctx.map?.isDeckGLActive?.()) {
+    return { adjustments: [], persisted: true };
+  }
   ctx.mapLayers = { ...ctx.mapLayers, resilienceScore: false };
   ctx.map?.setLayers?.(ctx.mapLayers);
-  persistJson(STORAGE_KEYS.mapLayers, ctx.mapLayers);
-  return [{
-    layer: 'resilienceScore',
-    from: true,
-    to: false,
-    reason: 'layer_not_executable',
-  }];
+  return {
+    adjustments: [{
+      layer: 'resilienceScore',
+      from: true,
+      to: false,
+      reason: 'layer_not_executable',
+    }],
+    persisted: persistJson(STORAGE_KEYS.mapLayers, ctx.mapLayers),
+  };
 }
 
 /**
@@ -83,6 +97,7 @@ function disableIncompatibleResilienceLayer(ctx: AppContext): MapDimensionLayerA
 export async function applyVisibleMapDimension(
   ctx: AppContext,
   requested: DashboardMapMode,
+  options: MapDimensionApplyOptions = {},
 ): Promise<MapDimensionApplyResult> {
   const preference = dashboardMapModeToPreference(requested);
   const alreadyGlobe = ctx.map?.isGlobeMode() ?? false;
@@ -96,6 +111,25 @@ export async function applyVisibleMapDimension(
       alreadyActive: true,
       adjustedLayers: [],
       fellBack: false,
+      persisted: true,
+    };
+  }
+
+  // WebMCP promises a persistent mutation. Prove storage is writable before
+  // starting an asynchronous renderer replacement, while the visible button
+  // remains best-effort in storage-restricted browser modes.
+  if (
+    options.requirePersistence
+    && !persistJson(STORAGE_KEYS.mapMode, dashboardMapModeToPreference(currentDashboardMapMode(ctx)))
+  ) {
+    return {
+      requested,
+      effective: currentDashboardMapMode(ctx),
+      renderer: currentMapRenderer(ctx),
+      alreadyActive: false,
+      adjustedLayers: [],
+      fellBack: false,
+      persisted: false,
     };
   }
 
@@ -111,15 +145,16 @@ export async function applyVisibleMapDimension(
   const fellBack = Boolean(switchResult?.fallback) || (wantGlobe && effective !== '3d');
   const persistPreference = dashboardMapModeToPreference(effective);
   syncMapDimensionToggle(persistPreference);
-  persistJson(STORAGE_KEYS.mapMode, persistPreference);
-  const adjustedLayers = disableIncompatibleResilienceLayer(ctx);
+  const modePersisted = persistJson(STORAGE_KEYS.mapMode, persistPreference);
+  const layerAdjustment = disableIncompatibleResilienceLayer(ctx);
 
   return {
     requested,
     effective,
     renderer,
     alreadyActive: false,
-    adjustedLayers,
+    adjustedLayers: layerAdjustment.adjustments,
     fellBack,
+    persisted: modePersisted && layerAdjustment.persisted,
   };
 }

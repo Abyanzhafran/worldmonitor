@@ -149,4 +149,23 @@ describe('set_map_mode persists map mode', () => {
       spy.mockRestore();
     }
   });
+
+  it('does not replace the renderer when required persistence is unavailable', async () => {
+    const spy = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+
+    try {
+      const result = await applyVisibleMapDimension(makeCtx({ deck: true }), '3d', {
+        requirePersistence: true,
+      });
+      expect(result.persisted).toBe(false);
+      expect(result.effective).toBe('2d');
+      expect(result.renderer).toBe('deck');
+      expect(document.querySelector('[data-mode="flat"]')?.classList.contains('active')).toBe(true);
+      expect(document.querySelector('[data-mode="globe"]')?.classList.contains('active')).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

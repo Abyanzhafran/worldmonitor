@@ -76,6 +76,7 @@ export interface AgentBusApplierOptions {
   applyLayerChange?: (layer: keyof MapLayers, enabled: boolean, source: 'programmatic') => void;
   getCountryMapFocus?: (iso2: string) => CountryMapFocus | null;
   isCountryGeometryLoaded?: () => boolean;
+  requireMapModePersistence?: boolean;
 }
 
 const DEFAULT_LAYER_RESULT: AgentBusApplyTargetResult[] = [];
@@ -393,16 +394,32 @@ function applyFocusCountry(
 async function applySetMapMode(
   ctx: AppContext,
   action: Extract<AgentBusAction, { type: 'set_map_mode' }>,
+  options: AgentBusApplierOptions,
 ): Promise<AgentBusApplyResult> {
   if (!ctx.map) {
     return denied('Map is not available.', 'map_unavailable', [], action);
   }
 
-  const result = await applyVisibleMapDimension(ctx, action.mode);
+  const result = await applyVisibleMapDimension(ctx, action.mode, {
+    requirePersistence: options.requireMapModePersistence,
+  });
   const compatibility = {
     adjusted: result.adjustedLayers.length > 0 || result.fellBack,
     ...(result.adjustedLayers.length > 0 ? { layers: result.adjustedLayers } : {}),
   };
+  if (options.requireMapModePersistence && !result.persisted) {
+    return denied(
+      'Map mode change could not be saved.',
+      'persist_failed',
+      [{ target: result.effective, status: 'denied', reason: 'persist_failed' }],
+      action,
+      {
+        requested: { mode: result.requested },
+        effective: { mode: result.effective, renderer: result.renderer },
+        compatibility,
+      },
+    );
+  }
   if (result.fellBack) {
     return denied(
       'Globe startup fell back to the 2D map.',
@@ -458,6 +475,6 @@ export function applyAgentBusAction(
     case 'focus_country':
       return applyFocusCountry(ctx, parsed.action, options);
     case 'set_map_mode':
-      return applySetMapMode(ctx, parsed.action);
+      return applySetMapMode(ctx, parsed.action, options);
   }
 }

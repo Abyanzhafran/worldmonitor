@@ -25,6 +25,8 @@ export const WEBMCP_SPA_TOOL = Object.freeze({
   setMapMode: 'set_map_mode',
   searchDashboard: 'search_dashboard',
   openSearchResult: 'open_search_result',
+  getAccessContext: 'get_access_context',
+  openSignIn: 'open_sign_in',
 } as const);
 
 export const WEBMCP_SPA_TOOL_NAMES = [
@@ -39,6 +41,8 @@ export const WEBMCP_SPA_TOOL_NAMES = [
   WEBMCP_SPA_TOOL.setMapMode,
   WEBMCP_SPA_TOOL.searchDashboard,
   WEBMCP_SPA_TOOL.openSearchResult,
+  WEBMCP_SPA_TOOL.getAccessContext,
+  WEBMCP_SPA_TOOL.openSignIn,
 ] as const;
 
 export const WEBMCP_DECLARATIVE_TOOL_NAMES = [
