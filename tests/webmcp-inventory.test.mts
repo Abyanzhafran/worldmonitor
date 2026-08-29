@@ -50,6 +50,86 @@ function createBindings(overrides: Record<string, unknown> = {}) {
       },
       panels: { mounted: ['map'], enabled: ['map'] },
     }),
+    listMapLayerCatalog: async () => ({
+      variant: 'full',
+      rendererKind: 'deck',
+      enabledLayers: ['weather'],
+      liveLayerKeys: ['conflicts', 'weather', 'hotspots', 'resilienceScore'],
+      hasPremium: false,
+      deckGlActive: true,
+    }),
+    listDashboardPanels: async () => ({
+      variant: 'full',
+      total: 1,
+      hasMore: false,
+      nextCursor: null,
+      panels: [{
+        id: 'map',
+        label: 'Map',
+        category: 'core',
+        variants: ['full'],
+        enabled: true,
+        mounted: true,
+        entitled: true,
+        available: true,
+      }],
+    }),
+    switchMonitor: async (monitor) => ({
+      ok: true,
+      status: 'applied' as const,
+      destination: monitor,
+      navigation: 'none' as const,
+      message: 'Already on that monitor.',
+      context: {
+        variant: monitor,
+        map: {
+          view: 'global',
+          center: { lat: 0, lon: 0 },
+          zoom: 2,
+          timeRange: '7d',
+          enabledLayers: ['weather'],
+        },
+        panels: { mounted: ['map'], enabled: ['map'] },
+      },
+    }),
+    openSettings: async () => ({
+      ok: true,
+      status: 'applied' as const,
+      destination: 'settings' as const,
+      overlay: 'open' as const,
+      tab: 'settings',
+      message: 'Opened settings.',
+      context: {
+        variant: 'full',
+        map: {
+          view: 'global',
+          center: { lat: 0, lon: 0 },
+          zoom: 2,
+          timeRange: '7d',
+          enabledLayers: ['weather'],
+        },
+        panels: { mounted: ['map'], enabled: ['map'] },
+      },
+    }),
+    openAlerts: async () => ({
+      ok: true,
+      status: 'applied' as const,
+      destination: 'alerts' as const,
+      overlay: 'open' as const,
+      tab: 'notifications',
+      message: 'Opened alerts.',
+      context: {
+        variant: 'full',
+        map: {
+          view: 'global',
+          center: { lat: 0, lon: 0 },
+          zoom: 2,
+          timeRange: '7d',
+          enabledLayers: ['weather'],
+        },
+        panels: { mounted: ['map'], enabled: ['map'] },
+      },
+    }),
     applyDashboardAction: async (action: {
       type: 'open_panel' | 'set_view' | 'set_layers' | 'set_time_range' | 'focus_country' | 'set_map_mode';
     }) => ({
@@ -71,6 +151,35 @@ function createBindings(overrides: Record<string, unknown> = {}) {
       truncated: false,
     }),
     openSearchResult: async () => ({ ok: true, status: 'opened' as const, type: 'country' }),
+    setPanelEnabled: async () => ({
+      ok: true,
+      status: 'applied' as const,
+      panelId: 'giving',
+      requestedEnabled: true,
+      effectiveEnabled: true,
+      changed: true,
+      message: 'Panel enabled.',
+    }),
+    applyDashboardTabAction: async (action: { type: string; tabId?: string; name?: string }) => (
+      action.type === 'list'
+        ? {
+            activeTabId: 'tab-main01-abc123',
+            tabs: [{ id: 'tab-main01-abc123', name: 'Main', active: true, canDelete: false }],
+            tabCount: 1,
+            tabsTruncated: false,
+            canCreate: true,
+            cap: null,
+          }
+        : {
+            ok: true,
+            status: 'applied' as const,
+            actionType: action.type,
+            message: 'Applied dashboard tab action.',
+            tabId: action.tabId ?? 'tab-main01-abc123',
+            name: action.name ?? 'Main',
+            activeTabId: action.tabId ?? 'tab-main01-abc123',
+          }
+    ),
     getAccessContext: async () => ({
       accountState: 'signed_out' as const,
       clerk: 'unavailable' as const,
@@ -95,7 +204,13 @@ const VALID_INPUTS: Record<string, Record<string, unknown>> = {
   openCountryBrief: { iso2: 'DE' },
   openSearch: {},
   get_dashboard_context: {},
+  list_map_layers: {},
+  list_dashboard_panels: {},
+  switch_monitor: { monitor: 'tech' },
+  open_settings: {},
+  open_alerts: {},
   open_dashboard_panel: { panelId: 'markets' },
+  set_panel_enabled: { panelId: 'giving', enabled: true },
   set_map_view: { view: 'eu', zoom: 4 },
   set_map_layers: { layers: { weather: true } },
   set_time_range: { timeRange: '24h' },
@@ -103,6 +218,11 @@ const VALID_INPUTS: Record<string, Record<string, unknown>> = {
   set_map_mode: { mode: '2d' },
   search_dashboard: { query: 'germany' },
   open_search_result: { resultKey: `sr_${'a'.repeat(32)}` },
+  list_dashboard_tabs: {},
+  select_dashboard_tab: { tabId: 'tab-main01-abc123' },
+  create_dashboard_tab: { name: 'Markets' },
+  rename_dashboard_tab: { tabId: 'tab-main01-abc123', name: 'Workspace' },
+  delete_dashboard_tab: { tabId: 'tab-main01-abc123', confirm: true },
   get_access_context: {},
   open_sign_in: {},
 };
@@ -124,13 +244,20 @@ const HOMEPAGE_VALID_INPUTS: Record<string, Record<string, unknown>> = {
 const WEBMCP_MAINTAINER_SOURCES = [
   'src/config/webmcp.ts',
   'src/services/webmcp.ts',
+  'src/services/webmcp-map-layer-catalog.ts',
+  'src/services/webmcp-panel-catalog.ts',
   'src/App.ts',
   'src/app/webmcp-dashboard.ts',
+  'src/config/panel-enablement.ts',
+  'src/app/panel-enablement.ts',
   'src/app/webmcp-access.ts',
   'src/services/webmcp-access-snapshot.ts',
   'src/app/webmcp-search-controller.ts',
   'src/app/webmcp-search-effects.ts',
   'src/app/search-selection-dispatcher.ts',
+  'src/app/panel-layout.ts',
+  'src/services/tab-store.ts',
+  'src/services/dashboard-tab-actions.ts',
   'src/components/GlobalProcurementPanel.ts',
   'pro-test/welcome.html',
   'vercel.json',
@@ -152,8 +279,11 @@ const WEBMCP_FOCUSED_VERIFICATION_TESTS = [
   'tests/docs-i18n-parity.test.mjs',
   'tests/webmcp-inventory.test.mts',
   'tests/webmcp.test.mjs',
+  'tests/webmcp-map-layer-catalog.test.mts',
   'tests/webmcp-search-effects.test.mts',
   'tests/webmcp-dashboard.test.mts',
+  'tests/dashboard-tab-actions.test.mts',
+  'tests/webmcp-panel-catalog.test.mts',
   'tests/agent-bus-actions.test.mts',
   'tests/agent-bus-applier.test.mts',
   'tests/country-map-focus.test.mts',
@@ -161,6 +291,7 @@ const WEBMCP_FOCUSED_VERIFICATION_TESTS = [
   'tests/webmcp-analytics-policy.test.mjs',
   'tests/webmcp-evals.test.mjs',
   'tests/webmcp-access.test.mts',
+  'tests/webmcp-panel-enablement.test.mts',
   'tests/deploy-config.test.mjs',
 ] as const;
 
@@ -426,7 +557,8 @@ describe('WebMCP canonical inventories', () => {
 describe('WebMCP imperative schema and budget contract', () => {
   it('compiles every input schema under JSON Schema 2020-12 and accepts its canonical input', () => {
     const ajv = new Ajv2020({ allErrors: true, strict: true });
-    for (const tool of buildWebMcpTools(createBindings(), () => {})) {
+    const tools = buildWebMcpTools(createBindings(), () => {});
+    for (const tool of tools) {
       const validate = ajv.compile(tool.inputSchema ?? {});
       assert.equal(
         validate(VALID_INPUTS[tool.name]),
@@ -434,6 +566,10 @@ describe('WebMCP imperative schema and budget contract', () => {
         `${tool.name}: ${ajv.errorsText(validate.errors)}`,
       );
     }
+    const open = tools.find((tool) => tool.name === 'open_dashboard_panel');
+    const validateOpen = ajv.compile(open?.inputSchema ?? {});
+    assert.equal(validateOpen({ panelId: 'regionalStartups' }), true, ajv.errorsText(validateOpen.errors));
+    assert.equal(validateOpen({ panelId: 'gccNews' }), true, ajv.errorsText(validateOpen.errors));
   });
 
   it('applies uniform metadata, schema, output, and error budgets to all dashboard tools', async () => {
@@ -467,9 +603,16 @@ describe('WebMCP imperative schema and budget contract', () => {
       openCountryBriefByCode: async () => { throw privateError; },
       openSearch: async () => { throw privateError; },
       getDashboardContext: async () => { throw privateError; },
+      listMapLayerCatalog: async () => { throw privateError; },
+      listDashboardPanels: async () => { throw privateError; },
+      switchMonitor: async () => { throw privateError; },
+      openSettings: async () => { throw privateError; },
+      openAlerts: async () => { throw privateError; },
       applyDashboardAction: async () => { throw privateError; },
       searchDashboard: async () => { throw privateError; },
       openSearchResult: async () => { throw privateError; },
+      applyDashboardTabAction: async () => { throw privateError; },
+      setPanelEnabled: async () => { throw privateError; },
       getAccessContext: async () => { throw privateError; },
       openSignIn: async () => { throw privateError; },
     }), () => {});
