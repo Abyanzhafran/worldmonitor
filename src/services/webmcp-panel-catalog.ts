@@ -37,11 +37,11 @@ const VARIANT_PANEL_IDS = Object.freeze(
     ]),
   ),
 ) as Readonly<Record<SiteVariant, readonly string[]>>;
-const VARIANT_PANEL_ID_SETS = Object.freeze(
+const VARIANT_PANEL_ID_SETS: Readonly<Record<SiteVariant, ReadonlySet<string>>> = Object.freeze(
   Object.fromEntries(
     SITE_VARIANTS.map((variant) => [variant, new Set(VARIANT_PANEL_IDS[variant])]),
-  ),
-) as Readonly<Record<SiteVariant, ReadonlySet<string>>>;
+  ) as Record<SiteVariant, Set<string>>,
+);
 const PANEL_VARIANT_AVAILABILITY = Object.freeze(
   Object.fromEntries(
     CANONICAL_PANEL_IDS.map((panelId) => [
