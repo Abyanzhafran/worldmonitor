@@ -19,6 +19,10 @@ import {
 import { isAllowedDomain } from './api/_rss-allowed-domain-match.js';
 import { rssFetchHeadersForHost } from './api/_rss-fetch-headers.js';
 import { validateGeneratedRequest } from './server/request-validator';
+import {
+  getChunkSizeWarning,
+  isExpectedEmptyRpcClientWarning,
+} from './scripts/vite-build-warning-policy.mts';
 
 // Env-dependent constants moved inside defineConfig function
 
@@ -311,6 +315,25 @@ function dashboardHtmlOutputPlugin(): Plugin {
         dashboardHtml.source = deferDashboardStylesheetLinks(dashboardHtml.source, bundle);
       }
       bundle['dashboard.html'] = dashboardHtml;
+    },
+  };
+}
+
+function chunkSizeWarningPolicyPlugin(): Plugin {
+  return {
+    name: 'wm-chunk-size-warning-policy',
+    apply: 'build',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      for (const output of Object.values(bundle)) {
+        if (output.type !== 'chunk') continue;
+        const warning = getChunkSizeWarning({
+          name: output.name,
+          fileName: output.fileName,
+          sizeBytes: Buffer.byteLength(output.code),
+        });
+        if (warning) this.warn(warning);
+      }
     },
   };
 }
@@ -934,6 +957,7 @@ export default defineConfig(({ mode }) => {
         },
       },
       htmlVariantPlugin(activeMeta, activeVariant, isDesktopBuild),
+      chunkSizeWarningPolicyPlugin(),
       !isDesktopBuild && dashboardHtmlOutputPlugin(),
       // Variant subdomain SEO pages only make sense on the web deployment,
       // which is always the 'full' build (variant selection is runtime by
@@ -1098,9 +1122,10 @@ export default defineConfig(({ mode }) => {
       format: 'es',
     },
     build: {
-      // Geospatial bundles (maplibre/deck) are expected to be large even when split.
-      // Raise warning threshold to reduce noisy false alarms in CI.
-      chunkSizeWarningLimit: 1200,
+      // Vite's global threshold accommodates the known lazy GlobeMap bundle.
+      // wm-chunk-size-warning-policy keeps the 1200 kB default for every other
+      // chunk so unrelated regressions between 1200 and 2000 kB remain visible.
+      chunkSizeWarningLimit: 2000,
       // Vite 6 hoists every dynamic chunk's STATIC deps into the entry HTML's
       // modulepreload list to avoid latency on the first dynamic import. For the
       // map stack that defeats the whole point of dynamic-importing MapContainer:
@@ -1122,6 +1147,16 @@ export default defineConfig(({ mode }) => {
             && typeof warning.id === 'string'
             && warning.id.includes('/onnxruntime-web/dist/ort-web.min.js')
           ) {
+            return;
+          }
+
+          // The cyber client legitimately tree-shakes to nothing while its
+          // feature flag is off. Keep every other empty RPC chunk visible: an
+          // enabled client disappearing is a build regression, not noise.
+          if (isExpectedEmptyRpcClientWarning(
+            warning,
+            process.env.VITE_ENABLE_CYBER_LAYER === 'true',
+          )) {
             return;
           }
 
