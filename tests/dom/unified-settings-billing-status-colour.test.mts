@@ -1,12 +1,16 @@
 /**
- * #6772 — An entitled Pro owner whose subscription watch has not settled yet
- * (getSubscription() === null because isSubscriptionLoaded() is still false)
- * must NOT be shown the Business-invitee copy "Billing is managed by your plan
- * owner" — that hides Manage Billing from a paying owner. The unresolved window
- * renders the same "Checking your plan…" pending state the pre-entitlement
- * guard uses; the invitee copy is reserved for a *settled* null.
+ * #7315 — A paid-through cancellation must not be painted in the same red as a
+ * dead `expired` account. A subscriber who cancelled with weeks of Pro left saw
+ * a red dot, red plan name and red-tinted card above small text saying "access
+ * until <date>"; the colour won, and support got a refund demand 13 minutes
+ * after the cancellation.
  *
- * Harness mirrors unified-settings-upgrade-click-runtime.test.mts.
+ * These assertions are on the COLOUR, deliberately: the copy was already
+ * correct before the fix, so a copy-only test passed against the bug.
+ *
+ * Harness mirrors unified-settings-subscription-loading.test.mts, except that
+ * `@/services/billing-state` is NOT stubbed — the point of the fix is that the
+ * panel and the real coverage predicate cannot drift.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,8 +24,9 @@ const session: AuthSession = {
   isPending: false,
 };
 
-/** Both flipped per case; read lazily by the billing mock below. */
-let subscriptionLoaded = false;
+const DAY = 86_400_000;
+
+/** Read lazily by the billing mock below; set per case. */
 let mockSubscription: SubscriptionInfo | null = null;
 
 const storageValues = new Map<string, string>();
@@ -45,9 +50,8 @@ vi.mock('@/services/auth-state', async (importOriginal) => ({
   subscribeAuthState: () => () => {},
 }));
 
-// Entitled, and the entitlement snapshot has already resolved (non-null), so
-// the pre-entitlement "Checking your plan…" guard is skipped — any pending
-// render in these cases must come from the new subscription-unresolved guard.
+// Entitled with a settled entitlement snapshot, so renderUpgradeSection reaches
+// the plan-status render rather than either "Checking your plan…" guard.
 vi.mock('@/services/entitlements', () => ({
   getEntitlementState: () => ({ planKey: 'pro_monthly', validUntil: Date.now() + 1e9 }),
   getEntitlementVerificationStatus: () => 'ready',
@@ -97,7 +101,7 @@ vi.mock('@/config/variant', () => ({
 
 vi.mock('@/services/billing', () => ({
   getSubscription: () => mockSubscription,
-  isSubscriptionLoaded: () => subscriptionLoaded,
+  isSubscriptionLoaded: () => true,
   onSubscriptionChange: () => () => {},
   openBillingPortal: async () => ({ outcome: 'no-customer' as const }),
   prereserveBillingPortalTab: () => null,
@@ -109,15 +113,6 @@ vi.mock('@/services/billing', () => ({
   }),
   inviteBusinessSeats: async () => ({ invited: [] }),
   removeBusinessSeat: async () => ({ status: 'removed' as const }),
-}));
-
-// Partial: only the UX-state verdict is pinned for this file's cases. The
-// status-tone helpers stay real so a new billing-state export cannot silently
-// leave this stub short (#7315).
-vi.mock('@/services/billing-state', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/services/billing-state')>()),
-  deriveBillingUxState: () => 'active',
-  getReactivationHref: () => '/pro#pricing',
 }));
 
 vi.mock('@/services/api-keys', () => ({
@@ -159,6 +154,27 @@ function config(): UnifiedSettingsConfig {
   };
 }
 
+function subscription(overrides: Partial<SubscriptionInfo> = {}): SubscriptionInfo {
+  return {
+    planKey: 'pro_monthly',
+    displayName: 'Pro',
+    status: 'active',
+    currentPeriodEnd: Date.now() + 30 * DAY,
+    renewalVerificationState: null,
+    ...overrides,
+  };
+}
+
+/**
+ * The plan card's billing tone — the class/token the 13px plan name reads.
+ * Matched off the rendered markup so a change to the dot/border alone cannot
+ * fake this pass. Hex contrast is locked in tests/contrast.test.mts against
+ * the theme tokens; this file locks which tone the coverage predicate picks.
+ */
+function planTone(html: string): string | null {
+  return html.match(/data-billing-tone="([a-z]+)"/)?.[1] ?? null;
+}
+
 beforeAll(async () => {
   await initTestI18n();
 });
@@ -171,42 +187,79 @@ beforeEach(() => {
 
 afterEach(() => {
   settings?.destroy();
-  subscriptionLoaded = false;
   mockSubscription = null;
   vi.unstubAllGlobals();
   document.body.replaceChildren();
 });
 
-describe('UnifiedSettings subscription loaded-vs-absent (#6772)', () => {
-  it('shows the pending state (not invitee copy) while the subscription watch is unresolved', () => {
-    subscriptionLoaded = false;
+describe('UnifiedSettings billing status colour (#7315)', () => {
+  it('paints a paid-through cancellation non-red and keeps the access-until copy', () => {
+    mockSubscription = subscription({
+      status: 'cancelled',
+      currentPeriodEnd: Date.now() + 30 * DAY,
+    });
     const html = (settings as unknown as SettingsInternals).renderUpgradeSection();
-    expect(html).toContain('Checking your plan');
-    expect(html).not.toContain('managed by your plan owner');
+
+    expect(html).toContain('access until');
+    expect(html).toContain('class="upgrade-pro-plan-name"');
+    expect(planTone(html)).toBe('ending');
+    // Not the ended tone — the dot, the plan name, the border and the
+    // background tint all derive from the same data-billing-tone.
+    expect(html).not.toContain('data-billing-tone="ended"');
   });
 
-  it('shows the Business-invitee copy once the watch settles to a null subscription', () => {
-    subscriptionLoaded = true;
+  it('paints a cancellation past its paid period red', () => {
+    mockSubscription = subscription({
+      status: 'cancelled',
+      currentPeriodEnd: Date.now() - DAY,
+    });
     const html = (settings as unknown as SettingsInternals).renderUpgradeSection();
-    expect(html).toContain('Billing is managed by your plan owner');
-    expect(html).not.toContain('Checking your plan');
+
+    expect(planTone(html)).toBe('ended');
   });
 
-  it('shows the active plan and Manage Billing when the watch settles to a present subscription', () => {
-    // The guard is scoped to `sub === null`: a settled owner WITH a subscription
-    // must reach the active render (and its Manage Billing CTA), never pending
-    // or invitee copy. Guards against a future widening that drops `sub === null`.
-    subscriptionLoaded = true;
-    mockSubscription = {
-      planKey: 'pro_monthly',
-      displayName: 'Pro',
-      status: 'active',
-      currentPeriodEnd: Date.now() + 1e9,
-      renewalVerificationState: null,
-    };
+  it('paints expired red, even with a future period end', () => {
+    mockSubscription = subscription({
+      status: 'expired',
+      currentPeriodEnd: Date.now() + 30 * DAY,
+    });
     const html = (settings as unknown as SettingsInternals).renderUpgradeSection();
-    expect(html).toContain('Manage Billing');
-    expect(html).not.toContain('Checking your plan');
-    expect(html).not.toContain('managed by your plan owner');
+
+    expect(planTone(html)).toBe('ended');
+  });
+
+  it('leaves active green and on_hold yellow', () => {
+    mockSubscription = subscription({ status: 'active' });
+    expect(planTone((settings as unknown as SettingsInternals).renderUpgradeSection()))
+      .toBe('active');
+
+    mockSubscription = subscription({ status: 'on_hold' });
+    expect(planTone((settings as unknown as SettingsInternals).renderUpgradeSection()))
+      .toBe('attention');
+  });
+
+  it('paints a Business-grant invitee (no own subscription row) green', () => {
+    // The invitee holds a grant, not a subscription row. Pre-#7315 the panel
+    // defaulted the missing status to 'active' to dodge the red trailing else;
+    // the tone mapping must keep that user green.
+    mockSubscription = null;
+    const html = (settings as unknown as SettingsInternals).renderUpgradeSection();
+
+    expect(html).toContain('managed by your plan owner');
+    expect(planTone(html)).toBe('active');
+  });
+
+  it('paints an unrecognised provider status neutral, not red', () => {
+    // Dodo adding a status we do not model must not tell an entitled user their
+    // plan is dead — the trailing `else` that swallowed every unknown status
+    // into red is the "branch on known strings, mishandle the rest" gotcha.
+    mockSubscription = subscription({ status: 'paused' as unknown as 'active' });
+    const html = (settings as unknown as SettingsInternals).renderUpgradeSection();
+
+    expect(planTone(html)).toBe('unknown');
+    expect(html).not.toContain('data-billing-tone="ended"');
+    // Asserting the colour alone would let the card ship as a bare grey dot
+    // with no sentence at all, which is what the old trailing `else` produced.
+    expect(html).toContain('See Manage Billing for your current plan details.');
   });
 });
