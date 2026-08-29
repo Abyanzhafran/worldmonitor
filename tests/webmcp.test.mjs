@@ -589,6 +589,7 @@ describe('webmcp.ts: native tool execution and telemetry', () => {
           center: { lat: 40.7128, lon: -74.006 },
           zoom: 4,
           timeRange: '24h',
+          mode: '3d',
           enabledLayers: manyIds,
         },
         panels: { mounted: manyIds, enabled: manyIds },
@@ -601,6 +602,7 @@ describe('webmcp.ts: native tool execution and telemetry', () => {
 
     assert.equal(result.variant, 'finance');
     assert.equal(result.map.view, 'america');
+    assert.equal(result.map.mode, '3d');
     assert.equal(result.panels.mountedCount, 200);
     assert.equal(result.panels.mountedTruncated, true);
     assert.ok(JSON.stringify(result).length <= 1_500);

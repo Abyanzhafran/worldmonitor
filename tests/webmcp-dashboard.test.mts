@@ -163,6 +163,16 @@ describe('WebMCP live dashboard bindings', () => {
       getWebMcpDashboardContext(ctx, 'full').map.enabledLayers,
       ['weather'],
     );
+    assert.equal(getWebMcpDashboardContext(ctx, 'full').map.mode, '2d');
+    assert.equal(
+      getWebMcpDashboardContext(makeContext({
+        map: {
+          ...makeContext().map,
+          isGlobeMode: () => true,
+        },
+      }), 'full').map.mode,
+      '3d',
+    );
     assert.deepEqual(
       Object.entries(ctx.mapLayers)
         .filter(([, enabled]) => enabled === true)
@@ -824,6 +834,7 @@ describe('WebMCP live dashboard bindings', () => {
       {
         waitForUiReady: async () => { events.push('wait_ui'); },
         waitForMapReady: async () => { events.push('wait_map'); },
+        preloadCountryGeometry: async () => { events.push('preload_geometry'); },
         applierOptions: {
           ...applierOptions,
           getCountryMapFocus: (iso2) => iso2 === 'DE'
@@ -844,6 +855,7 @@ describe('WebMCP live dashboard bindings', () => {
     assert.deepEqual(events, [
       'wait_ui',
       'wait_map',
+      'preload_geometry',
       'set_view',
       'set_center',
       'wait_settlement:7',
@@ -902,6 +914,7 @@ describe('WebMCP live dashboard bindings', () => {
           resolveRendererWaitStarted();
           return rendererReady;
         },
+        preloadCountryGeometry: async () => {},
         getMapAuthorityToken: () => authorityToken,
         applierOptions: {
           ...applierOptions,

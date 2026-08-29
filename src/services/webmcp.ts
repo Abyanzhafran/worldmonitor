@@ -120,6 +120,7 @@ export interface DashboardContextSnapshot {
     view: string;
     center: { lat: number; lon: number } | null;
     zoom: number;
+    mode?: '2d' | '3d';
     timeRange: string;
     enabledLayers: string[];
   };
@@ -601,6 +602,9 @@ function boundDashboardContext(snapshot: DashboardContextSnapshot): Record<strin
           }
         : null,
       zoom: boundedNumber(snapshot.map?.zoom),
+      mode: snapshot.map?.mode === '3d' || snapshot.map?.mode === '2d'
+        ? snapshot.map.mode
+        : undefined,
       timeRange: boundedText(snapshot.map?.timeRange, 32),
       enabledLayers,
       enabledLayerCount: enabledLayers.length,
@@ -786,7 +790,7 @@ export function buildWebMcpTools(
       name: WEBMCP_SPA_TOOL.openCountryBrief,
       title: 'Open Country Brief',
       description:
-        'Open the intelligence brief panel for a country by ISO 3166-1 alpha-2 code (e.g. "DE", "IR"). Routes the user to the country deep-dive view; the brief itself is fetched by the same path a click would take.',
+        'Open the intelligence brief panel for a country by ISO 3166-1 alpha-2 code (e.g. "DE", "IR"). Routes the user to the country deep-dive view; the brief itself is fetched by the same path a click would take. This can consume daily briefing quota. To only pan the map, use focus_country.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -845,7 +849,7 @@ export function buildWebMcpTools(
       name: WEBMCP_SPA_TOOL.getDashboardContext,
       title: 'Get Dashboard Context',
       description:
-        'Read a bounded snapshot of the visible dashboard: active variant, map view, center, zoom, time range, enabled layers, and mounted or enabled panel IDs.',
+        'Read a bounded snapshot of the visible dashboard: active variant, map view, center, zoom, map mode (2d or 3d), time range, enabled layers, and mounted or enabled panel IDs.',
       inputSchema: {
         type: 'object',
         properties: {},

@@ -7,6 +7,7 @@ import {
   type DashboardContextSnapshot,
 } from '@/services/webmcp';
 import type { AgentBusApplierOptions } from './agent-bus-applier';
+import { currentDashboardMapMode } from './map-dimension-control';
 
 const APP_DESTROYED_RESULT: DashboardActionResult = {
   ok: false,
@@ -60,6 +61,7 @@ export function getWebMcpDashboardContext(
       view: mapState.view,
       center,
       zoom: mapState.zoom,
+      mode: currentDashboardMapMode(ctx),
       timeRange: mapState.timeRange,
       enabledLayers: Object.entries(mapState.layers)
         .filter(([, enabled]) => enabled === true)

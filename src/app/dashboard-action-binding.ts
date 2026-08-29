@@ -1,6 +1,7 @@
 import type { AppContext } from './app-context';
 import type { AgentBusApplierOptions } from './agent-bus-applier';
 import { applyWebMcpDashboardAction } from './webmcp-dashboard';
+import { preloadCountryGeometry } from '@/services/country-geometry';
 import { throwIfWebMcpAborted, type DashboardActionResult } from '@/services/webmcp';
 
 const MAP_READY_ACTION_TYPES = new Set([
@@ -41,6 +42,7 @@ export interface DashboardActionBindingOptions {
   signal?: AbortSignal;
   applierOptions: AgentBusApplierOptions;
   syncUrlStateNow: () => void;
+  preloadCountryGeometry?: () => Promise<void>;
 }
 
 /**
@@ -69,6 +71,10 @@ export async function runDashboardActionBinding(
   if (parsed.ok && dashboardActionNeedsMapReady(parsed.action.type)) {
     await options.waitForMapReady();
     throwIfWebMcpAborted(options.signal);
+    if (parsed.action.type === 'focus_country') {
+      await (options.preloadCountryGeometry ?? preloadCountryGeometry)();
+      throwIfWebMcpAborted(options.signal);
+    }
     if (
       dashboardActionUsesViewportAuthority(parsed.action.type)
       && mapAuthorityToken !== undefined

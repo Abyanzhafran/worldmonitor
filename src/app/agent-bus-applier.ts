@@ -17,6 +17,7 @@ import {
   type DashboardControlAction,
   type DashboardControlActionType,
 } from '../../shared/agent-bus-actions';
+import { isCountryGeometryLoaded } from '@/services/country-geometry';
 import { getCountryMapFocus, type CountryMapFocus } from './country-map-focus';
 import { applyVisibleMapDimension } from './map-dimension-control';
 
@@ -74,6 +75,7 @@ export interface AgentBusApplierOptions {
   ) => void;
   applyLayerChange?: (layer: keyof MapLayers, enabled: boolean, source: 'programmatic') => void;
   getCountryMapFocus?: (iso2: string) => CountryMapFocus | null;
+  isCountryGeometryLoaded?: () => boolean;
 }
 
 const DEFAULT_LAYER_RESULT: AgentBusApplyTargetResult[] = [];
@@ -347,6 +349,20 @@ function applyFocusCountry(
   }
 
   const resolveFocus = options.getCountryMapFocus ?? getCountryMapFocus;
+  const geometryLoaded = options.isCountryGeometryLoaded
+    ?? (options.getCountryMapFocus ? () => true : isCountryGeometryLoaded);
+  if (!geometryLoaded()) {
+    return denied(
+      'Country geometry is not available yet.',
+      'geometry_unavailable',
+      [{ target: action.iso2, status: 'denied', reason: 'geometry_unavailable' }],
+      action,
+      {
+        requested: { iso2: action.iso2 },
+        compatibility: { adjusted: false },
+      },
+    );
+  }
   const focus = resolveFocus(action.iso2);
   if (!focus) {
     return denied(`Unknown country code: ${action.iso2}.`, 'unknown_country', [

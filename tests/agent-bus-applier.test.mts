@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import { applyAgentBusAction } from '../src/app/agent-bus-applier.ts';
 import type { AppContext } from '../src/app/app-context.ts';
 import type { MapLayers, PanelConfig } from '../src/types/index.ts';
+import { DASHBOARD_TIME_RANGES } from '../shared/agent-bus-contract.ts';
 
 function makePanel() {
   let showCalls = 0;
@@ -413,7 +414,7 @@ describe('agent bus applier', () => {
 
   it('applies every dashboard time-range enum through the map control', () => {
     const ctx = makeCtx();
-    const ranges = ['1h', '6h', '24h', '48h', '7d', 'all'] as const;
+    const ranges = DASHBOARD_TIME_RANGES;
     for (const timeRange of ranges) {
       const result = applyAgentBusAction(ctx, { type: 'set_time_range', timeRange });
       assert.equal(result.ok, true, timeRange);
@@ -467,10 +468,31 @@ describe('agent bus applier', () => {
     assert.deepEqual(briefCalls, []);
   });
 
+  it('denies focus_country as geometry_unavailable when country GeoJSON is not loaded', () => {
+    const ctx = makeCtx();
+    const result = applyAgentBusAction(ctx, { type: 'focus_country', iso2: 'DE' }, {
+      ...entitled,
+      isCountryGeometryLoaded: () => false,
+      getCountryMapFocus: () => ({
+        iso2: 'DE', lat: 51.1, lon: 10.4, zoom: 5, bbox: [5.8, 47.2, 15.0, 55.0],
+      }),
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'denied');
+    assert.equal(result.reason, 'geometry_unavailable');
+    assert.deepEqual(result.requested, { iso2: 'DE' });
+    assert.deepEqual(
+      (ctx.map as { _calls: { setCenterCalls: unknown[] } })._calls.setCenterCalls,
+      [],
+    );
+  });
+
   it('denies unknown country codes with a structured unknown_country result', () => {
     const ctx = makeCtx();
     const result = applyAgentBusAction(ctx, { type: 'focus_country', iso2: 'XX' }, {
       ...entitled,
+      isCountryGeometryLoaded: () => true,
       getCountryMapFocus: () => null,
     });
 
