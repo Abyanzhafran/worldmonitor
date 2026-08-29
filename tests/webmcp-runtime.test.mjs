@@ -43,6 +43,14 @@ function createBindings(overrides = {}) {
       },
       panels: { mounted: ['map'], enabled: ['map'] },
     }),
+    listMapLayerCatalog: async () => ({
+      variant: 'full',
+      rendererKind: 'deck',
+      enabledLayers: [],
+      liveLayerKeys: ['conflicts', 'weather', 'hotspots'],
+      hasPremium: false,
+      deckGlActive: true,
+    }),
     listDashboardPanels: async () => ({
       variant: 'full',
       total: 1,
@@ -527,6 +535,54 @@ describe('WebMCP registry behavioral contract', () => {
     assert.equal(JSON.stringify(harness.events).includes('detail'), false);
   });
 
+  it('passes catalog layer IDs into set_map_layers', async () => {
+    const applied = [];
+    const provider = new FakeWebMcpModelContext({ supportsTargetExecutionSignal: true });
+    const harness = trackedRuntime(provider);
+    registerWebMcpTools(createBindings({
+      listMapLayerCatalog: async () => ({
+        variant: 'full',
+        rendererKind: 'deck',
+        enabledLayers: [],
+        liveLayerKeys: ['conflicts', 'weather', 'hotspots'],
+        hasPremium: true,
+        deckGlActive: true,
+      }),
+      applyDashboardAction: async (action) => {
+        applied.push(action);
+        return {
+          ok: true,
+          status: 'applied',
+          actionType: action.type,
+          message: 'Applied dashboard action.',
+          targets: Object.keys(action.layers ?? {}).map((id) => ({
+            id,
+            status: 'applied',
+          })),
+        };
+      },
+    }), harness.runtime);
+    await settlePromises();
+
+    const listed = await executeRegistered(provider, 'list_map_layers', '{}');
+    assert.equal(listed.ok, true);
+    const layerId = listed.layers.find((layer) => layer.available)?.id
+      ?? listed.layers[0].id;
+    assert.equal(typeof layerId, 'string');
+
+    const controller = new AbortController();
+    const result = await executeRegistered(
+      provider,
+      'set_map_layers',
+      JSON.stringify({ layers: { [layerId]: true } }),
+      { signal: controller.signal },
+    );
+    assert.equal(result.ok, true);
+    assert.deepEqual(applied, [{
+      type: 'set_layers',
+      layers: { [layerId]: true },
+    }]);
+  });
   it('aborts before a late provider can register', async () => {
     const harness = trackedRuntime(undefined);
     const controller = registerWebMcpTools(createBindings(), harness.runtime);

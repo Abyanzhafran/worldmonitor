@@ -8,6 +8,7 @@ import {
   applyWebMcpOpenSettings,
   applyWebMcpSwitchMonitor,
   getWebMcpDashboardContext,
+  getWebMcpMapLayerCatalogSnapshot,
   listWebMcpDashboardPanels,
   WEBMCP_UI_READY_TIMEOUT_MS,
   waitForWebMcpUiReady,
@@ -275,6 +276,65 @@ describe('WebMCP live dashboard bindings', () => {
       (error) => error instanceof DashboardBindingError
         && error.reason === 'app_destroyed',
     );
+  });
+
+  it('snapshots live map-layer catalog state for list_map_layers', () => {
+    const ctx = makeContext();
+    const catalogSnapshot = getWebMcpMapLayerCatalogSnapshot(ctx, 'full', false);
+    assert.equal(catalogSnapshot.variant, 'full');
+    assert.equal(catalogSnapshot.rendererKind, 'svg');
+    assert.deepEqual(catalogSnapshot.enabledLayers, ['conflicts', 'tradeRoutes']);
+    assert.deepEqual(catalogSnapshot.liveLayerKeys, Object.keys(ctx.mapLayers));
+    assert.equal(catalogSnapshot.hasPremium, false);
+    assert.equal(catalogSnapshot.deckGlActive, false);
+    assert.equal(catalogSnapshot.tFn, undefined);
+
+    const globe = makeContext({
+      map: {
+        ...makeContext().map,
+        isGlobeMode: () => true,
+        isDeckGLActive: () => true,
+      },
+    });
+    const globeSnapshot = getWebMcpMapLayerCatalogSnapshot(globe, 'tech', true);
+    assert.equal(globeSnapshot.rendererKind, 'globe');
+    assert.equal(globeSnapshot.deckGlActive, true);
+    assert.equal(globeSnapshot.hasPremium, true);
+    assert.equal(globeSnapshot.variant, 'tech');
+
+    assert.throws(
+      () => getWebMcpMapLayerCatalogSnapshot(makeContext({ map: null }), 'full', false),
+      (error) => error instanceof DashboardBindingError
+        && error.reason === 'map_unavailable',
+    );
+    assert.throws(
+      () => getWebMcpMapLayerCatalogSnapshot(makeContext({ isDestroyed: true }), 'full', false),
+      (error) => error instanceof DashboardBindingError
+        && error.reason === 'app_destroyed',
+    );
+  });
+
+  it('records runtime layer gates without dropping object-membership keys', () => {
+    const ctx = makeContext();
+    ctx.mapLayers.cyberThreats = false;
+    ctx.mapLayers.ais = false;
+    ctx.mapLayers.outages = false;
+    const gated = {
+      cyberLayerEnabled: false,
+      aisConfigured: false,
+      outagesAvailable: false,
+    };
+    const catalogSnapshot = getWebMcpMapLayerCatalogSnapshot(
+      ctx,
+      'full',
+      false,
+      undefined,
+      gated,
+    );
+    assert.ok(catalogSnapshot.liveLayerKeys.includes('cyberThreats'));
+    assert.ok(catalogSnapshot.liveLayerKeys.includes('ais'));
+    assert.ok(catalogSnapshot.liveLayerKeys.includes('outages'));
+    assert.deepEqual(catalogSnapshot.runtimeAvailability, gated);
   });
 
   it('converts the live globe camera altitude to the dashboard zoom scale', () => {

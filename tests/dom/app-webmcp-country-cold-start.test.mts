@@ -65,6 +65,14 @@ describe('App WebMCP country binding cold start', () => {
       resolveCountryName: () => 'France',
       openSearch: async () => true,
       getDashboardContext: async () => unusedDashboardContext,
+      listMapLayerCatalog: async () => ({
+        variant: 'full',
+        rendererKind: 'deck',
+        enabledLayers: [],
+        liveLayerKeys: [],
+        hasPremium: false,
+        deckGlActive: true,
+      }),
       listDashboardPanels: async () => ({
         variant: 'full',
         total: 0,
@@ -169,6 +177,14 @@ describe('App WebMCP country binding cold start', () => {
       resolveCountryName: () => 'France',
       openSearch: async () => true,
       getDashboardContext: async () => unusedDashboardContext,
+      listMapLayerCatalog: async () => ({
+        variant: 'full',
+        rendererKind: 'deck',
+        enabledLayers: [],
+        liveLayerKeys: [],
+        hasPremium: false,
+        deckGlActive: true,
+      }),
       listDashboardPanels: async () => ({
         variant: 'full',
         total: 0,

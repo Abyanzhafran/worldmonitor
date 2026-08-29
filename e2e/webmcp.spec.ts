@@ -11,6 +11,7 @@ const DASHBOARD_TOOL_NAMES = [
   'get_access_context',
   'get_dashboard_context',
   'list_dashboard_panels',
+  'list_map_layers',
   'openCountryBrief',
   'openSearch',
   'open_alerts',
@@ -68,6 +69,49 @@ type ToolStartMark = {
   name: string;
   startTime: number;
 };
+
+type MapLayerListResult = {
+  count: number;
+  layers: Array<{ available?: boolean; id: string; reason?: string }>;
+  nextCursor?: string;
+  ok: boolean;
+  total: number;
+};
+
+function assertMapLayerListResult(listed: unknown, label: string): MapLayerListResult {
+  expect(listed, label).toMatchObject({
+    ok: true,
+    layers: expect.any(Array),
+  });
+  const result = listed as MapLayerListResult;
+  expect(result.layers.length, `${label} layers`).toBeGreaterThan(0);
+  if (result.count < result.total) {
+    expect(result.nextCursor, `${label} nextCursor`).toBe(
+      result.layers[result.layers.length - 1]?.id,
+    );
+  }
+  return result;
+}
+
+async function executeListMapLayers(page: Page): Promise<unknown> {
+  return page.evaluate(async (): Promise<unknown> => {
+    type ExecutableModelContext = WebMCP.ModelContext & {
+      executeTool(tool: WebMCP.RegisteredTool, input: string): Promise<unknown>;
+    };
+    const parseOutput = (value: unknown): unknown => {
+      if (typeof value !== 'string') return value;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    };
+    const provider = document.modelContext as ExecutableModelContext;
+    const listTool = (await provider.getTools()).find((tool) => tool.name === 'list_map_layers');
+    if (!listTool) throw new Error('list_map_layers was not discovered.');
+    return parseOutput(await provider.executeTool(listTool, JSON.stringify({ limit: 8 })));
+  });
+}
 
 async function attachJsonEvidence(
   testInfo: TestInfo,
@@ -276,6 +320,7 @@ test.describe('top-level WebMCP dashboard contract', () => {
         [
           'get_access_context',
           'get_dashboard_context',
+          'list_map_layers',
           'list_dashboard_panels',
           'search_dashboard',
         ].includes(tool.name),
@@ -517,6 +562,9 @@ test.describe('top-level WebMCP dashboard contract', () => {
     });
 
     let visibleMutation: (MutationExecutionProbe & { visible: boolean }) | null = null;
+    const layerListed = await executeListMapLayers(page);
+    assertMapLayerListResult(layerListed, 'list_map_layers');
+
     if (!productionSmoke) {
       const mutation = await page.evaluate(async (): Promise<MutationExecutionProbe> => {
         type ExecutableModelContext = WebMCP.ModelContext & {
@@ -713,7 +761,8 @@ test.describe('top-level WebMCP dashboard contract', () => {
       },
       calls: {
         success: { tool: 'get_dashboard_context', output: coldStart.context },
-        catalog: {
+        layerCatalog: { tool: 'list_map_layers', output: layerListed },
+        panelCatalog: {
           tool: 'list_dashboard_panels',
           disabledCount: catalogProbe.disabledCount,
           pages: catalogProbe.pages,
@@ -884,6 +933,9 @@ test.describe('top-level WebMCP dashboard contract', () => {
           DASHBOARD_TOOL_NAMES,
         );
 
+        const layerListed = await executeListMapLayers(page);
+        assertMapLayerListResult(layerListed, `${target.origin} list_map_layers`);
+
         const directDocumentUrl = `${target.origin}/dashboard.html`;
         const directDocument = await context.request.get(directDocumentUrl, { maxRedirects: 0 });
         expect(directDocument.status(), `${target.origin}/dashboard.html status`).toBe(200);
@@ -898,6 +950,7 @@ test.describe('top-level WebMCP dashboard contract', () => {
           ...target,
           servedSha,
           rootRedirect,
+          listMapLayers: layerListed,
           dashboard: {
             status: response!.status(),
             url: response!.url(),

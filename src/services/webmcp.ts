@@ -11,17 +11,18 @@
 //   1. openCountryBrief({ iso2 }) — opens the country deep-dive panel.
 //   2. openSearch()               — opens the global command palette.
 //   3. get_dashboard_context()    — reads bounded visible dashboard state.
-//   4. list_dashboard_panels()    — pages the canonical panel catalog.
-//   5. switch_monitor()           — switches World/Tech/Finance/Commodity/Energy/Good News.
-//   6. open_settings()            — opens the settings overlay.
-//   7. open_alerts()              — opens the alerts/notifications tab.
-//   8. open_dashboard_panel()     — opens an already-live panel.
-//   9. set_map_view()             — moves the visible map.
-//  10. set_map_layers()           — changes allowed visible map layers.
-//  11. search_dashboard()         — searches the live dashboard index.
-//  12. open_search_result()       — selects an opaque, revalidated result.
-//  13. get_access_context()       — reads signed-out / loading / signed-in access.
-//  14. open_sign_in()             — opens the existing Clerk sign-in dialog.
+//   4. list_map_layers()          — pages the canonical map-layer catalog.
+//   5. list_dashboard_panels()    — pages the canonical panel catalog.
+//   6. switch_monitor()           — switches World/Tech/Finance/Commodity/Energy/Good News.
+//   7. open_settings()            — opens the settings overlay.
+//   8. open_alerts()              — opens the alerts/notifications tab.
+//   9. open_dashboard_panel()     — opens an already-live panel.
+//  10. set_map_view()             — moves the visible map.
+//  11. set_map_layers()           — changes allowed visible map layers.
+//  12. search_dashboard()         — searches the live dashboard index.
+//  13. open_search_result()       — selects an opaque, revalidated result.
+//  14. get_access_context()       — reads signed-out / loading / signed-in access.
+//  15. open_sign_in()             — opens the existing Clerk sign-in dialog.
 //
 // No tool is conditionally registered. Live controls re-check auth and
 // entitlement through the agent-bus applier on every invocation, so a single
@@ -63,6 +64,16 @@ import {
   MAX_LAYER_ACTION_TARGET_ID_LENGTH,
   MAX_LAYER_ACTION_TARGETS,
 } from '../../shared/agent-bus-contract';
+import {
+  DEFAULT_MAP_LAYER_PAGE_SIZE,
+  MAX_MAP_LAYER_PAGE_SIZE,
+  WEBMCP_MAP_LAYER_MONITORS,
+  WEBMCP_MAP_LAYER_RENDERERS,
+  WEBMCP_MAP_LAYER_STATES,
+  listMapLayerCatalog,
+  parseMapLayerCatalogArgs,
+  type MapLayerCatalogSnapshot,
+} from './webmcp-map-layer-catalog';
 
 export interface WebMcpAppBindings {
   openCountryBriefByCode(
@@ -79,6 +90,9 @@ export interface WebMcpAppBindings {
   getDashboardContext(
     options?: WebMcpExecutionOptions,
   ): DashboardContextSnapshot | Promise<DashboardContextSnapshot>;
+  listMapLayerCatalog(
+    options?: WebMcpExecutionOptions,
+  ): MapLayerCatalogSnapshot | Promise<MapLayerCatalogSnapshot>;
   listDashboardPanels(
     query: DashboardPanelCatalogQuery,
     options?: WebMcpExecutionOptions,
@@ -324,6 +338,7 @@ export const WEBMCP_TOOL_CANCELLATION_POLICY: Readonly<
 > = Object.freeze({
   [WEBMCP_SPA_TOOL.getDashboardContext]: 'read-only',
   [WEBMCP_SPA_TOOL.getAccessContext]: 'read-only',
+  [WEBMCP_SPA_TOOL.listMapLayers]: 'read-only',
   [WEBMCP_SPA_TOOL.listDashboardPanels]: 'read-only',
   [WEBMCP_SPA_TOOL.searchDashboard]: 'read-only',
   [WEBMCP_SPA_TOOL.openSearch]: 'view-state',
@@ -385,6 +400,7 @@ const TOOL_FAILURE_MESSAGES: Record<WebMcpSpaToolName, string> = {
   openCountryBrief: 'World Monitor could not open that country brief.',
   openSearch: 'World Monitor could not open search.',
   get_dashboard_context: 'World Monitor could not read dashboard context.',
+  list_map_layers: 'World Monitor could not list map layers.',
   list_dashboard_panels: 'World Monitor could not list dashboard panels.',
   switch_monitor: 'World Monitor could not switch monitors.',
   open_settings: 'World Monitor could not open settings.',
@@ -610,6 +626,11 @@ const VALIDATION_DENIAL_REASONS = new Set([
   'malformed_arguments',
   'invalid_action',
   'not_dashboard_control',
+  'invalid_monitor',
+  'invalid_renderer',
+  'invalid_state',
+  'invalid_limit',
+  'invalid_cursor',
   'unknown_monitor',
 ]);
 const ENTITLEMENT_DENIAL_REASONS = new Set([
@@ -1088,6 +1109,60 @@ export function buildWebMcpTools(
       execute: withInvocationLogging(WEBMCP_SPA_TOOL.getDashboardContext, async (_args, extra) => (
         boundDashboardContext(await app.getDashboardContext(extra))
       ), trackEvent),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.listMapLayers,
+      title: 'List Map Layers',
+      description:
+        'Page the canonical map-layer catalog, including disabled layers. Omit monitor for every registered layer; world lists only that variant. Each result has the stable ID, label, enabled state, monitor availability, renderer compatibility, entitlement, and a reason when the current page cannot enable it with set_map_layers. Does not load map datasets.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          monitor: {
+            type: 'string',
+            description: 'Omit for every non-sunset registered layer; world lists only that variant.',
+            enum: [...WEBMCP_MAP_LAYER_MONITORS],
+          },
+          renderer: {
+            type: 'string',
+            description: 'Optional 2d or 3d renderer compatibility filter.',
+            enum: [...WEBMCP_MAP_LAYER_RENDERERS],
+          },
+          state: {
+            type: 'string',
+            description: 'Filter to enabled layers, or layers the current page can enable.',
+            enum: [...WEBMCP_MAP_LAYER_STATES],
+          },
+          cursor: {
+            type: 'string',
+            description: 'Previous page last layer ID; reuse only with the same filters.',
+            minLength: 1,
+            maxLength: MAX_LAYER_ACTION_TARGET_ID_LENGTH,
+            pattern: DASHBOARD_LAYER_ACTION_TARGET_ID_PATTERN,
+          },
+          limit: {
+            type: 'integer',
+            description: `Page size from 1 to ${MAX_MAP_LAYER_PAGE_SIZE}.`,
+            minimum: 1,
+            maximum: MAX_MAP_LAYER_PAGE_SIZE,
+            default: DEFAULT_MAP_LAYER_PAGE_SIZE,
+          },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.listMapLayers, async (args, extra) => {
+        const parsed = parseMapLayerCatalogArgs(args);
+        if (!parsed.ok) return parsed;
+        return listMapLayerCatalog(
+          {
+            ...await app.listMapLayerCatalog(extra),
+            targetCancellationSupported: Boolean(extra?.signal),
+          },
+          parsed.query,
+          { targetOutputChars: TARGET_OUTPUT_CHARS },
+        );
+      }, trackEvent),
     },
     {
       name: WEBMCP_SPA_TOOL.listDashboardPanels,

@@ -450,6 +450,14 @@ describe('open_search_result rejects a caller-supplied effect class', () => {
       resolveCountryName: (code) => code,
       openSearch: async () => true,
       getDashboardContext: async () => unusedDashboardContext,
+      listMapLayerCatalog: async () => ({
+        variant: 'full',
+        rendererKind: 'deck',
+        enabledLayers: [],
+        liveLayerKeys: [],
+        hasPremium: false,
+        deckGlActive: true,
+      }),
       ...unusedNavigationBindings,
       applyDashboardAction: async () => ({
         ok: true,
