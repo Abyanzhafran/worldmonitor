@@ -542,5 +542,9 @@ describe('agent bus applier', () => {
       to: false,
       reason: 'layer_not_executable',
     }]);
+    assert.deepEqual(
+      (ctx.map as { _calls: { setLayersCalls: MapLayers[] } })._calls.setLayersCalls,
+      [ctx.mapLayers],
+    );
   });
 });

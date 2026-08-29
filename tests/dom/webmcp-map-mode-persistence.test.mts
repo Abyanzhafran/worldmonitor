@@ -6,10 +6,11 @@
  * resilienceScore compatibility change. WebMCP unit tests stub the final
  * action, so they never reach those writes.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { applyVisibleMapDimension } from '@/app/map-dimension-control';
 import { STORAGE_KEYS } from '@/config';
+import { isStorageQuotaExceeded } from '@/utils/storage-quota';
 import type { AppContext } from '@/app/app-context';
 import type { MapLayers } from '@/types';
 
@@ -17,10 +18,12 @@ function makeCtx(options: {
   globe?: boolean;
   deck?: boolean;
   resilienceScore?: boolean;
-} = {}): AppContext {
+} = {}): AppContext & { setLayersCalls: MapLayers[] } {
   let globeMode = options.globe === true;
   let deckActive = options.deck === true;
+  const setLayersCalls: MapLayers[] = [];
   return {
+    setLayersCalls,
     mapLayers: {
       resilienceScore: options.resilienceScore === true,
     } as unknown as MapLayers,
@@ -35,8 +38,11 @@ function makeCtx(options: {
         globeMode = false;
         deckActive = true;
       },
+      setLayers: (layers: MapLayers) => {
+        setLayersCalls.push(layers);
+      },
     },
-  } as unknown as AppContext;
+  } as unknown as AppContext & { setLayersCalls: MapLayers[] };
 }
 
 describe('set_map_mode persists map mode', () => {
@@ -83,5 +89,15 @@ describe('set_map_mode persists map mode', () => {
     }]);
     expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.mapLayers)!))
       .toStrictEqual({ resilienceScore: false });
+    expect(ctx.setLayersCalls).toStrictEqual([{ resilienceScore: false }]);
+  });
+
+  it('marks the storage quota flag when map-mode persistence overflows', () => {
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+
+    applyVisibleMapDimension(makeCtx({ deck: true }), '3d');
+    expect(isStorageQuotaExceeded()).toBe(true);
   });
 });
