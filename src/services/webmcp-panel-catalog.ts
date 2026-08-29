@@ -20,7 +20,7 @@ const CATEGORY_KEY_RE = /^[a-z][a-zA-Z0-9]*$/;
 const CANONICAL_PANEL_IDS = Object.freeze(
   Object.keys(ALL_PANELS)
     .filter((panelId) => !panelId.startsWith('cw-') && !panelId.startsWith('mcp-'))
-    .sort((left, right) => left.localeCompare(right)),
+    .sort((left, right) => left.localeCompare(right, 'en')),
 );
 const CANONICAL_PANEL_ID_SET = new Set(CANONICAL_PANEL_IDS);
 const PANEL_CATEGORY_KEYS = Object.freeze(Object.keys(PANEL_CATEGORY_MAP));
@@ -32,7 +32,7 @@ const VARIANT_PANEL_IDS = Object.freeze(
       Object.freeze(
         [...(VARIANT_DEFAULTS[variant] ?? [])]
           .filter((panelId) => CANONICAL_PANEL_ID_SET.has(panelId))
-          .sort((left, right) => left.localeCompare(right)),
+          .sort((left, right) => left.localeCompare(right, 'en')),
       ),
     ]),
   ),
@@ -220,7 +220,7 @@ export function listDashboardPanelCatalog(
 
   const startIndex = cursor === undefined
     ? 0
-    : items.findIndex((item) => item.id.localeCompare(cursor) > 0);
+    : items.findIndex((item) => item.id.localeCompare(cursor, 'en') > 0);
   const remaining = startIndex === -1 ? [] : items.slice(startIndex);
   return packCatalogPage(currentVariant, items.length, remaining, limit);
 }

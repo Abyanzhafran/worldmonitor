@@ -82,7 +82,7 @@ describe('WebMCP dashboard panel catalog', () => {
     assert.equal(worldIds.length, 109);
     assert.ok(disabledWorld.length > 0, 'World registry must include disabled panels');
     assert.ok(disabledWorld.every((panelId) => worldIds.includes(panelId)));
-    assert.deepEqual([...uniqueIds], [...uniqueIds].sort((left, right) => left.localeCompare(right)));
+    assert.deepEqual([...uniqueIds], [...uniqueIds].sort((left, right) => left.localeCompare(right, 'en')));
   });
 
   it('pages the current monitor catalog without duplicates until exhaustion', () => {
@@ -234,7 +234,7 @@ describe('WebMCP dashboard panel catalog', () => {
       cursor,
       limit: DASHBOARD_PANEL_CATALOG_DEFAULT_LIMIT,
     });
-    assert.ok(page.panels.every((panel) => panel.id.localeCompare(cursor ?? '') > 0));
+    assert.ok(page.panels.every((panel) => panel.id.localeCompare(cursor ?? '', 'en') > 0));
     assert.ok(page.panels.every((panel) => panel.category === 'core'));
   });
 });
