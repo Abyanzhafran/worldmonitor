@@ -85,6 +85,11 @@ describe('cors helper', () => {
       /(?:^|,\s*)X-RateLimit-Reset(?:,|$)/,
       'browser clients must be able to read rate-limit reset timestamps',
     );
+    assert.match(
+      headers['Access-Control-Expose-Headers'],
+      /(?:^|,\s*)X-RateLimit-Mode(?:,|$)/,
+      'browser clients must be able to read limiter degradation (X-RateLimit-Mode)',
+    );
   });
 
   it('propagates exceptions (caller must wrap in fail-closed try/catch)', () => {
@@ -114,6 +119,11 @@ describe('isAllowedOrigin — Vercel preview allowlist (eliewm team scope)', () 
     ['hash deployment URL', 'https://worldmonitor-abc123def456-eliewm.vercel.app'],
     ['apex production origin', 'https://worldmonitor.app'],
     ['production subdomain', 'https://tech.worldmonitor.app'],
+    ['trailing-dot FQDN apex (#6411)', 'https://worldmonitor.app.'],
+    ['trailing-dot FQDN subdomain (#6411)', 'https://tech.worldmonitor.app.'],
+    ['Google Translate www proxy (#6411)', 'https://www-worldmonitor-app.translate.goog'],
+    ['Google Translate apex proxy (#6411)', 'https://worldmonitor-app.translate.goog'],
+    ['Google Translate tech proxy (#6411)', 'https://tech-worldmonitor-app.translate.goog'],
   ];
 
   const REJECTED = [
@@ -122,6 +132,9 @@ describe('isAllowedOrigin — Vercel preview allowlist (eliewm team scope)', () 
     ['bare worldmonitor vercel.app (no scope segment)', 'https://worldmonitor.vercel.app'],
     ['suffix-spoofed eliewm origin', 'https://worldmonitor-git-feature-eliewm.vercel.app.evil.com'],
     ['dead personal-scope preview (post-migration)', 'https://worldmonitor-feature-elie-abc123.vercel.app'],
+    ['unrelated translate.goog host', 'https://evil-example-com.translate.goog'],
+    ['hyphen-encoded lookalike translate host', 'https://evil--worldmonitor-app.translate.goog'],
+    ['trailing-dot unrelated origin', 'https://evil.example.com.'],
   ];
 
   for (const [label, origin] of ALLOWED) {
@@ -170,6 +183,24 @@ describe('X-Billing-Verification is readable cross-origin (#5622)', () => {
   }
 });
 
+/**
+ * #7270: oauth/token, wm-session, and the gateway set `X-RateLimit-Mode: degraded`
+ * when the Upstash limiter is unconfigured or throws. The Limit/Remaining/Reset
+ * triplet was already exposed; Mode was not, so a cross-origin browser or
+ * desktop-webview client saw `response.headers.get('X-RateLimit-Mode') === null`.
+ */
+describe('X-RateLimit-Mode is readable cross-origin (#7270)', () => {
+  for (const [label, build] of CORS_SURFACES) {
+    it(`${label} exposes X-RateLimit-Mode`, () => {
+      assert.ok(
+        exposedHeaders(build()).includes('X-RateLimit-Mode'),
+        `${label} must expose X-RateLimit-Mode so clients can tell fail-open limiter `
+        + 'degradation from a healthy grant without parsing the body',
+      );
+    });
+  }
+});
+
 describe('IETF RateLimit headers are readable across every CORS surface', () => {
   const IETF_RATE_LIMIT_HEADERS = [
     'RateLimit',
@@ -184,6 +215,44 @@ describe('IETF RateLimit headers are readable across every CORS surface', () => 
       for (const name of IETF_RATE_LIMIT_HEADERS) {
         assert.ok(exposed.has(name), `${label} must expose ${name}`);
       }
+    });
+  }
+});
+
+describe('CORS triplet parity — Google Translate + trailing-dot helpers stay in sync (#6411)', () => {
+  const TWINS = [
+    '../server/cors.ts',
+    '../api/_cors.js',
+    '../workers/api-cors-preflight/src/index.js',
+  ];
+
+  for (const rel of TWINS) {
+    it(`${rel} decodes Google Translate hosts before allowlisting`, async () => {
+      const source = await readFile(new URL(rel, import.meta.url), 'utf8');
+      assert.ok(
+        source.includes('isWorldMonitorGoogleTranslateOrigin'),
+        `${rel} must share the Translate decode helper`,
+      );
+      assert.ok(
+        source.includes('replace(/--/g,'),
+        `${rel} must decode Google's -- hyphen escape before matching`,
+      );
+      assert.ok(
+        !source.includes('(?:[a-z0-9-]+-)*worldmonitor-app\\.translate\\.goog'),
+        `${rel} must not use the suffix-only Translate pattern (hyphen bypass)`,
+      );
+    });
+
+    it(`${rel} normalizes trailing-dot FQDN origins before matching`, async () => {
+      const source = await readFile(new URL(rel, import.meta.url), 'utf8');
+      assert.ok(
+        source.includes('originForAllowlistMatch'),
+        `${rel} must share the trailing-dot normalizer name`,
+      );
+      assert.ok(
+        source.includes('hostname.replace(/\\.+$/, \'\')'),
+        `${rel} must strip trailing DNS dots on the hostname`,
+      );
     });
   }
 });
@@ -239,6 +308,11 @@ describe('CORS Worker superset invariant — edge allowlist ⊇ function allowli
     'https://worldmonitor.app',
     'https://www.worldmonitor.app',
     'https://tech.worldmonitor.app',
+    'https://worldmonitor.app.',
+    'https://tech.worldmonitor.app.',
+    'https://www-worldmonitor-app.translate.goog',
+    'https://worldmonitor-app.translate.goog',
+    'https://tech-worldmonitor-app.translate.goog',
     'https://worldmonitor-git-feature-eliewm.vercel.app',
     'https://worldmonitor-abc123def456-eliewm.vercel.app',
     'tauri://localhost',
@@ -249,6 +323,8 @@ describe('CORS Worker superset invariant — edge allowlist ⊇ function allowli
     'https://worldmonitor-git-feature-attacker.vercel.app',
     'https://worldmonitor-feature-elie-abc123.vercel.app',
     'https://evil.com',
+    'https://evil-example-com.translate.goog',
+    'https://evil--worldmonitor-app.translate.goog',
   ];
 
   for (const origin of PROD_ORIGINS) {

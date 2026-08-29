@@ -66,10 +66,18 @@ function checkAuth(req) {
 const ALLOWED_COMMANDS = new Set([
   'GET', 'SET', 'DEL', 'MGET', 'MSET', 'SCAN',
   'TTL', 'EXPIRE', 'PEXPIRE', 'EXISTS', 'TYPE',
-  'HGET', 'HSET', 'HDEL', 'HGETALL', 'HMGET', 'HMSET', 'HKEYS', 'HVALS', 'HEXISTS', 'HLEN',
+  'HGET', 'HSET', 'HSETNX', 'HINCRBY', 'HDEL', 'HGETALL', 'HMGET', 'HMSET', 'HKEYS', 'HVALS', 'HEXISTS', 'HLEN',
   'LPUSH', 'RPUSH', 'LPOP', 'RPOP', 'LRANGE', 'LLEN', 'LTRIM', 'LREM',
   'SADD', 'SREM', 'SMEMBERS', 'SISMEMBER', 'SCARD',
-  'ZADD', 'ZREM', 'ZRANGE', 'ZRANGEBYSCORE', 'ZREVRANGE', 'ZSCORE', 'ZCARD', 'ZRANDMEMBER',
+  // ZREMRANGEBY* are the retention trims (#7087 accumulator + forecast-evidence
+  // prune, resilience 30-day history trim). Without them a self-hosted install
+  // answers the prune with a per-command error inside an HTTP 200 pipeline, so
+  // the caller only sees `*_confirmed=false` and the ZSET grows without bound.
+  'ZADD', 'ZREM', 'ZRANGE', 'ZRANGEBYSCORE', 'ZREMRANGEBYSCORE', 'ZREMRANGEBYRANK',
+  'ZREVRANGE', 'ZREVRANGEBYSCORE', 'ZSCORE', 'ZCARD', 'ZRANDMEMBER',
+  // COPY is key-scoped (replay-digest-cooldown snapshots one key to another);
+  // it reaches no state the already-allowed GET+SET pair cannot.
+  'COPY',
   'GEOADD', 'GEOSEARCH', 'GEOPOS', 'GEODIST',
   'INCR', 'DECR', 'INCRBY', 'DECRBY',
   'PING', 'ECHO', 'INFO', 'DBSIZE',
@@ -79,11 +87,10 @@ const ALLOWED_COMMANDS = new Set([
 ]);
 
 // EVAL stays blocked as a class — arbitrary server-side Lua is exactly what
-// the allowlist exists to prevent — with ONE pinned exception: the digest
-// last-good publish gate. The edge handler needs its read-decide-write to be
-// atomic (two isolates racing a plain SET pair can let a narrower snapshot
-// clobber a richer one), and the only sound way to allow that through a
-// command allowlist is to pin the exact script text.
+// the allowlist exists to prevent. The handlers below need atomic last-good
+// replacement, fenced story-alias publication, and MCP quota reservation.
+// The only sound way to allow them through a command allowlist is to pin the
+// exact script text.
 //
 // PINNED COPY of shared/digest-lastgood-publish-script.mjs. This image
 // bundles only this file, so it cannot import the shared module — a parity
@@ -135,7 +142,87 @@ const DIGEST_LASTGOOD_PUBLISH_SCRIPT = [
   "redis.call('SET', KEYS[1], stored, 'EX', ARGV[4])",
   'return 1',
 ].join('\n');
-const ALLOWED_EVAL_SCRIPTS = new Set([DIGEST_LASTGOOD_PUBLISH_SCRIPT]);
+
+// PINNED COPY of shared/story-alias-publish-script.mjs. The script verifies
+// a short publication-lease token inside Redis before it writes any aliases,
+// so a delayed older Edge request cannot overwrite a newer alias cohort.
+const STORY_ALIAS_PUBLISH_SCRIPT = [
+  "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end",
+  'for index = 2, #KEYS do',
+  "  redis.call('SET', KEYS[index], ARGV[2], 'EX', ARGV[3])",
+  'end',
+  'return 1',
+].join('\n');
+
+// PINNED COPY of shared/mcp-quota-reserve-script.mjs. The script atomically
+// reserves a Pro MCP daily-quota slot, rolls back only the rejecting request,
+// and clamps failed-rollback residue without dropping below a higher successful
+// same-day allowance.
+const MCP_QUOTA_RESERVE_SCRIPT = [
+  'local ttl = tonumber(ARGV[2])',
+  "local n = redis.call('INCR', KEYS[1])",
+  'if ttl ~= nil and ttl > 0 then',
+  "  redis.call('EXPIRE', KEYS[1], ttl)",
+  'end',
+  '',
+  'local function read_floor()',
+  "  local raw = redis.call('GET', KEYS[2])",
+  "  if raw == false or raw == nil or raw == '' then return nil end",
+  '  return tonumber(raw)',
+  'end',
+  '',
+  'local function write_floor(value)',
+  "  redis.call('SET', KEYS[2], value)",
+  '  if ttl ~= nil and ttl > 0 then',
+  "    redis.call('EXPIRE', KEYS[2], ttl)",
+  '  end',
+  'end',
+  '',
+  'local function remember_success(limit)',
+  '  local seen = read_floor()',
+  '  if seen == -1 then return end',
+  '  if seen == nil or limit > seen then',
+  '    write_floor(limit)',
+  '  end',
+  'end',
+  '',
+  'local limit_raw = ARGV[1]',
+  "if limit_raw == nil or limit_raw == false or limit_raw == '' then",
+  '  write_floor(-1)',
+  '  return {1, n}',
+  'end',
+  '',
+  'local limit = tonumber(limit_raw)',
+  'if limit == nil or limit < 0 then',
+  "  redis.call('DECR', KEYS[1])",
+  '  return {-1, 0}',
+  'end',
+  '',
+  'if n <= limit then',
+  '  remember_success(limit)',
+  '  return {1, n}',
+  'end',
+  '',
+  "n = redis.call('DECR', KEYS[1])",
+  'local seen = read_floor()',
+  'if seen ~= -1 then',
+  '  local clamp_to = limit',
+  '  if seen ~= nil and seen > clamp_to then clamp_to = seen end',
+  '  if n > clamp_to then',
+  "    redis.call('SET', KEYS[1], clamp_to)",
+  '    if ttl ~= nil and ttl > 0 then',
+  "      redis.call('EXPIRE', KEYS[1], ttl)",
+  '    end',
+  '    n = clamp_to',
+  '  end',
+  'end',
+  'return {0, n}',
+].join('\n');
+const ALLOWED_EVAL_SCRIPTS = new Set([
+  DIGEST_LASTGOOD_PUBLISH_SCRIPT,
+  STORY_ALIAS_PUBLISH_SCRIPT,
+  MCP_QUOTA_RESERVE_SCRIPT,
+]);
 
 // Exact-text pin, not a pattern: any change to the script — including
 // whitespace — must land in both copies deliberately.
@@ -143,15 +230,34 @@ function isAllowedEval(args) {
   return args.length >= 2 && ALLOWED_EVAL_SCRIPTS.has(String(args[1]));
 }
 
-async function runCommand(args) {
-  const cmd = args[0].toUpperCase();
+// THE authorization decision, in one place. /multi-exec used to carry its own
+// `ALLOWED_COMMANDS.has(cmd)` copy with no pinned-script branch, so membership
+// in that Set granted strictly more authority there than here: anything added
+// to the Set — including EVAL — would have run unpinned inside a MULTI. Two
+// copies of a security gate drift; one does not. Every request path must call
+// this and nothing else.
+//
+// It also logs the rejection: /pipeline reports a blocked command as a
+// per-entry {error} inside an HTTP 200 (Upstash wire compatibility, so the
+// status cannot change), which means callers branching on `response.ok` see
+// nothing at all. Server-side stderr is the operator's only signal, and its
+// absence is why the HSETNX/HINCRBY gap survived unnoticed (#6937).
+function assertCommandAllowed(args) {
+  const cmd = String(args[0]).toUpperCase();
   if (cmd === 'EVAL') {
     if (!isAllowedEval(args)) {
+      console.error('Command not allowed: EVAL (script not in the pinned allowlist)');
       throw new Error('Command not allowed: EVAL (script not in the pinned allowlist)');
     }
   } else if (!ALLOWED_COMMANDS.has(cmd)) {
+    console.error(`Command not allowed: ${cmd}`);
     throw new Error(`Command not allowed: ${cmd}`);
   }
+  return cmd;
+}
+
+async function runCommand(args) {
+  const cmd = assertCommandAllowed(args);
   const cmdArgs = args.slice(1);
   return client.sendCommand([cmd, ...cmdArgs.map(String)]);
 }
@@ -366,10 +472,11 @@ const server = http.createServer(async (req, res) => {
       const commands = JSON.parse(await readBody(req));
       const multi = client.multi();
       for (const cmd of commands) {
-        const cmdName = cmd[0].toUpperCase();
-        if (!ALLOWED_COMMANDS.has(cmdName)) {
+        try {
+          assertCommandAllowed(cmd);
+        } catch (err) {
           res.writeHead(403);
-          res.end(JSON.stringify({ error: `Command not allowed: ${cmdName}` }));
+          res.end(JSON.stringify({ error: err.message }));
           return;
         }
         multi.sendCommand(cmd.map(String));

@@ -259,6 +259,57 @@ export async function setCachedJson(key: string, value: unknown, ttlSeconds: num
   }
 }
 
+/**
+ * First-writer-wins JSON publish. Uses SET NX EX so concurrent isolates cannot
+ * overwrite a key the other already persisted. Returns true only when this
+ * caller created the key; false means the key already existed or the write
+ * could not be confirmed. Callers that need the persisted winner must GET
+ * after this and fail closed on a miss.
+ */
+export async function setCachedJsonIfAbsent(
+  key: string,
+  value: unknown,
+  ttlSeconds: number,
+  raw = false,
+  onError?: (error: unknown) => void,
+): Promise<boolean> {
+  if (process.env.LOCAL_API_MODE === 'tauri-sidecar') {
+    const { sidecarCacheSetIfAbsent } = await import('./sidecar-cache');
+    return sidecarCacheSetIfAbsent(key, value, ttlSeconds);
+  }
+
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return false;
+  try {
+    const finalKey = raw ? key : prefixKey(key);
+    const resp = await fetch(`${url}/`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'worldmonitor-server/1.0 (redis)',
+      },
+      body: JSON.stringify(['SET', finalKey, JSON.stringify(value), 'EX', String(ttlSeconds), 'NX']),
+      signal: AbortSignal.timeout(REDIS_PIPELINE_TIMEOUT_MS),
+    });
+    const data = (await resp.json().catch(() => null)) as {
+      result?: string | null;
+      error?: string;
+    } | null;
+    if (!resp.ok || data?.error) {
+      console.warn(`[redis] setCachedJsonIfAbsent failed:`, data?.error ?? `HTTP ${resp.status}`);
+      return false;
+    }
+    return data?.result === 'OK';
+  } catch (err) {
+    // sentry-coverage-ok: onError receives the original exception before the fail-closed return.
+    onError?.(err);
+    console.warn('[redis] setCachedJsonIfAbsent failed:', errMsg(err));
+    return false;
+  }
+}
+
 /** Read a bounded Redis list whose members are independently JSON encoded. */
 export async function readCachedJsonList(
   key: string,
@@ -596,7 +647,26 @@ function normalizePipelineCommand(command: RedisPipelineCommand, raw: boolean): 
   return [verb, prefixKey(key), ...rest];
 }
 
-export async function runRedisPipeline(commands: RedisPipelineCommand[], raw = false): Promise<RedisCommandResult[]> {
+function resolvePipelineTimeoutMs(timeoutMs?: number): number {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return REDIS_PIPELINE_TIMEOUT_MS;
+  }
+  return Math.min(REDIS_PIPELINE_TIMEOUT_MS, Math.max(1, Math.ceil(timeoutMs)));
+}
+
+/**
+ * Execute allowlisted Redis commands through Upstash's pipeline endpoint.
+ *
+ * `timeoutMs` can tighten, but never extend, the shared pipeline timeout. It
+ * lets callers with an absolute response deadline abort the request inside
+ * their remaining budget instead of either starting a full five-second call
+ * or leaving work behind after their response has completed.
+ */
+export async function runRedisPipeline(
+  commands: RedisPipelineCommand[],
+  raw = false,
+  timeoutMs?: number,
+): Promise<RedisCommandResult[]> {
   if (process.env.LOCAL_API_MODE === 'tauri-sidecar') return [];
   if (commands.length === 0) return [];
 
@@ -612,7 +682,7 @@ export async function runRedisPipeline(commands: RedisPipelineCommand[], raw = f
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(commands.map((command) => normalizePipelineCommand(command, raw))),
-      signal: AbortSignal.timeout(REDIS_PIPELINE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(resolvePipelineTimeoutMs(timeoutMs)),
     });
     if (!response.ok) {
       console.warn(`[redis] runRedisPipeline HTTP ${response.status}`);
@@ -625,8 +695,15 @@ export async function runRedisPipeline(commands: RedisPipelineCommand[], raw = f
   }
 }
 
-/** Execute allowlisted Redis commands in one MULTI/EXEC transaction. */
-export async function runRedisTransaction(commands: RedisPipelineCommand[], raw = false): Promise<RedisCommandResult[]> {
+/**
+ * Execute allowlisted Redis commands in one MULTI/EXEC transaction.
+ * `timeoutMs` can tighten, but never extend, the shared pipeline timeout.
+ */
+export async function runRedisTransaction(
+  commands: RedisPipelineCommand[],
+  raw = false,
+  timeoutMs?: number,
+): Promise<RedisCommandResult[]> {
   if (process.env.LOCAL_API_MODE === 'tauri-sidecar') return [];
   if (commands.length === 0) return [];
 
@@ -643,7 +720,7 @@ export async function runRedisTransaction(commands: RedisPipelineCommand[], raw 
         'User-Agent': 'worldmonitor-server/1.0 (redis)',
       },
       body: JSON.stringify(commands.map((command) => normalizePipelineCommand(command, raw))),
-      signal: AbortSignal.timeout(REDIS_PIPELINE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(resolvePipelineTimeoutMs(timeoutMs)),
     });
     if (!response.ok) {
       console.warn(`[redis] runRedisTransaction HTTP ${response.status}`);
