@@ -6,6 +6,7 @@ import {
 } from '@/config/panels';
 import { SITE_VARIANTS, isSiteVariant, type SiteVariant } from '@/config/variant';
 import type { PanelConfig } from '@/types';
+import { DASHBOARD_PANEL_ACTION_ID_PATTERN } from '../../shared/agent-bus-contract';
 
 export const DASHBOARD_PANEL_CATALOG_DEFAULT_LIMIT = 6;
 export const DASHBOARD_PANEL_CATALOG_MAX_LIMIT = 8;
@@ -13,9 +14,9 @@ export const DASHBOARD_PANEL_CATALOG_OUTPUT_TARGET_CHARS = 1_400;
 export const DASHBOARD_PANEL_ID_MAX_CHARS = 96;
 export const DASHBOARD_PANEL_LABEL_MAX_CHARS = 80;
 export const DASHBOARD_PANEL_CATEGORY_MAX_CHARS = 64;
-export const DASHBOARD_PANEL_ID_PATTERN = '^[A-Za-z0-9][A-Za-z0-9@_-]*$';
+export const DASHBOARD_PANEL_ID_PATTERN = DASHBOARD_PANEL_ACTION_ID_PATTERN;
 
-const PANEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9@_-]*$/;
+const PANEL_ID_RE = new RegExp(DASHBOARD_PANEL_ID_PATTERN);
 const CATEGORY_KEY_RE = /^[a-z][a-zA-Z0-9]*$/;
 const CANONICAL_PANEL_IDS = Object.freeze(
   Object.keys(ALL_PANELS)
@@ -208,10 +209,11 @@ export function listDashboardPanelCatalog(
     );
   }
 
+  const catalogVariant = variantFilter ?? currentVariant;
   const registryIds = getCanonicalDashboardPanelIds(variantFilter);
   const items: DashboardPanelCatalogItem[] = [];
   for (const panelId of registryIds) {
-    const item = describePanel(panelId, live);
+    const item = describePanel(panelId, live, catalogVariant);
     if (categoryFilter !== undefined && item.category !== categoryFilter) continue;
     if (query.enabled !== undefined && item.enabled !== query.enabled) continue;
     if (query.available !== undefined && item.available !== query.available) continue;
@@ -228,17 +230,21 @@ export function listDashboardPanelCatalog(
 function describePanel(
   panelId: string,
   live: DashboardPanelCatalogLiveState,
+  catalogVariant: string,
 ): DashboardPanelCatalogItem {
   const saved = live.panelSettings[panelId];
-  const config = getEffectivePanelConfig(panelId, live.currentVariant);
+  const liveConfig = getEffectivePanelConfig(panelId, live.currentVariant);
+  const catalogConfig = catalogVariant === live.currentVariant
+    ? liveConfig
+    : getEffectivePanelConfig(panelId, catalogVariant);
   const enabled = saved?.enabled === true;
   const mounted = live.mountedIds.has(panelId);
-  const entitled = live.isPanelAllowed(panelId, config);
+  const entitled = live.isPanelAllowed(panelId, liveConfig);
   const available = enabled && mounted && entitled;
   const item: DashboardPanelCatalogItem = {
     id: panelId,
-    label: config.name.slice(0, DASHBOARD_PANEL_LABEL_MAX_CHARS),
-    category: getDashboardPanelCategoryKey(panelId, live.currentVariant),
+    label: catalogConfig.name.slice(0, DASHBOARD_PANEL_LABEL_MAX_CHARS),
+    category: getDashboardPanelCategoryKey(panelId, catalogVariant),
     variants: PANEL_VARIANT_AVAILABILITY[panelId] ?? [],
     enabled,
     mounted,

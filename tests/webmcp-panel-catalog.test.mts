@@ -80,6 +80,8 @@ describe('WebMCP dashboard panel catalog', () => {
 
     assert.equal(uniqueIds.length, Object.keys(ALL_PANELS).length);
     assert.equal(worldIds.length, 109);
+    assert.ok(uniqueIds.includes('regionalStartups'));
+    assert.ok(uniqueIds.includes('gccNews'));
     assert.ok(disabledWorld.length > 0, 'World registry must include disabled panels');
     assert.ok(disabledWorld.every((panelId) => worldIds.includes(panelId)));
     assert.deepEqual([...uniqueIds], [...uniqueIds].sort((left, right) => left.localeCompare(right, 'en')));
@@ -197,6 +199,33 @@ describe('WebMCP dashboard panel catalog', () => {
     assert.deepEqual(github.variants, ['tech']);
     assert.equal(github.category, 'techAi');
     assert.ok(Object.keys(PANEL_CATEGORY_MAP).includes('techAi'));
+  });
+
+  it('classifies a filtered variant catalog with that variant\'s categories', () => {
+    const live = liveState('full');
+    const techMarketIds = collectPages(live, { variant: 'tech', category: 'techMarkets' })
+      .flatMap((page) => page.panels.map((panel) => panel.id));
+    const marketsOnWorld = collectPages(live, { variant: 'full' })
+      .flatMap((page) => page.panels)
+      .find((panel) => panel.id === 'markets');
+    const techMarkets = listDashboardPanelCatalog(live, {
+      variant: 'tech',
+      category: 'techMarkets',
+      limit: 8,
+    });
+
+    assert.ok(techMarketIds.includes('markets'));
+    assert.ok(techMarketIds.includes('finance'));
+    assert.ok(techMarketIds.includes('crypto'));
+    assert.deepEqual(
+      [...techMarketIds].sort((left, right) => left.localeCompare(right, 'en')),
+      [...(PANEL_CATEGORY_MAP.techMarkets?.panelKeys ?? [])]
+        .filter((panelId) => getCanonicalDashboardPanelIds('tech').includes(panelId))
+        .sort((left, right) => left.localeCompare(right, 'en')),
+    );
+    assert.ok(techMarkets.panels.every((panel) => panel.category === 'techMarkets'));
+    assert.equal(marketsOnWorld?.category, 'marketsFinance');
+    assert.equal(techMarkets.variant, 'full');
   });
 
   it('rejects invalid filters and cursors with structured reasons', () => {

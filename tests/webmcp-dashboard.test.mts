@@ -450,6 +450,35 @@ describe('WebMCP live dashboard bindings', () => {
     assert.equal(rendererReadyCalls, 0);
   });
 
+  it('opens mixed-case catalog panel IDs through the shared action contract', async () => {
+    let showCalls = 0;
+    const ctx = makeContext({
+      panels: {
+        regionalStartups: {
+          show: () => { showCalls += 1; },
+          getElement: () => ({ scrollIntoView() {} }),
+        } as unknown as AppContext['panels'][string],
+      },
+      panelSettings: {
+        regionalStartups: { name: 'Global Startup News', enabled: true },
+      },
+    });
+
+    const result = await runDashboardActionBinding(
+      ctx,
+      { type: 'open_panel', panelId: 'regionalStartups' },
+      {
+        waitForUiReady: () => Promise.resolve(),
+        waitForMapReady: () => new Promise<void>(() => {}),
+        applierOptions,
+        syncUrlStateNow: () => {},
+      },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(showCalls, 1);
+  });
+
   it('returns invalid actions without waiting for concrete renderer readiness', async () => {
     let rendererReadyCalls = 0;
     const result = await runDashboardActionBinding(

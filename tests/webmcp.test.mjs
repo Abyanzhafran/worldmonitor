@@ -12,6 +12,7 @@ import {
 } from '../src/services/webmcp.ts';
 import {
   listDashboardPanelCatalog,
+  DASHBOARD_PANEL_ID_PATTERN,
 } from '../src/services/webmcp-panel-catalog.ts';
 import { getInitialPanelSettingsForVariant } from '../src/config/panels.ts';
 import {
@@ -329,6 +330,12 @@ describe('webmcp.ts: current API contract', () => {
     assert.equal(tool.inputSchema.properties.limit.minimum, 1);
     assert.equal(tool.inputSchema.properties.limit.maximum, 8);
     assert.equal(tool.inputSchema.properties.limit.default, 6);
+    assert.equal(tool.inputSchema.properties.cursor.pattern, DASHBOARD_PANEL_ID_PATTERN);
+
+    const open = tools.find((candidate) => candidate.name === 'open_dashboard_panel');
+    assert.equal(open.inputSchema.properties.panelId.pattern, DASHBOARD_PANEL_ID_PATTERN);
+    assert.match('regionalStartups', new RegExp(DASHBOARD_PANEL_ID_PATTERN));
+    assert.match('gccNews', new RegExp(DASHBOARD_PANEL_ID_PATTERN));
 
     const page = await tool.execute({ variant: 'full', limit: 4 });
     assert.equal(page.variant, 'full');

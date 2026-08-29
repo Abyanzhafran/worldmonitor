@@ -414,7 +414,8 @@ describe('WebMCP canonical inventories', () => {
 describe('WebMCP imperative schema and budget contract', () => {
   it('compiles every input schema under JSON Schema 2020-12 and accepts its canonical input', () => {
     const ajv = new Ajv2020({ allErrors: true, strict: true });
-    for (const tool of buildWebMcpTools(createBindings(), () => {})) {
+    const tools = buildWebMcpTools(createBindings(), () => {});
+    for (const tool of tools) {
       const validate = ajv.compile(tool.inputSchema ?? {});
       assert.equal(
         validate(VALID_INPUTS[tool.name]),
@@ -422,6 +423,10 @@ describe('WebMCP imperative schema and budget contract', () => {
         `${tool.name}: ${ajv.errorsText(validate.errors)}`,
       );
     }
+    const open = tools.find((tool) => tool.name === 'open_dashboard_panel');
+    const validateOpen = ajv.compile(open?.inputSchema ?? {});
+    assert.equal(validateOpen({ panelId: 'regionalStartups' }), true, ajv.errorsText(validateOpen.errors));
+    assert.equal(validateOpen({ panelId: 'gccNews' }), true, ajv.errorsText(validateOpen.errors));
   });
 
   it('applies uniform metadata, schema, output, and error budgets to all dashboard tools', async () => {

@@ -927,7 +927,7 @@ export function buildWebMcpTools(
             description: 'Dashboard panel ID, such as "markets" or "strategic-risk".',
             minLength: 1,
             maxLength: 96,
-            pattern: '^[a-z0-9][a-z0-9@_-]*$',
+            pattern: DASHBOARD_PANEL_ID_PATTERN,
           },
         },
         required: ['panelId'],
