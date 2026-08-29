@@ -9,6 +9,7 @@ const deployedSha = process.env.WM_WEBMCP_DEPLOYED_SHA?.trim() || null;
 
 const DASHBOARD_TOOL_NAMES = [
   'get_dashboard_context',
+  'list_dashboard_panels',
   'openCountryBrief',
   'openSearch',
   'open_dashboard_panel',
@@ -234,13 +235,91 @@ test.describe('top-level WebMCP dashboard contract', () => {
       expect(tool.description.length, `${tool.name} description budget`).toBeLessThanOrEqual(500);
       expect(tool.schema, `${tool.name} schema`).toMatchObject({ type: 'object' });
       expect(tool.annotations.readOnlyHint, `${tool.name} readOnlyHint`).toBe(
-        ['get_dashboard_context', 'search_dashboard'].includes(tool.name),
+        ['get_dashboard_context', 'list_dashboard_panels', 'search_dashboard'].includes(tool.name),
       );
       expect(
         Boolean(tool.annotations.untrustedContentHint),
         `${tool.name} untrustedContentHint`,
       ).toBe(tool.name === 'search_dashboard');
     }
+
+    const catalogProbe = await page.evaluate(async () => {
+      type ExecutableModelContext = WebMCP.ModelContext & {
+        executeTool(
+          tool: WebMCP.RegisteredTool,
+          input: string,
+          options?: { signal?: AbortSignal },
+        ): Promise<unknown>;
+      };
+      const provider = document.modelContext as ExecutableModelContext | undefined;
+      if (!provider || typeof provider.executeTool !== 'function') {
+        throw new Error('Chrome WebMCP execution API is unavailable.');
+      }
+      const parseOutput = (value: unknown): unknown => {
+        if (typeof value !== 'string') return value;
+        try {
+          return JSON.parse(value);
+        } catch {
+          return value;
+        }
+      };
+      const catalogTool = (await provider.getTools()).find((tool) => tool.name === 'list_dashboard_panels');
+      if (!catalogTool) throw new Error('list_dashboard_panels was not discovered.');
+      const ids: string[] = [];
+      const reasons = new Set<string>();
+      let cursor: string | null = null;
+      let total = 0;
+      let pages = 0;
+      let disabledCount = 0;
+      for (let guard = 0; guard < 80; guard += 1) {
+        const raw = parseOutput(await provider.executeTool(
+          catalogTool,
+          JSON.stringify({
+            variant: 'full',
+            limit: 6,
+            ...(cursor ? { cursor } : {}),
+          }),
+        )) as {
+          total?: number;
+          hasMore?: boolean;
+          nextCursor?: string | null;
+          panels?: Array<{
+            id?: string;
+            enabled?: boolean;
+            unavailableReason?: string;
+          }>;
+        };
+        pages += 1;
+        total = Number(raw.total ?? 0);
+        for (const panel of raw.panels ?? []) {
+          if (typeof panel.id === 'string') ids.push(panel.id);
+          if (panel.enabled === false) disabledCount += 1;
+          if (typeof panel.unavailableReason === 'string') reasons.add(panel.unavailableReason);
+        }
+        if (!raw.hasMore) {
+          return {
+            disabledCount,
+            ids,
+            pages,
+            reasons: [...reasons].sort(),
+            total,
+            uniqueCount: new Set(ids).size,
+          };
+        }
+        cursor = raw.nextCursor ?? null;
+        if (!cursor) throw new Error('Catalog page reported hasMore without nextCursor.');
+      }
+      throw new Error('Catalog pagination did not terminate.');
+    });
+
+    expect(catalogProbe.total).toBeGreaterThan(80);
+    expect(catalogProbe.uniqueCount).toBe(catalogProbe.ids.length);
+    expect(catalogProbe.uniqueCount).toBe(catalogProbe.total);
+    expect(catalogProbe.pages).toBeGreaterThan(1);
+    expect(catalogProbe.disabledCount).toBeGreaterThan(0);
+    expect(catalogProbe.reasons).toEqual(
+      expect.arrayContaining(['panel_disabled']),
+    );
 
     const panelProbe = await page.evaluate(async (): Promise<MutationExecutionProbe> => {
       type ExecutableModelContext = WebMCP.ModelContext & {
@@ -375,6 +454,14 @@ test.describe('top-level WebMCP dashboard contract', () => {
       },
       calls: {
         success: { tool: 'get_dashboard_context', output: coldStart.context },
+        catalog: {
+          tool: 'list_dashboard_panels',
+          disabledCount: catalogProbe.disabledCount,
+          pages: catalogProbe.pages,
+          reasons: catalogProbe.reasons,
+          total: catalogProbe.total,
+          uniqueCount: catalogProbe.uniqueCount,
+        },
         denied: {
           tool: 'open_dashboard_panel',
           targetCancellationSupported: coldStart.targetCancellationSupported,

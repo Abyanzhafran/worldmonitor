@@ -169,6 +169,7 @@ import {
 } from '@/services/webmcp';
 import {
   getWebMcpDashboardContext,
+  listWebMcpDashboardPanels,
   WEBMCP_UI_READY_TIMEOUT_MS,
   waitForWebMcpUiReady,
 } from '@/app/webmcp-dashboard';
@@ -1896,6 +1897,18 @@ export class App {
         await this.waitForDashboardReady(true, execution?.signal);
         throwIfWebMcpAborted(execution?.signal);
         return getWebMcpDashboardContext(this.state, SITE_VARIANT);
+      },
+      listDashboardPanels: async (query, execution) => {
+        await this.waitForDashboardReady(false, execution?.signal);
+        throwIfWebMcpAborted(execution?.signal);
+        if (this.state.isDestroyed) {
+          throw new DashboardBindingError('app_destroyed', 'Dashboard is no longer available.');
+        }
+        return listWebMcpDashboardPanels(this.state, SITE_VARIANT, query, {
+          isPanelAllowed: (panelId, config) => (
+            isPanelEntitled(panelId, config, hasPremiumAccess(getAuthState()))
+          ),
+        });
       },
       applyDashboardAction: async (action, execution) => {
         return runDashboardActionBinding(this.state, action, {

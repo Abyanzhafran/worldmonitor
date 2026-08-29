@@ -11,6 +11,10 @@ import {
   registerWebMcpTools,
 } from '../src/services/webmcp.ts';
 import {
+  listDashboardPanelCatalog,
+} from '../src/services/webmcp-panel-catalog.ts';
+import { getInitialPanelSettingsForVariant } from '../src/config/panels.ts';
+import {
   WEBMCP_HOMEPAGE_TOOL_NAMES,
   WEBMCP_SPA_TOOL_NAMES,
 } from '../src/config/webmcp.ts';
@@ -61,6 +65,22 @@ function createBindings(overrides = {}) {
         mounted: ['map', 'markets'],
         enabled: ['map', 'markets'],
       },
+    }),
+    listDashboardPanels: async () => ({
+      variant: 'full',
+      total: 1,
+      hasMore: false,
+      nextCursor: null,
+      panels: [{
+        id: 'map',
+        label: 'Map',
+        category: 'core',
+        variants: ['full'],
+        enabled: true,
+        mounted: true,
+        entitled: true,
+        available: true,
+      }],
     }),
     applyDashboardAction: async (action) => ({
       ok: true,
@@ -135,6 +155,7 @@ describe('webmcp.ts: current API contract', () => {
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.openCountryBrief/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.openSearch/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.getDashboardContext/);
+    assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.listDashboardPanels/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.openDashboardPanel/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.setMapView/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.setMapLayers/);
@@ -184,7 +205,7 @@ describe('webmcp.ts: current API contract', () => {
       assert.ok(tool.title.length > 0);
       assert.equal(
         tool.annotations?.readOnlyHint,
-        ['get_dashboard_context', 'search_dashboard'].includes(tool.name),
+        ['get_dashboard_context', 'list_dashboard_panels', 'search_dashboard'].includes(tool.name),
       );
       const properties = tool.inputSchema?.properties ?? {};
       for (const property of Object.values(properties)) {
@@ -276,6 +297,73 @@ describe('webmcp.ts: current API contract', () => {
     assert.equal(open.inputSchema.additionalProperties, false);
     assert.deepEqual(Object.keys(open.inputSchema.properties), ['resultKey']);
     assert.equal(open.inputSchema.properties.resultKey.pattern, '^sr_[a-f0-9]{32}$');
+  });
+
+  it('publishes a paginated panel catalog schema and rejects invalid filters', async () => {
+    const events = [];
+    const panelSettings = getInitialPanelSettingsForVariant('full');
+    const tools = buildWebMcpTools(createBindings({
+      listDashboardPanels: async (query) => listDashboardPanelCatalog({
+        currentVariant: 'full',
+        panelSettings,
+        mountedIds: new Set(
+          Object.entries(panelSettings)
+            .filter(([, config]) => config.enabled)
+            .map(([panelId]) => panelId),
+        ),
+        isPanelAllowed: () => true,
+      }, query),
+    }), (event, data) => events.push({ event, data }));
+    const tool = tools.find((candidate) => candidate.name === 'list_dashboard_panels');
+
+    assert.deepEqual(tool.annotations, { readOnlyHint: true });
+    assert.equal(tool.inputSchema.additionalProperties, false);
+    assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), [
+      'available',
+      'category',
+      'cursor',
+      'enabled',
+      'limit',
+      'variant',
+    ]);
+    assert.equal(tool.inputSchema.properties.limit.minimum, 1);
+    assert.equal(tool.inputSchema.properties.limit.maximum, 8);
+    assert.equal(tool.inputSchema.properties.limit.default, 6);
+
+    const page = await tool.execute({ variant: 'full', limit: 4 });
+    assert.equal(page.variant, 'full');
+    assert.equal(page.total, 109);
+    assert.equal(page.hasMore, true);
+    assert.equal(typeof page.nextCursor, 'string');
+    assert.equal(page.panels.length, 4);
+    const next = await tool.execute({ variant: 'full', limit: 4, cursor: page.nextCursor });
+    assert.notEqual(next.panels[0].id, page.panels[0].id);
+    assert.ok(JSON.stringify(page).length <= 1500);
+
+    await assert.rejects(
+      tool.execute({ unknown: true }),
+      (error) => error.name === 'WebMcpToolError'
+        && /accepts only/.test(error.message),
+    );
+    await assert.rejects(
+      tool.execute({ cursor: 'not-a-panel' }),
+      (error) => error.name === 'WebMcpToolError'
+        && error.message === 'cursor is not a valid catalog cursor.',
+    );
+    assert.deepEqual(
+      events.filter(({ data }) => data.tool === 'list_dashboard_panels').map(({ data }) => (
+        [data.outcome, data.reason]
+      )),
+      [
+        ['success', 'completed'],
+        ['success', 'completed'],
+        ['failure', 'validation'],
+        ['failure', 'validation'],
+      ],
+    );
+    const serialized = JSON.stringify(events);
+    assert.equal(serialized.includes('not-a-panel'), false);
+    assert.equal(serialized.includes(page.panels[0].id), false);
   });
 
   it('runs reversible view-state tools and gates effects that can outlive cancellation', async () => {
@@ -998,7 +1086,7 @@ describe('webmcp.ts: promise registration lifecycle', () => {
     await settlePromises();
     assert.deepEqual(harness.events, [{
       event: 'webmcp-registered',
-      data: { toolCount: 8, pageSurface: 'dashboard', api: 'document-current' },
+      data: { toolCount: 9, pageSurface: 'dashboard', api: 'document-current' },
     }]);
 
     controller.abort();
@@ -1025,7 +1113,7 @@ describe('webmcp.ts: promise registration lifecycle', () => {
       },
       {
         event: 'webmcp-registered',
-        data: { toolCount: 7, pageSurface: 'dashboard', api: 'document-current' },
+        data: { toolCount: 8, pageSurface: 'dashboard', api: 'document-current' },
       },
     ]);
     assert.ok(!JSON.stringify(harness.events).includes('raw duplicate detail'));
