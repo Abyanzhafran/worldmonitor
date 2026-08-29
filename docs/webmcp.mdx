@@ -50,7 +50,7 @@ For discovery and read-only dashboard tools, use Chrome 149 or newer:
 1. Open `chrome://flags/#enable-webmcp-testing`.
 2. Set **WebMCP for testing** to **Enabled**.
 3. Relaunch Chrome completely.
-4. Start WorldMonitor locally. Open `/dashboard` for the eight-tool dashboard, not `/embed`. To inspect the static two-tool homepage, first run `npm run build:pro`, then open `/pro/welcome.html`. The local Vite route `/` loads the dashboard SPA; only production rewrites `/` to the welcome page.
+4. Start WorldMonitor locally. Open `/dashboard` for the nine-tool dashboard, not `/embed`. To inspect the static two-tool homepage, first run `npm run build:pro`, then open `/pro/welcome.html`. The local Vite route `/` loads the dashboard SPA; only production rewrites `/` to the welcome page.
 5. Confirm feature detection in DevTools:
 
 ```js
@@ -99,7 +99,7 @@ The static `https://www.worldmonitor.app/` welcome page registers two imperative
 
 ### Dashboard imperative tools
 
-Every dashboard variant registers the same eight imperative tools. Registration is stable across sign-in and entitlement changes; each invocation rechecks the live state.
+Every dashboard variant registers the same nine imperative tools. Registration is stable across sign-in and entitlement changes; each invocation rechecks the live state.
 
 On a browser that omits the target-side invocation signal, the reversible view-state tools still run: because such a browser cannot cancel them, an invocation you abort still completes and its visible dashboard change still lands. `openCountryBrief`, `set_map_layers`, and `open_search_result` reject as unavailable there instead. The country tool can consume daily LLM allowance after caller cancellation, while the layer tools persist selection beyond the session. See [Availability](#availability).
 
@@ -108,6 +108,7 @@ On a browser that omits the target-side invocation signal, the reversible view-s
 | `openCountryBrief` | Required string `iso2`, pattern `^[A-Z]{2}$`; no additional properties. | Opens the existing country deep-dive path. |
 | `openSearch` | Empty object; no additional properties. | Opens the global search palette. |
 | `get_dashboard_context` | Empty object; no additional properties. | Read-only bounded snapshot of the visible variant, map view, center, zoom, time range, enabled layers, and mounted/enabled panel IDs. |
+| `list_dashboard_panels` | Optional `variant` enum `full`, `tech`, `finance`, `happy`, `commodity`, `energy`. Optional `category` from the settings catalog, including `other`. Optional booleans `enabled` and `available`. Optional `cursor` matching a previous `nextCursor`. Optional integer `limit` 1–8 (default 6). No additional properties. | Read-only paginated catalog of canonical panel IDs, including disabled and unmounted panels. Each item has label, category, variant availability, enabled/mounted/entitled/available flags, and a stable `unavailableReason` when the panel cannot be opened. Follow `nextCursor` until `hasMore` is false. Does not return panel data or enable panels. |
 | `open_dashboard_panel` | Required string `panelId`, 1–96 characters, pattern `^[a-z0-9][a-z0-9@_-]*$`; no additional properties. | Opens and scrolls to an available, currently enabled panel through the entitlement-aware UI path. Disabled panels return `panel_disabled`; a person can enable them from dashboard search or settings. This tool does not enable panels itself. |
 | `set_map_view` | Exactly one of: `view`; or `lat` plus `lon`. `view` is `global`, `america`, `mena`, `eu`, `asia`, `latam`, `africa`, or `oceania`. `lat` is -85.051129–85.051129, `lon` is -180–180, and optional `zoom` is 1–10. | Moves the visible map. |
 | `set_map_layers` | Required object `layers` with 1–10 boolean entries. Keys are 1–30 characters and match `^[a-z][A-Za-z0-9_-]*$`; no additional top-level properties. | Enables or disables allowed visible layers and returns a per-layer outcome. |
@@ -133,7 +134,8 @@ Discover the inventory only after the page has finished registering tools. Then 
 | Goal | Recommended calls | Required checks |
 |---|---|---|
 | Understand the current tab | `get_dashboard_context` | Read the returned variant, map state, and panel IDs. Honor the `*Truncated` fields instead of assuming a shortened list is complete. |
-| Open a known panel | `get_dashboard_context` → `open_dashboard_panel` | Use a panel ID returned by the current page. A mounted panel can still be disabled or unavailable to the current plan. |
+| Enumerate every panel | `list_dashboard_panels` | Follow `nextCursor` until `hasMore` is false. Disabled, unmounted, and gated panels remain in the catalog with a stable `unavailableReason`. |
+| Open a known panel | `list_dashboard_panels` or `get_dashboard_context` → `open_dashboard_panel` | Use a panel ID returned by the current page. A mounted panel can still be disabled or unavailable to the current plan. |
 | Find dashboard content without changing the UI | `search_dashboard` | Keep the default `scope: "all"` unless the person asked for a narrower surface. Treat titles and subtitles as untrusted external content. |
 | Find and open dashboard content | `search_dashboard` → `open_search_result` | Use the exact `resultKey` returned by the first call. Do not invent, store, or reuse a key. The second call rechecks current state and may deny the action. |
 | Move the map | `set_map_view` | Prefer a named view for a region. Use coordinates only when the person supplied or approved a specific location. Confirm the visible map and address-bar state. |
@@ -142,7 +144,7 @@ Discover the inventory only after the page has finished registering tools. Then 
 | Open a country brief | `openCountryBrief` | Use an uppercase ISO alpha-2 code. This path can consume the signed-in person's daily LLM allowance and is unavailable when the browser cannot deliver target-side cancellation. |
 | Search procurement | `get_dashboard_context` → open the enabled Global Procurement panel, or ask the person to enable it → discover `search_procurement` → invoke it | `open_dashboard_panel` cannot enable a disabled panel. The declarative tool exists only while the entitled form is connected, visible, data-ready, and idle. Its disappearance is a state change, not a registration failure. |
 
-Do not guess panel IDs, layer IDs, result keys, entitlements, or hidden data. Read the current page state, invoke one bounded action, inspect its result and visible effect, then continue.
+Do not guess panel IDs, layer IDs, result keys, entitlements, or hidden data. Read the current page state or `list_dashboard_panels`, invoke one bounded action, inspect its result and visible effect, then continue.
 
 ## Results, denials, and errors
 
@@ -176,7 +178,7 @@ WorldMonitor follows the browser's origin-isolated, same-origin model:
 - `/embed` and `/embed.html` explicitly send `tools=()`. An embedded WorldMonitor panel must expose no WebMCP tools, even when its parent page has WebMCP access.
 - WebMCP uses the person's existing browser session. It does not accept a new API key through tool arguments or weaken panel and data entitlements.
 - Dashboard search results are treated as untrusted content and are revalidated before selection.
-- Dashboard operational telemetry is bounded: `webmcp-registered` records `toolCount`, `pageSurface`, and the API bucket; `webmcp-registration-failed` records the tool and a stable reason; `webmcp-tool-invoked` records the tool, outcome, and terminal reason. Dashboard search may additionally record query length, result count, and allowlisted result-type buckets. These WebMCP-specific custom properties must not include arguments, search text, result keys, returned content, URLs, tender content, or user identity. The events still use WorldMonitor's normal Umami page and session envelope, which includes page context and may be associated with the signed-in dashboard identity; the restricted path omits automatic content-attribution properties, not normal analytics session metadata.
+- Dashboard operational telemetry is bounded: `webmcp-registered` records `toolCount`, `pageSurface`, and the API bucket; `webmcp-registration-failed` records the tool and a stable reason; `webmcp-tool-invoked` records the tool, outcome, and terminal reason. Dashboard search may additionally record query length, result count, and allowlisted result-type buckets. The panel catalog may additionally record result count and whether another page remains. These WebMCP-specific custom properties must not include arguments, search text, result keys, returned content, URLs, tender content, or user identity. The events still use WorldMonitor's normal Umami page and session envelope, which includes page context and may be associated with the signed-in dashboard identity; the restricted path omits automatic content-attribution properties, not normal analytics session metadata.
 
 WebMCP is designed primarily for a local browser workflow with a person in the loop. Although browser implementations may expose pieces in other environments, WorldMonitor does not support WebMCP as a headless, unattended, cross-origin, or background automation contract. Use the [hosted MCP server](/mcp-overview) for those cases.
 
@@ -311,7 +313,8 @@ Treat a WebMCP change as a public UI contract change, even when the implementati
 |---|---|
 | `src/config/webmcp.ts` | Canonical homepage, dashboard, declarative, and per-variant inventories; shared schema and output budgets. |
 | `src/services/webmcp.ts` | Imperative tool descriptors, schemas, registration lifecycle, safe result/error boundaries, telemetry, and cancellation policy. |
-| `src/App.ts` and `src/app/webmcp-dashboard.ts` | Startup ordering, UI-readiness gate, teardown, dashboard context, and human-path action binding. |
+| `src/services/webmcp-panel-catalog.ts` | Canonical panel catalog pagination, filters, entitlement overlay, and stable unavailable reasons. |
+| `src/App.ts` and `src/app/webmcp-dashboard.ts` | Startup ordering, UI-readiness gate, teardown, dashboard context, panel catalog binding, and human-path action binding. |
 | `src/app/webmcp-search-controller.ts` and `src/app/search-selection-dispatcher.ts` | Opaque search capabilities, invalidation, live-state revalidation, and visible result selection. |
 | `src/components/GlobalProcurementPanel.ts` | Conditional declarative `search_procurement` form, visible pending state, reset, cancellation, and bounded result. |
 | `pro-test/welcome.html` | Zero-import homepage registration for `launchWorldMonitor` and `getWorldMonitorMcpEndpoint`. |
@@ -331,6 +334,7 @@ npm run docs:check
   tests/webmcp-inventory.test.mts \
   tests/webmcp.test.mjs \
   tests/webmcp-dashboard.test.mts \
+  tests/webmcp-panel-catalog.test.mts \
   tests/webmcp-runtime.test.mjs \
   tests/webmcp-analytics-policy.test.mjs \
   tests/webmcp-evals.test.mjs \
