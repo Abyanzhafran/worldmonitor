@@ -14,8 +14,11 @@
 //   4. open_dashboard_panel()     — opens an already-live panel.
 //   5. set_map_view()             — moves the visible map.
 //   6. set_map_layers()           — changes allowed visible map layers.
-//   7. search_dashboard()         — searches the live dashboard index.
-//   8. open_search_result()       — selects an opaque, revalidated result.
+//   7. set_time_range()           — sets the visible map time range.
+//   8. focus_country()            — focuses a country bbox without a briefing.
+//   9. set_map_mode()             — switches the visible 2D/3D map renderer.
+//  10. search_dashboard()         — searches the live dashboard index.
+//  11. open_search_result()       — selects an opaque, revalidated result.
 //
 // No tool is conditionally registered. Live controls re-check auth and
 // entitlement through the agent-bus applier on every invocation, so a single
@@ -36,7 +39,10 @@ import {
 } from '../config/webmcp';
 import {
   DASHBOARD_MAP_MAX_LATITUDE,
+  DASHBOARD_MAP_MODES,
   DASHBOARD_MAP_VIEWS,
+  DASHBOARD_TIME_RANGES,
+  DASHBOARD_COUNTRY_CODE_PATTERN,
   DASHBOARD_LAYER_ACTION_TARGET_ID_PATTERN,
   MAX_LAYER_ACTION_TARGET_ID_LENGTH,
   MAX_LAYER_ACTION_TARGETS,
@@ -131,13 +137,36 @@ export interface DashboardActionTargetResult {
   reason?: string;
 }
 
+export interface DashboardActionViewState {
+  timeRange?: string;
+  iso2?: string;
+  mode?: string;
+  renderer?: string;
+  lat?: number;
+  lon?: number;
+  zoom?: number;
+}
+
+export interface DashboardActionCompatibility {
+  adjusted: boolean;
+  layers?: Array<{
+    layer: string;
+    from: boolean;
+    to: boolean;
+    reason: string;
+  }>;
+}
+
 export interface DashboardActionResult {
   ok: boolean;
   status: DashboardActionStatus;
-  actionType?: 'open_panel' | 'set_view' | 'set_layers';
+  actionType?: 'open_panel' | 'set_view' | 'set_layers' | 'set_time_range' | 'focus_country' | 'set_map_mode';
   reason?: string;
   message: string;
   targets: DashboardActionTargetResult[];
+  requested?: DashboardActionViewState;
+  effective?: DashboardActionViewState;
+  compatibility?: DashboardActionCompatibility;
 }
 
 export type DashboardBindingFailureReason = 'app_destroyed' | 'map_unavailable';
@@ -211,15 +240,17 @@ const DASHBOARD_SEARCH_OPEN_REASONS = new Set<DashboardSearchOpenReason>([
 //     STORAGE_KEYS.mapLayers to local storage (and for `ais` opens a network
 //     stream); open_search_result reaches the same writes through the search
 //     selection dispatcher. Putting the map back by hand restores neither.
-//     openCountryBrief can start server-side LLM generation that consumes the
-//     caller's daily allowance. The gateway cannot refund a request merely
-//     because browser-side execution was cancelled.
-//   - 'view-state': set_map_view also writes share-URL state via
-//     history.replaceState — visible in the address bar and overwritten by the
-//     next human map move.
+//     set_map_mode writes STORAGE_KEYS.mapMode and can persist a compatibility
+//     layer change for resilienceScore. openCountryBrief can start server-side
+//     LLM generation that consumes the caller's daily allowance. The gateway
+//     cannot refund a request merely because browser-side execution was cancelled.
+//   - 'view-state': set_map_view, set_time_range, and focus_country write
+//     share-URL state via history.replaceState — visible in the address bar and
+//     overwritten by the next human map move. focus_country must not inherit
+//     openCountryBrief's stronger policy: it only moves the map.
 //   - 'read-only': nothing to undo.
 //
-// Keyed by WebMcpSpaToolName, so adding a ninth tool without a policy entry is
+// Keyed by WebMcpSpaToolName, so adding a new tool without a policy entry is
 // a TypeScript error. That is the forcing function: nothing ships unclassified.
 export const WEBMCP_TOOL_CANCELLATION_POLICY: Readonly<
   Record<WebMcpSpaToolName, 'read-only' | 'view-state' | 'cancellation-required'>
@@ -229,8 +260,11 @@ export const WEBMCP_TOOL_CANCELLATION_POLICY: Readonly<
   [WEBMCP_SPA_TOOL.openSearch]: 'view-state',
   [WEBMCP_SPA_TOOL.openDashboardPanel]: 'view-state',
   [WEBMCP_SPA_TOOL.setMapView]: 'view-state',
+  [WEBMCP_SPA_TOOL.setTimeRange]: 'view-state',
+  [WEBMCP_SPA_TOOL.focusCountry]: 'view-state',
   [WEBMCP_SPA_TOOL.openCountryBrief]: 'cancellation-required',
   [WEBMCP_SPA_TOOL.setMapLayers]: 'cancellation-required',
+  [WEBMCP_SPA_TOOL.setMapMode]: 'cancellation-required',
   [WEBMCP_SPA_TOOL.openSearchResult]: 'cancellation-required',
 });
 
@@ -284,6 +318,9 @@ const TOOL_FAILURE_MESSAGES: Record<WebMcpSpaToolName, string> = {
   open_dashboard_panel: 'World Monitor could not open that dashboard panel.',
   set_map_view: 'World Monitor could not move the map.',
   set_map_layers: 'World Monitor could not update map layers.',
+  set_time_range: 'World Monitor could not set the map time range.',
+  focus_country: 'World Monitor could not focus that country.',
+  set_map_mode: 'World Monitor could not switch the map mode.',
   search_dashboard: 'World Monitor could not search the dashboard.',
   open_search_result: 'World Monitor could not open that search result.',
 };
@@ -484,6 +521,7 @@ const VALIDATION_DENIAL_REASONS = new Set([
   'malformed_arguments',
   'invalid_action',
   'not_dashboard_control',
+  'unknown_country',
 ]);
 const ENTITLEMENT_DENIAL_REASONS = new Set([
   'panel_not_entitled',
@@ -596,6 +634,47 @@ function boundDashboardContext(snapshot: DashboardContextSnapshot): Record<strin
   return result;
 }
 
+function boundDashboardViewState(
+  value: DashboardActionViewState | undefined,
+): DashboardActionViewState | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const bounded: DashboardActionViewState = {};
+  if (typeof value.timeRange === 'string' && value.timeRange) {
+    bounded.timeRange = boundedText(value.timeRange, 32);
+  }
+  if (typeof value.iso2 === 'string' && value.iso2) {
+    bounded.iso2 = boundedText(value.iso2, 2);
+  }
+  if (typeof value.mode === 'string' && value.mode) {
+    bounded.mode = boundedText(value.mode, 8);
+  }
+  if (typeof value.renderer === 'string' && value.renderer) {
+    bounded.renderer = boundedText(value.renderer, 16);
+  }
+  if (typeof value.lat === 'number' && Number.isFinite(value.lat)) bounded.lat = value.lat;
+  if (typeof value.lon === 'number' && Number.isFinite(value.lon)) bounded.lon = value.lon;
+  if (typeof value.zoom === 'number' && Number.isFinite(value.zoom)) bounded.zoom = value.zoom;
+  return Object.keys(bounded).length > 0 ? bounded : undefined;
+}
+
+function boundDashboardCompatibility(
+  value: DashboardActionCompatibility | undefined,
+): DashboardActionCompatibility | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const layers = Array.isArray(value.layers)
+    ? value.layers.slice(0, MAX_LAYER_ACTION_TARGETS).map((layer) => ({
+      layer: boundedText(layer?.layer, 32),
+      from: layer?.from === true,
+      to: layer?.to === true,
+      reason: boundedText(layer?.reason, 64),
+    }))
+    : [];
+  return {
+    adjusted: value.adjusted === true,
+    ...(layers.length > 0 ? { layers } : {}),
+  };
+}
+
 function boundDashboardActionResult(result: DashboardActionResult): Record<string, unknown> & {
   ok: boolean;
   status: DashboardActionStatus;
@@ -605,6 +684,9 @@ function boundDashboardActionResult(result: DashboardActionResult): Record<strin
     status: target?.status,
     ...(target?.reason ? { reason: boundedText(target.reason, 64) } : {}),
   }));
+  const requested = boundDashboardViewState(result.requested);
+  const effective = boundDashboardViewState(result.effective);
+  const compatibility = boundDashboardCompatibility(result.compatibility);
   const bounded = {
     ok: result.ok === true,
     status: result.status,
@@ -614,6 +696,9 @@ function boundDashboardActionResult(result: DashboardActionResult): Record<strin
     targets,
     targetCount: targets.length,
     targetsTruncated: false,
+    ...(requested ? { requested } : {}),
+    ...(effective ? { effective } : {}),
+    ...(compatibility ? { compatibility } : {}),
   };
 
   if (JSON.stringify(bounded).length > MAX_OUTPUT_CHARS) {
@@ -890,6 +975,88 @@ export function buildWebMcpTools(
         applyDashboardAction({
           type: 'set_layers',
           layers: args.layers,
+        }, app, extra)
+      ), trackEvent),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.setTimeRange,
+      title: 'Set Map Time Range',
+      description:
+        'Set the visible map time range through the same 1h, 6h, 24h, 48h, 7d, or all control used by the dashboard. Returns the requested and effective range.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          timeRange: {
+            type: 'string',
+            description: 'Dashboard time-range control value.',
+            enum: [...DASHBOARD_TIME_RANGES],
+          },
+        },
+        required: ['timeRange'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.setTimeRange, async (args, extra) => (
+        applyDashboardAction({
+          type: 'set_time_range',
+          timeRange: args.timeRange,
+        }, app, extra)
+      ), trackEvent),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.focusCountry,
+      title: 'Focus Country On Map',
+      description:
+        'Focus the visible map on a country bounding box by ISO 3166-1 alpha-2 code without opening a country brief or consuming briefing quota.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          iso2: {
+            type: 'string',
+            description: 'ISO 3166-1 alpha-2 country code, uppercase.',
+            pattern: DASHBOARD_COUNTRY_CODE_PATTERN,
+          },
+        },
+        required: ['iso2'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.focusCountry, async (args, extra) => {
+        const iso2 = typeof args.iso2 === 'string' ? args.iso2.toUpperCase() : '';
+        if (!ISO2.test(iso2)) {
+          throw new SafeWebMcpError(
+            'iso2 must be an ISO 3166-1 alpha-2 code, such as "DE" or "IR".',
+            'validation',
+          );
+        }
+        return applyDashboardAction({
+          type: 'focus_country',
+          iso2,
+        }, app, extra);
+      }, trackEvent),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.setMapMode,
+      title: 'Set Map Mode',
+      description:
+        'Switch the visible map between 2d (flat) and 3d (globe) through the same dashboard control, including renderer layer compatibility.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          mode: {
+            type: 'string',
+            description: 'Visible map mode: 2d or 3d.',
+            enum: [...DASHBOARD_MAP_MODES],
+          },
+        },
+        required: ['mode'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.setMapMode, async (args, extra) => (
+        applyDashboardAction({
+          type: 'set_map_mode',
+          mode: args.mode,
         }, app, extra)
       ), trackEvent),
     },

@@ -15,8 +15,10 @@ import {
   WEBMCP_SPA_TOOL_NAMES,
 } from '../src/config/webmcp.ts';
 import {
+  DASHBOARD_COUNTRY_CODE_PATTERN,
   DASHBOARD_LAYER_ACTION_TARGET_ID_PATTERN,
   DASHBOARD_MAP_MAX_LATITUDE,
+  DASHBOARD_TIME_RANGES,
 } from '../shared/agent-bus-contract.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -138,6 +140,9 @@ describe('webmcp.ts: current API contract', () => {
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.openDashboardPanel/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.setMapView/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.setMapLayers/);
+    assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.setTimeRange/);
+    assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.focusCountry/);
+    assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.setMapMode/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.searchDashboard/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.openSearchResult/);
   });
@@ -241,6 +246,23 @@ describe('webmcp.ts: current API contract', () => {
     assert.deepEqual(layers.additionalProperties, { type: 'boolean' });
   });
 
+  it('publishes time-range, country-focus, and map-mode schemas from the agent-bus contract', () => {
+    const tools = buildWebMcpTools(createBindings(), () => {});
+    const timeRange = tools.find((tool) => tool.name === 'set_time_range').inputSchema;
+    const focus = tools.find((tool) => tool.name === 'focus_country').inputSchema;
+    const mode = tools.find((tool) => tool.name === 'set_map_mode').inputSchema;
+
+    assert.deepEqual(timeRange.required, ['timeRange']);
+    assert.deepEqual(timeRange.properties.timeRange.enum, [...DASHBOARD_TIME_RANGES]);
+    assert.equal(timeRange.additionalProperties, false);
+    assert.deepEqual(focus.required, ['iso2']);
+    assert.equal(focus.properties.iso2.pattern, DASHBOARD_COUNTRY_CODE_PATTERN);
+    assert.equal(focus.additionalProperties, false);
+    assert.deepEqual(mode.required, ['mode']);
+    assert.deepEqual(mode.properties.mode.enum, ['2d', '3d']);
+    assert.equal(mode.additionalProperties, false);
+  });
+
   it('publishes narrow search schemas with explicit trust and mutation annotations', () => {
     const tools = buildWebMcpTools(createBindings(), () => {});
     const search = tools.find((tool) => tool.name === 'search_dashboard');
@@ -305,6 +327,9 @@ describe('webmcp.ts: current API contract', () => {
       open_dashboard_panel: { panelId: 'markets' },
       set_map_view: { view: 'eu' },
       set_map_layers: { layers: { conflicts: true } },
+      set_time_range: { timeRange: '24h' },
+      focus_country: { iso2: 'DE' },
+      set_map_mode: { mode: '3d' },
       open_search_result: { resultKey: `sr_${'a'.repeat(32)}` },
     };
 
@@ -320,16 +345,17 @@ describe('webmcp.ts: current API contract', () => {
 
     // openCountryBrief can consume daily LLM allowance after caller
     // cancellation. set_map_layers and open_search_result persist
-    // STORAGE_KEYS.mapLayers. All three stay fail-closed without a target
-    // signal; the remaining dashboard-changing tools only move reversible
-    // visible view state.
+    // STORAGE_KEYS.mapLayers. set_map_mode persists STORAGE_KEYS.mapMode
+    // and can persist a resilienceScore compatibility write. Those stay
+    // fail-closed without a target signal; the remaining dashboard-changing
+    // tools only move reversible visible view state.
     //
     // Every tool is pinned to its EXACT return, gated and ungated alike.
     // `notDeepEqual(result, denial)` excluded exactly one literal object, so a
     // swallowed error, a differently shaped failure, a wrong country name, or a
     // dropped actionType all passed it. createBindings() is deterministic, so
     // there is nothing environment-dependent left to hedge against.
-    const gated = ['openCountryBrief', 'set_map_layers', 'open_search_result'];
+    const gated = ['openCountryBrief', 'set_map_layers', 'set_map_mode', 'open_search_result'];
     const denial = {
       ok: false,
       status: 'denied',
@@ -353,6 +379,9 @@ describe('webmcp.ts: current API contract', () => {
       open_dashboard_panel: appliedAction('open_panel'),
       set_map_view: appliedAction('set_view'),
       set_map_layers: denial,
+      set_time_range: appliedAction('set_time_range'),
+      focus_country: appliedAction('focus_country'),
+      set_map_mode: denial,
       open_search_result: denial,
     };
     assert.deepEqual(
@@ -598,14 +627,53 @@ describe('webmcp.ts: native tool execution and telemetry', () => {
       .execute({ view: 'mena', zoom: 4 });
     const layerResult = await tools.find((tool) => tool.name === 'set_map_layers')
       .execute({ layers: { conflicts: true, resilienceScore: false } });
+    await tools.find((tool) => tool.name === 'set_time_range')
+      .execute({ timeRange: '24h' });
+    await tools.find((tool) => tool.name === 'focus_country')
+      .execute({ iso2: 'de' });
+    await tools.find((tool) => tool.name === 'set_map_mode')
+      .execute({ mode: '3d' });
 
     assert.deepEqual(actions, [
       { type: 'open_panel', panelId: 'markets' },
       { type: 'set_view', view: 'mena', lat: undefined, lon: undefined, zoom: 4 },
       { type: 'set_layers', layers: { conflicts: true, resilienceScore: false } },
+      { type: 'set_time_range', timeRange: '24h' },
+      { type: 'focus_country', iso2: 'DE' },
+      { type: 'set_map_mode', mode: '3d' },
     ]);
     assert.equal(layerResult.status, 'applied');
     assert.deepEqual(layerResult.targets, [{ target: 'live-target', status: 'applied' }]);
+  });
+
+  it('denies unknown focus_country codes without opening a briefing', async () => {
+    const actions = [];
+    let briefCalls = 0;
+    const tools = buildWebMcpTools(createBindings({
+      openCountryBriefByCode: async () => {
+        briefCalls += 1;
+        return true;
+      },
+      applyDashboardAction: async (action) => {
+        actions.push(action);
+        return {
+          ok: false,
+          status: 'denied',
+          actionType: 'focus_country',
+          reason: 'unknown_country',
+          message: 'Unknown country code: XX.',
+          targets: [{ target: 'XX', status: 'denied', reason: 'unknown_country' }],
+          requested: { iso2: 'XX' },
+        };
+      },
+    }), () => {});
+
+    const result = await tools.find((tool) => tool.name === 'focus_country').execute({ iso2: 'xx' });
+    assert.deepEqual(actions, [{ type: 'focus_country', iso2: 'XX' }]);
+    assert.equal(briefCalls, 0);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'unknown_country');
+    assert.deepEqual(result.requested, { iso2: 'XX' });
   });
 
   it('returns denied dashboard actions with the applier reason and target outcome', async () => {
@@ -1496,7 +1564,7 @@ describe('webmcp App.ts binding invariants', () => {
     );
     const syncCondition = guardedSync.expression.getText(dashboardActionBindingFile);
     assert.match(syncCondition, /result\.ok/);
-    assert.match(syncCondition, /result\.actionType === 'set_view'/);
+    assert.match(syncCondition, /dashboardActionSyncsUrl\(result\.actionType\)/);
   });
 
   it('routes country opens through lazy presentation without requiring a pre-created page', () => {

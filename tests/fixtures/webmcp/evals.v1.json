@@ -9,6 +9,9 @@
       "open_dashboard_panel",
       "set_map_view",
       "set_map_layers",
+      "set_time_range",
+      "focus_country",
+      "set_map_mode",
       "search_dashboard",
       "open_search_result"
     ],
@@ -37,6 +40,9 @@
         "open_dashboard_panel",
         "set_map_view",
         "set_map_layers",
+        "set_time_range",
+        "focus_country",
+        "set_map_mode",
         "search_dashboard",
         "open_search_result",
         "search_procurement"
@@ -61,6 +67,9 @@
         "open_dashboard_panel",
         "set_map_view",
         "set_map_layers",
+        "set_time_range",
+        "focus_country",
+        "set_map_mode",
         "search_dashboard",
         "open_search_result",
         "search_procurement"
@@ -158,6 +167,79 @@
       ]
     },
     {
+      "id": "dashboard_time_range_direct",
+      "category": "dashboard_control",
+      "promptKind": "direct",
+      "prompt": "Set the map time range to 24 hours.",
+      "expectedPlans": [
+        [
+          {
+            "tool": "set_time_range",
+            "arguments": {
+              "timeRange": "24h"
+            }
+          }
+        ]
+      ],
+      "forbiddenTools": [
+        "openCountryBrief",
+        "openSearch",
+        "set_map_view",
+        "focus_country",
+        "search_dashboard",
+        "open_search_result",
+        "search_procurement"
+      ]
+    },
+    {
+      "id": "dashboard_focus_country_direct",
+      "category": "dashboard_control",
+      "promptKind": "direct",
+      "prompt": "Focus the map on Germany without opening a country brief.",
+      "expectedPlans": [
+        [
+          {
+            "tool": "focus_country",
+            "arguments": {
+              "iso2": "DE"
+            }
+          }
+        ]
+      ],
+      "forbiddenTools": [
+        "openCountryBrief",
+        "openSearch",
+        "set_map_view",
+        "search_dashboard",
+        "open_search_result",
+        "search_procurement"
+      ]
+    },
+    {
+      "id": "dashboard_map_mode_direct",
+      "category": "dashboard_control",
+      "promptKind": "direct",
+      "prompt": "Switch the map to 3D globe mode.",
+      "expectedPlans": [
+        [
+          {
+            "tool": "set_map_mode",
+            "arguments": {
+              "mode": "3d"
+            }
+          }
+        ]
+      ],
+      "forbiddenTools": [
+        "openCountryBrief",
+        "openSearch",
+        "set_map_layers",
+        "search_dashboard",
+        "open_search_result",
+        "search_procurement"
+      ]
+    },
+    {
       "id": "country_brief_direct",
       "category": "country_brief",
       "promptKind": "direct",
@@ -174,6 +256,7 @@
       ],
       "forbiddenTools": [
         "openSearch",
+        "focus_country",
         "search_dashboard",
         "open_search_result",
         "search_procurement"
@@ -204,6 +287,14 @@
             "tool": "open_search_result",
             "arguments": {
               "resultKey": "$steps[0].results[0].key"
+            }
+          }
+        ],
+        [
+          {
+            "tool": "focus_country",
+            "arguments": {
+              "iso2": "DE"
             }
           }
         ]
@@ -329,6 +420,9 @@
         "open_dashboard_panel",
         "set_map_view",
         "set_map_layers",
+        "set_time_range",
+        "focus_country",
+        "set_map_mode",
         "search_dashboard",
         "open_search_result",
         "search_procurement"

@@ -3,6 +3,35 @@ import type { AgentBusApplierOptions } from './agent-bus-applier';
 import { applyWebMcpDashboardAction } from './webmcp-dashboard';
 import { throwIfWebMcpAborted, type DashboardActionResult } from '@/services/webmcp';
 
+const MAP_READY_ACTION_TYPES = new Set([
+  'set_view',
+  'set_layers',
+  'set_time_range',
+  'focus_country',
+  'set_map_mode',
+]);
+const URL_SYNC_ACTION_TYPES = new Set([
+  'set_view',
+  'set_time_range',
+  'focus_country',
+]);
+const VIEWPORT_AUTHORITY_ACTION_TYPES = new Set([
+  'set_view',
+  'focus_country',
+]);
+
+export function dashboardActionNeedsMapReady(type: string | undefined): boolean {
+  return typeof type === 'string' && MAP_READY_ACTION_TYPES.has(type);
+}
+
+export function dashboardActionSyncsUrl(type: string | undefined): boolean {
+  return typeof type === 'string' && URL_SYNC_ACTION_TYPES.has(type);
+}
+
+export function dashboardActionUsesViewportAuthority(type: string | undefined): boolean {
+  return typeof type === 'string' && VIEWPORT_AUTHORITY_ACTION_TYPES.has(type);
+}
+
 export interface DashboardActionBindingOptions {
   waitForUiReady: () => Promise<void>;
   waitForMapReady: () => Promise<void>;
@@ -35,21 +64,18 @@ export async function runDashboardActionBinding(
   const { parseAgentBusAction } = await import('../../shared/agent-bus-actions');
   throwIfWebMcpAborted(options.signal);
   const parsed = parseAgentBusAction(action);
-  if (
-    parsed.ok
-    && (parsed.action.type === 'set_view' || parsed.action.type === 'set_layers')
-  ) {
+  if (parsed.ok && dashboardActionNeedsMapReady(parsed.action.type)) {
     await options.waitForMapReady();
     throwIfWebMcpAborted(options.signal);
     if (
-      parsed.action.type === 'set_view'
+      dashboardActionUsesViewportAuthority(parsed.action.type)
       && mapAuthorityToken !== undefined
       && options.getMapAuthorityToken?.() !== mapAuthorityToken
     ) {
       return {
         ok: false,
         status: 'denied',
-        actionType: 'set_view',
+        actionType: parsed.action.type,
         reason: 'viewport_superseded',
         message: 'Map movement was superseded by a newer viewport action.',
         targets: [],
@@ -64,7 +90,7 @@ export async function runDashboardActionBinding(
     options.signal,
   );
   throwIfWebMcpAborted(options.signal);
-  if (result.ok && result.actionType === 'set_view') {
+  if (result.ok && dashboardActionSyncsUrl(result.actionType)) {
     options.syncUrlStateNow();
   }
   return result;

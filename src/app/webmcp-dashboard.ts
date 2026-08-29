@@ -131,7 +131,11 @@ export async function applyWebMcpDashboardAction(
   throwIfWebMcpAborted(signal);
   if (ctx.isDestroyed) return APP_DESTROYED_RESULT;
   const result = applyAgentBusAction(ctx, action, options);
-  if (result.ok && result.actionType === 'set_view' && ctx.map) {
+  if (
+    result.ok
+    && (result.actionType === 'set_view' || result.actionType === 'focus_country')
+    && ctx.map
+  ) {
     try {
       await raceWebMcpAbort(
         ctx.map.whenViewportSettled(result.viewportActionToken),

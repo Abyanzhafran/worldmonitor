@@ -20,6 +20,9 @@ export const WEBMCP_SPA_TOOL = Object.freeze({
   openDashboardPanel: 'open_dashboard_panel',
   setMapView: 'set_map_view',
   setMapLayers: 'set_map_layers',
+  setTimeRange: 'set_time_range',
+  focusCountry: 'focus_country',
+  setMapMode: 'set_map_mode',
   searchDashboard: 'search_dashboard',
   openSearchResult: 'open_search_result',
 } as const);
@@ -31,6 +34,9 @@ export const WEBMCP_SPA_TOOL_NAMES = [
   WEBMCP_SPA_TOOL.openDashboardPanel,
   WEBMCP_SPA_TOOL.setMapView,
   WEBMCP_SPA_TOOL.setMapLayers,
+  WEBMCP_SPA_TOOL.setTimeRange,
+  WEBMCP_SPA_TOOL.focusCountry,
+  WEBMCP_SPA_TOOL.setMapMode,
   WEBMCP_SPA_TOOL.searchDashboard,
   WEBMCP_SPA_TOOL.openSearchResult,
 ] as const;
