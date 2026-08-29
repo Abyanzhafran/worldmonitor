@@ -30,6 +30,13 @@ describe('App WebMCP country binding cold start', () => {
         },
         panels: { mounted: [], enabled: [] },
       }),
+      listDashboardPanels: async () => ({
+        variant: 'full',
+        total: 0,
+        hasMore: false,
+        nextCursor: null,
+        panels: [],
+      }),
       applyDashboardAction: async () => ({
         ok: true,
         status: 'applied',
@@ -119,6 +126,13 @@ describe('App WebMCP country binding cold start', () => {
           enabledLayers: [],
         },
         panels: { mounted: [], enabled: [] },
+      }),
+      listDashboardPanels: async () => ({
+        variant: 'full',
+        total: 0,
+        hasMore: false,
+        nextCursor: null,
+        panels: [],
       }),
       applyDashboardAction: async () => ({
         ok: true,
