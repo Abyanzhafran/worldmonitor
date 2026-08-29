@@ -461,7 +461,7 @@ test.describe('top-level WebMCP dashboard contract', () => {
     });
   });
 
-  test('applies time range, country focus, and 2D/3D through visible dashboard controls', async ({ page }, testInfo) => {
+  test('applies time range and country focus, and gates 2D/3D without target cancellation', async ({ page }, testInfo) => {
     test.skip(productionSmoke, 'Local view-state mutations stay off the production origin.');
     testInfo.setTimeout(180_000);
     await installReadinessRecorder(page);
@@ -523,48 +523,32 @@ test.describe('top-level WebMCP dashboard contract', () => {
     expect(Number(afterFocusReload.get('lon'))).toBeCloseTo(lon, 3);
     await expect(page.locator('#country-deep-dive-panel')).toHaveAttribute('aria-hidden', 'true');
 
+    await expect(page.locator('#mapDimensionToggle .map-dim-btn[data-mode="flat"]')).toHaveClass(/active/);
+    await expect(page.locator('#mapDimensionToggle .map-dim-btn[data-mode="globe"]')).toBeVisible();
+
+    // Chrome 149–151 invokes the page callback with the input alone, even when
+    // executeTool() is given `{ signal }`. set_map_mode stays gated there.
+    // Do not click the 2D/3D control as a substitute: that would hide a broken
+    // cancellation gate. Binding tests cover the apply path with a real signal.
     const to3d = await executeDashboardTool(page, 'set_map_mode', { mode: '3d' });
     expect(to3d).toMatchObject({
       ok: true,
       output: {
-        ok: true,
-        status: 'applied',
-        actionType: 'set_map_mode',
-        requested: { mode: '3d' },
-        effective: { mode: '3d' },
-      },
-    });
-    await expect(page.locator('#mapDimensionToggle .map-dim-btn[data-mode="globe"]')).toHaveClass(/active/);
-    await expect(page.locator('#mapDimensionToggle .map-dim-btn[data-mode="flat"]')).not.toHaveClass(/active/);
-    expect(new URL(page.url()).searchParams.get('mapMode')).toBeNull();
-    expect(await storedMapMode(page)).toBe('globe');
-
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await waitForDashboardTools(page);
-    await expect(page.locator('#mapDimensionToggle .map-dim-btn[data-mode="globe"]')).toHaveClass(/active/);
-    expect(new URL(page.url()).searchParams.get('mapMode')).toBeNull();
-    expect(new URL(page.url()).searchParams.get('timeRange')).toBe('6h');
-
-    const to2d = await executeDashboardTool(page, 'set_map_mode', { mode: '2d' });
-    expect(to2d).toMatchObject({
-      ok: true,
-      output: {
-        ok: true,
-        status: 'applied',
-        actionType: 'set_map_mode',
-        requested: { mode: '2d' },
-        effective: { mode: '2d' },
+        ok: false,
+        status: 'denied',
+        reason: 'target_cancellation_unsupported',
       },
     });
     await expect(page.locator('#mapDimensionToggle .map-dim-btn[data-mode="flat"]')).toHaveClass(/active/);
     await expect(page.locator('#mapDimensionToggle .map-dim-btn[data-mode="globe"]')).not.toHaveClass(/active/);
-    expect(await storedMapMode(page)).toBe('flat');
+    expect(new URL(page.url()).searchParams.get('mapMode')).toBeNull();
+    expect(new URL(page.url()).searchParams.get('timeRange')).toBe('6h');
+    expect(await storedMapMode(page)).not.toBe('globe');
 
     await attachJsonEvidence(testInfo, 'webmcp-map-view-state.json', {
       timeRange,
       focus,
       to3d,
-      to2d,
       urlAfterFocus: afterFocus.toString(),
     });
   });
