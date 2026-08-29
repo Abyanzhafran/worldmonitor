@@ -753,8 +753,10 @@ describe('crawlable corpus generator', () => {
       const norway = read(outDir, 'countries/norway/index.html');
       assert.match(norway, /<h1>Norway country risk and resilience<\/h1>/);
       assert.match(norway, /<link rel="canonical" href="https:\/\/www\.worldmonitor\.app\/countries\/norway\/">/);
-      assert.match(norway, /<meta name="lastmod" content="2026-08-12">/);
-      assert.match(norway, /Source: docs\/snapshots\/resilience-ranking-2026-05-28\.json/);
+      assert.ok(
+        norway.includes(`<meta name="lastmod" content="${manifest.sections.countries.sourceCapturedAt}">`),
+      );
+      assert.ok(norway.includes(`Source: ${manifest.sources.resilienceSnapshot}`));
       assert.doesNotMatch(norway, /id="app"/, 'country page must be raw static HTML, not the SPA shell');
       assert.match(norway, /data-live-country-risk data-country-code="NO" data-country-name="Norway"/);
       assert.match(norway, /Instability is a fast-moving composite/);
@@ -1131,7 +1133,10 @@ describe('crawlable corpus generator', () => {
 
   it('loads deterministic source data without network access', async () => {
     const data = await loadCorpusData({ rootDir: repoRoot });
-    assert.equal(data.sources.resilienceSnapshot, 'docs/snapshots/resilience-ranking-2026-05-28.json');
+    assert.match(
+      data.sources.resilienceSnapshot,
+      /^docs\/snapshots\/resilience-ranking-\d{4}-\d{2}-\d{2}\.json$/,
+    );
     assert.equal(data.sources.liveToolsScript, 'scripts/crawlable-live-tools.mjs');
     assert.equal(data.sources.countryBboxes, 'shared/country-bboxes.js');
     assert.equal(data.sources.crisisRegistry, 'shared/crawlable-crises.json');
@@ -1139,8 +1144,8 @@ describe('crawlable corpus generator', () => {
     assert.equal(data.sources.sourceOrigin, 'scripts/source-origin.mjs');
     assert.deepEqual(data.sources.sourceCatalogInputs, SOURCE_CATALOG_LASTMOD_PATHS);
     assert.equal(data.sources.sharedPageTemplate, 'scripts/build-crawlable-corpus.mjs');
-    assert.equal(data.resilience.capturedAt, '2026-05-28');
-    assert.equal(data.lastmod.countries, '2026-08-12');
+    assert.ok(data.sources.resilienceSnapshot.includes(data.resilience.capturedAt));
+    assert.equal(data.lastmod.countries, data.resilience.capturedAt);
     assert.equal(data.lastmod.research, '2026-08-12');
     assert.equal(
       data.lastmod.sources,
@@ -1160,7 +1165,7 @@ describe('crawlable corpus generator', () => {
     assert.ok(data.countryBounds.every(({ bounds: [south, west, north, east] }) => (
       north - south <= 45 && east - west <= 60
     )));
-    assert.ok(data.countries.some((country) => country.slug === 'norway' && country.rank === 1));
+    assert.ok(data.countries.some((country) => country.slug === 'norway' && Number.isInteger(country.rank)));
     assert.ok(data.chokepoints.some((chokepoint) => chokepoint.slug === 'strait-of-hormuz' && chokepoint.id === 'hormuz_strait'));
     assert.ok(data.glossaryTerms.some((term) => term.slug === 'country-resilience-index'));
     // Position-independent: the parser must carry full bullet prose through,

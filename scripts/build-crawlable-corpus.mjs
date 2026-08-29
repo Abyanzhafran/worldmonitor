@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import {
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -39,7 +40,8 @@ const DEFAULT_ROOT = resolve(__dirname, '..');
 const DEFAULT_OUT_DIR = join(DEFAULT_ROOT, 'public');
 const DEFAULT_BASE_URL = 'https://www.worldmonitor.app';
 const SCHEMA_ORG_CONTEXT_URL = 'https://schema.org';
-const RESILIENCE_SNAPSHOT_PATH = 'docs/snapshots/resilience-ranking-2026-05-28.json';
+const RESILIENCE_SNAPSHOT_DIR = 'docs/snapshots';
+const RESILIENCE_SNAPSHOT_RE = /^resilience-ranking-(\d{4}-\d{2}-\d{2})\.json$/;
 const COUNTRY_NAMES_PATH = 'shared/country-names.json';
 const CHOKEPOINT_REGISTRY_PATH = 'src/config/chokepoint-registry.ts';
 const TRADE_ROUTES_PATH = 'src/config/trade-routes.ts';
@@ -63,7 +65,6 @@ export const SOURCE_CATALOG_LASTMOD_PATHS = Object.freeze([
 // families take the later of this version and their own committed source date,
 // so template changes are reflected without pretending every deploy is fresh.
 export const CORPUS_GENERATOR_CONTENT_VERSION = '2026-08-12';
-const COUNTRY_PAGE_CONTENT_VERSION = '2026-07-28';
 const CHOKEPOINT_PAGE_CONTENT_VERSION = '2026-07-28';
 const SOURCES_PAGE_CONTENT_VERSION = '2026-08-20';
 const DATASET_SCHEMA_CONTENT_VERSION = '2026-08-05';
@@ -230,6 +231,27 @@ function readText(rootDir, relativePath) {
 
 function readJson(rootDir, relativePath) {
   return JSON.parse(readText(rootDir, relativePath));
+}
+
+export function resolveLatestResilienceSnapshotPath(rootDir = DEFAULT_ROOT) {
+  const snapshotDir = repoPath(rootDir, RESILIENCE_SNAPSHOT_DIR);
+  const candidates = readdirSync(snapshotDir)
+    .map((filename) => ({ filename, match: filename.match(RESILIENCE_SNAPSHOT_RE) }))
+    .filter(({ match }) => match)
+    .sort((a, b) => b.match[1].localeCompare(a.match[1]));
+  if (candidates.length === 0) {
+    throw new Error(`No canonical resilience ranking snapshot found in ${RESILIENCE_SNAPSHOT_DIR}`);
+  }
+
+  const [{ filename, match }] = candidates;
+  const relativePath = join(RESILIENCE_SNAPSHOT_DIR, filename);
+  const snapshot = readJson(rootDir, relativePath);
+  if (snapshot.capturedAt !== match[1]) {
+    throw new Error(
+      `${relativePath} filename date ${match[1]} does not match capturedAt ${snapshot.capturedAt}`,
+    );
+  }
+  return relativePath;
 }
 
 function laterDate(...values) {
@@ -792,7 +814,8 @@ export function gitFileLastmod(rootDir, relativePath) {
 }
 
 export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
-  const resilience = readJson(rootDir, RESILIENCE_SNAPSHOT_PATH);
+  const resilienceSnapshotPath = resolveLatestResilienceSnapshotPath(rootDir);
+  const resilience = readJson(rootDir, resilienceSnapshotPath);
   const reverseNames = reverseCountryNames(readJson(rootDir, COUNTRY_NAMES_PATH));
   const [
     { CHOKEPOINT_REGISTRY },
@@ -825,12 +848,7 @@ export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
   );
   const glossaryTerms = normalizeGlossaryTerms(GLOSSARY_TERMS);
   const changelog = parseChangelog(readText(rootDir, CHANGELOG_PATH));
-  const countriesLastmod = laterDate(
-    resilience.capturedAt,
-    CORPUS_GENERATOR_CONTENT_VERSION,
-    COUNTRY_PAGE_CONTENT_VERSION,
-    DATASET_SCHEMA_CONTENT_VERSION,
-  );
+  const countriesLastmod = resilience.capturedAt;
   const changelogLastmod = laterDate(
     gitFileLastmod(rootDir, CHANGELOG_PATH),
     latestDatedChangelogRelease(changelog),
@@ -887,7 +905,7 @@ export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
   return {
     generatorContentVersion: CORPUS_GENERATOR_CONTENT_VERSION,
     sources: {
-      resilienceSnapshot: RESILIENCE_SNAPSHOT_PATH,
+      resilienceSnapshot: resilienceSnapshotPath,
       countryNames: COUNTRY_NAMES_PATH,
       chokepointRegistry: CHOKEPOINT_REGISTRY_PATH,
       glossaryData: GLOSSARY_DATA_PATH,
@@ -1087,7 +1105,7 @@ ${body}
 `;
 }
 
-function renderCountriesIndex({ countries, baseUrl, capturedAt, lastmod }) {
+function renderCountriesIndex({ countries, baseUrl, capturedAt, lastmod, snapshotPath }) {
   const path = '/countries/';
   const description = `Browse ${countries.length} country risk and resilience pages from World Monitor's dated ${capturedAt} structural snapshot, with current instability signals on each page.`;
   const body = `      <p class="eyebrow">Country corpus</p>
@@ -1097,7 +1115,7 @@ function renderCountriesIndex({ countries, baseUrl, capturedAt, lastmod }) {
       <div class="grid">
 ${countries.map((country) => `        <a class="card" href="/countries/${country.slug}/"><strong>${escapeHtml(country.name)}</strong><br><span>${country.rank == null ? 'Low-confidence listing' : `Rank ${country.rank}`} &middot; ${escapeHtml(country.code)}</span></a>`).join('\n')}
       </div>
-      <p class="source">Source: ${RESILIENCE_SNAPSHOT_PATH} (${escapeHtml(prettyDate(capturedAt))}). Methodology: <a href="/docs/methodology/country-resilience-index">Country Resilience Index</a>.</p>`;
+      <p class="source">Source: ${escapeHtml(snapshotPath)} (${escapeHtml(prettyDate(capturedAt))}). Methodology: <a href="/docs/methodology/country-resilience-index">Country Resilience Index</a>.</p>`;
   return pageDocument({
     baseUrl,
     path,
@@ -1127,6 +1145,8 @@ function renderCountryPage({
   lastmod,
   methodologyFormula,
   rankedCount,
+  snapshotNote,
+  snapshotPath,
 }) {
   const path = `/countries/${country.slug}/`;
   const description = countryMetaDescription({
@@ -1172,8 +1192,9 @@ function renderCountryPage({
       </section>
       <h2>How to read this page</h2>
       <p>World Monitor's Country Resilience Index is a 0-100 structural resilience score. This page records the committed ${escapeHtml(prettyDate(capturedAt))} snapshot using the ${escapeHtml(methodologyFormula)} methodology tag. The full scoring approach — dimensions, sources, and confidence rules — is documented in the <a href="/docs/methodology/country-resilience-index">Country Resilience Index methodology</a>.</p>
+      <p class="snapshot-note">${escapeHtml(snapshotNote)}</p>
       <p>Use it as a crawlable reference and stable landing page. For the current live picture — active alerts, conflict events, market and energy signals — open ${escapeHtml(country.name)} on the live map above.</p>
-      <p class="source">Source: ${RESILIENCE_SNAPSHOT_PATH}. Captured ${escapeHtml(capturedAt)}. Methodology: <a href="/docs/methodology/country-resilience-index">Country Resilience Index</a>.</p>`;
+      <p class="source">Source: ${escapeHtml(snapshotPath)}. Captured ${escapeHtml(capturedAt)}. Methodology: <a href="/docs/methodology/country-resilience-index">Country Resilience Index</a>.</p>`;
   const coreTitle = `${country.name} Country Risk and Resilience`;
   return pageDocument({
     baseUrl,
@@ -1207,6 +1228,8 @@ function renderCountryPage({
         },
         license: DATASET_LICENSE,
         datePublished: capturedAt,
+        dateModified: capturedAt,
+        temporalCoverage: capturedAt,
         measurementTechnique: methodologyFormula,
       },
     },
@@ -1849,6 +1872,7 @@ export async function buildCorpus({
       baseUrl,
       capturedAt: data.resilience.capturedAt,
       lastmod: data.lastmod.countries,
+      snapshotPath: data.sources.resilienceSnapshot,
     }),
   );
   const rankedCount = data.countries.filter((country) => country.rank != null).length;
@@ -1863,6 +1887,8 @@ export async function buildCorpus({
         lastmod: data.lastmod.countries,
         methodologyFormula: data.resilience.methodologyFormula || 'unknown',
         rankedCount,
+        snapshotNote: data.resilience.snapshotNote,
+        snapshotPath: data.sources.resilienceSnapshot,
       }),
     );
   }
