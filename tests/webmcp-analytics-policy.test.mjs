@@ -9,6 +9,7 @@ import {
   buildWebMcpTools as buildProductionWebMcpTools,
   registerWebMcpTools,
 } from '../src/services/webmcp.ts';
+import { WEBMCP_SPA_TOOL_NAMES } from '../src/config/webmcp.ts';
 
 class MemoryStorage {
   #values = new Map();
@@ -168,7 +169,7 @@ describe('WebMCP analytics privacy policy', () => {
       collected.find(({ event }) => event === 'webmcp-registered'),
       {
         event: 'webmcp-registered',
-        data: { toolCount: 7, pageSurface: 'dashboard', api: 'document-current' },
+        data: { toolCount: WEBMCP_SPA_TOOL_NAMES.length - 1, pageSurface: 'dashboard', api: 'document-current' },
       },
     );
     assert.deepEqual(

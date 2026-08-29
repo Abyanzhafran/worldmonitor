@@ -1,6 +1,5 @@
 import type { AppContext } from './app-context';
 import { STORAGE_KEYS, type MapModePreference } from '@/config/variants/base';
-import { saveToStorage } from '@/utils';
 import type { DashboardMapMode } from '../../shared/agent-bus-contract';
 
 export interface MapDimensionLayerAdjustment {
@@ -44,10 +43,21 @@ function syncMapDimensionToggle(preference: MapModePreference): void {
   });
 }
 
+function persistJson(key: string, value: unknown): void {
+  // Keep this off the `@/utils` barrel. That module loads `proxy.ts`, which
+  // reads Vite's `import.meta.env.DEV` at import time and cannot run under tsx.
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.warn(`Failed to save ${key} to storage:`, error);
+  }
+}
+
 function disableIncompatibleResilienceLayer(ctx: AppContext): MapDimensionLayerAdjustment[] {
   if (!ctx.mapLayers.resilienceScore || ctx.map?.isDeckGLActive?.()) return [];
   ctx.mapLayers = { ...ctx.mapLayers, resilienceScore: false };
-  saveToStorage(STORAGE_KEYS.mapLayers, ctx.mapLayers);
+  persistJson(STORAGE_KEYS.mapLayers, ctx.mapLayers);
   return [{
     layer: 'resilienceScore',
     from: true,
@@ -80,7 +90,7 @@ export function applyVisibleMapDimension(
   }
 
   syncMapDimensionToggle(preference);
-  saveToStorage(STORAGE_KEYS.mapMode, preference);
+  persistJson(STORAGE_KEYS.mapMode, preference);
   if (wantGlobe) ctx.map?.switchToGlobe();
   else ctx.map?.switchToFlat();
   const adjustedLayers = disableIncompatibleResilienceLayer(ctx);

@@ -28,7 +28,9 @@ export function dashboardActionSyncsUrl(type: string | undefined): boolean {
   return typeof type === 'string' && URL_SYNC_ACTION_TYPES.has(type);
 }
 
-export function dashboardActionUsesViewportAuthority(type: string | undefined): boolean {
+export function dashboardActionUsesViewportAuthority(
+  type: string | undefined,
+): type is 'set_view' | 'focus_country' {
   return typeof type === 'string' && VIEWPORT_AUTHORITY_ACTION_TYPES.has(type);
 }
 

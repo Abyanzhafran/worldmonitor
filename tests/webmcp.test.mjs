@@ -1066,7 +1066,7 @@ describe('webmcp.ts: promise registration lifecycle', () => {
     await settlePromises();
     assert.deepEqual(harness.events, [{
       event: 'webmcp-registered',
-      data: { toolCount: 8, pageSurface: 'dashboard', api: 'document-current' },
+      data: { toolCount: DASHBOARD_TOOL_NAMES.length, pageSurface: 'dashboard', api: 'document-current' },
     }]);
 
     controller.abort();
@@ -1093,7 +1093,7 @@ describe('webmcp.ts: promise registration lifecycle', () => {
       },
       {
         event: 'webmcp-registered',
-        data: { toolCount: 7, pageSurface: 'dashboard', api: 'document-current' },
+        data: { toolCount: DASHBOARD_TOOL_NAMES.length - 1, pageSurface: 'dashboard', api: 'document-current' },
       },
     ]);
     assert.ok(!JSON.stringify(harness.events).includes('raw duplicate detail'));
