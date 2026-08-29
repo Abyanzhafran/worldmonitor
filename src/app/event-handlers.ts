@@ -2614,7 +2614,7 @@ export class EventHandlerManager implements AppModule {
         const isGlobe = mode === 'globe';
         const alreadyGlobe = this.ctx.map?.isGlobeMode() ?? false;
         if (isGlobe === alreadyGlobe) return;
-        applyVisibleMapDimension(this.ctx, isGlobe ? '3d' : '2d');
+        void applyVisibleMapDimension(this.ctx, isGlobe ? '3d' : '2d');
       });
     });
   }

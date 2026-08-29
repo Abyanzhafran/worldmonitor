@@ -492,8 +492,8 @@ export class App {
 
     if (keySet.has(STORAGE_KEYS.mapMode)) {
       const mode = getStoredMapModePreference();
-      if (mode === 'globe') this.state.map?.switchToGlobe();
-      else this.state.map?.switchToFlat();
+      if (mode === 'globe') void this.state.map?.switchToGlobe();
+      else void this.state.map?.switchToFlat();
     }
 
     if (

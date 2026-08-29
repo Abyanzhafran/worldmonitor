@@ -132,7 +132,7 @@ export async function applyWebMcpDashboardAction(
   const { applyAgentBusAction } = await import('./agent-bus-applier');
   throwIfWebMcpAborted(signal);
   if (ctx.isDestroyed) return APP_DESTROYED_RESULT;
-  const result = applyAgentBusAction(ctx, action, options);
+  const result = await raceWebMcpAbort(applyAgentBusAction(ctx, action, options), signal);
   if (
     result.ok
     && (result.actionType === 'set_view' || result.actionType === 'focus_country')
