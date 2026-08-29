@@ -16,6 +16,7 @@ export interface MapDimensionApplyResult {
   renderer: 'globe' | 'deck' | 'svg';
   alreadyActive: boolean;
   adjustedLayers: MapDimensionLayerAdjustment[];
+  fellBack: boolean;
 }
 
 export function dashboardMapModeToPreference(mode: DashboardMapMode): MapModePreference {
@@ -79,10 +80,10 @@ function disableIncompatibleResilienceLayer(ctx: AppContext): MapDimensionLayerA
  * renderer switches, local persistence, and resilience-layer compatibility
  * stay identical to a button click.
  */
-export function applyVisibleMapDimension(
+export async function applyVisibleMapDimension(
   ctx: AppContext,
   requested: DashboardMapMode,
-): MapDimensionApplyResult {
+): Promise<MapDimensionApplyResult> {
   const preference = dashboardMapModeToPreference(requested);
   const alreadyGlobe = ctx.map?.isGlobeMode() ?? false;
   const wantGlobe = preference === 'globe';
@@ -94,20 +95,31 @@ export function applyVisibleMapDimension(
       renderer: currentMapRenderer(ctx),
       alreadyActive: true,
       adjustedLayers: [],
+      fellBack: false,
     };
   }
 
+  // Optimistic control chrome only. Persist the mode the replacement renderer
+  // actually settles on so a globe init fallback cannot leave storage/toggle
+  // on 3d while SVG is visible.
   syncMapDimensionToggle(preference);
-  persistJson(STORAGE_KEYS.mapMode, preference);
-  if (wantGlobe) ctx.map?.switchToGlobe();
-  else ctx.map?.switchToFlat();
+  const switchResult = wantGlobe
+    ? await ctx.map?.switchToGlobe()
+    : await ctx.map?.switchToFlat();
+  const effective = currentDashboardMapMode(ctx);
+  const renderer = currentMapRenderer(ctx);
+  const fellBack = Boolean(switchResult?.fallback) || (wantGlobe && effective !== '3d');
+  const persistPreference = dashboardMapModeToPreference(effective);
+  syncMapDimensionToggle(persistPreference);
+  persistJson(STORAGE_KEYS.mapMode, persistPreference);
   const adjustedLayers = disableIncompatibleResilienceLayer(ctx);
 
   return {
     requested,
-    effective: currentDashboardMapMode(ctx),
-    renderer: currentMapRenderer(ctx),
+    effective,
+    renderer,
     alreadyActive: false,
     adjustedLayers,
+    fellBack,
   };
 }

@@ -506,33 +506,33 @@ describe('agent bus applier', () => {
     );
   });
 
-  it('switches 2d and 3d through the visible map-dimension control', () => {
+  it('switches 2d and 3d through the visible map-dimension control', async () => {
     const ctx = makeCtx();
 
-    const to3d = applyAgentBusAction(ctx, { type: 'set_map_mode', mode: '3d' });
+    const to3d = await applyAgentBusAction(ctx, { type: 'set_map_mode', mode: '3d' });
     assert.equal(to3d.ok, true);
     assert.deepEqual(to3d.requested, { mode: '3d' });
     assert.deepEqual(to3d.effective, { mode: '3d', renderer: 'globe' });
     assert.deepEqual(to3d.compatibility, { adjusted: false });
     assert.equal((ctx.map as { _calls: { switchToGlobeCalls: number[] } })._calls.switchToGlobeCalls.length, 1);
 
-    const already3d = applyAgentBusAction(ctx, { type: 'set_map_mode', mode: '3d' });
+    const already3d = await applyAgentBusAction(ctx, { type: 'set_map_mode', mode: '3d' });
     assert.equal(already3d.ok, true);
     assert.match(already3d.message ?? '', /already/);
     assert.equal((ctx.map as { _calls: { switchToGlobeCalls: number[] } })._calls.switchToGlobeCalls.length, 1);
 
-    const to2d = applyAgentBusAction(ctx, { type: 'set_map_mode', mode: '2d' });
+    const to2d = await applyAgentBusAction(ctx, { type: 'set_map_mode', mode: '2d' });
     assert.equal(to2d.ok, true);
     assert.deepEqual(to2d.effective, { mode: '2d', renderer: 'deck' });
     assert.equal((ctx.map as { _calls: { switchToFlatCalls: number[] } })._calls.switchToFlatCalls.length, 1);
   });
 
-  it('disables resilienceScore when switching away from DeckGL, matching the UI', () => {
+  it('disables resilienceScore when switching away from DeckGL, matching the UI', async () => {
     const ctx = makeCtx();
     ctx.map.switchToFlat();
     ctx.mapLayers = { ...ctx.mapLayers, resilienceScore: true };
 
-    const result = applyAgentBusAction(ctx, { type: 'set_map_mode', mode: '3d' });
+    const result = await applyAgentBusAction(ctx, { type: 'set_map_mode', mode: '3d' });
     assert.equal(result.ok, true);
     assert.equal(ctx.mapLayers.resilienceScore, false);
     assert.equal(result.compatibility?.adjusted, true);
@@ -546,5 +546,37 @@ describe('agent bus applier', () => {
       (ctx.map as { _calls: { setLayersCalls: MapLayers[] } })._calls.setLayersCalls,
       [ctx.mapLayers],
     );
+  });
+
+  it('denies 3d and reports the 2d renderer when globe startup falls back', async () => {
+    let globeMode = false;
+    let deckActive = true;
+    let failGlobe!: () => void;
+    const ctx = makeCtx();
+    ctx.map.switchToGlobe = () => {
+      globeMode = true;
+      deckActive = false;
+      (ctx.map as { _calls: { switchToGlobeCalls: number[] } })._calls.switchToGlobeCalls.push(1);
+      return new Promise((resolve) => {
+        failGlobe = () => {
+          globeMode = false;
+          deckActive = false;
+          resolve({ renderer: 'svg', mode: 'flat', fallback: true });
+        };
+      });
+    };
+    ctx.map.isGlobeMode = () => globeMode;
+    ctx.map.isDeckGLActive = () => deckActive;
+
+    const pending = applyAgentBusAction(ctx, { type: 'set_map_mode', mode: '3d' });
+    failGlobe();
+    const result = await pending;
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'denied');
+    assert.equal(result.reason, 'globe_unavailable');
+    assert.deepEqual(result.requested, { mode: '3d' });
+    assert.deepEqual(result.effective, { mode: '2d', renderer: 'svg' });
+    assert.equal(result.compatibility?.adjusted, true);
   });
 });

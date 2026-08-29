@@ -390,19 +390,32 @@ function applyFocusCountry(
   });
 }
 
-function applySetMapMode(
+async function applySetMapMode(
   ctx: AppContext,
   action: Extract<AgentBusAction, { type: 'set_map_mode' }>,
-): AgentBusApplyResult {
+): Promise<AgentBusApplyResult> {
   if (!ctx.map) {
     return denied('Map is not available.', 'map_unavailable', [], action);
   }
 
-  const result = applyVisibleMapDimension(ctx, action.mode);
+  const result = await applyVisibleMapDimension(ctx, action.mode);
   const compatibility = {
-    adjusted: result.adjustedLayers.length > 0,
+    adjusted: result.adjustedLayers.length > 0 || result.fellBack,
     ...(result.adjustedLayers.length > 0 ? { layers: result.adjustedLayers } : {}),
   };
+  if (result.fellBack) {
+    return denied(
+      'Globe startup fell back to the 2D map.',
+      'globe_unavailable',
+      [{ target: result.effective, status: 'denied', reason: 'globe_unavailable' }],
+      action,
+      {
+        requested: { mode: result.requested },
+        effective: { mode: result.effective, renderer: result.renderer },
+        compatibility,
+      },
+    );
+  }
   return applied(action, result.alreadyActive
     ? `Map mode is already ${result.effective}.`
     : `Set the map mode to ${result.effective}.`, [
@@ -418,7 +431,7 @@ export function applyAgentBusAction(
   ctx: AppContext,
   input: unknown,
   options: AgentBusApplierOptions = {},
-): AgentBusApplyResult {
+): AgentBusApplyResult | Promise<AgentBusApplyResult> {
   const parsed = parseAgentBusAction(input);
   if (!parsed.ok) return invalid(parsed.issues);
   if (!isDashboardControlAction(parsed.action)) {
