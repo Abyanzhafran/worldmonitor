@@ -149,6 +149,26 @@ function createBindings(overrides: Record<string, unknown> = {}) {
       truncated: false,
     }),
     openSearchResult: async () => ({ ok: true, status: 'opened' as const, type: 'country' }),
+    applyDashboardTabAction: async (action: { type: string; tabId?: string; name?: string }) => (
+      action.type === 'list'
+        ? {
+            activeTabId: 'tab-main01-abc123',
+            tabs: [{ id: 'tab-main01-abc123', name: 'Main', active: true, canDelete: false }],
+            tabCount: 1,
+            tabsTruncated: false,
+            canCreate: true,
+            cap: null,
+          }
+        : {
+            ok: true,
+            status: 'applied' as const,
+            actionType: action.type,
+            message: 'Applied dashboard tab action.',
+            tabId: action.tabId ?? 'tab-main01-abc123',
+            name: action.name ?? 'Main',
+            activeTabId: action.tabId ?? 'tab-main01-abc123',
+          }
+    ),
     getAccessContext: async () => ({
       accountState: 'signed_out' as const,
       clerk: 'unavailable' as const,
@@ -183,6 +203,11 @@ const VALID_INPUTS: Record<string, Record<string, unknown>> = {
   set_map_layers: { layers: { weather: true } },
   search_dashboard: { query: 'germany' },
   open_search_result: { resultKey: `sr_${'a'.repeat(32)}` },
+  list_dashboard_tabs: {},
+  select_dashboard_tab: { tabId: 'tab-main01-abc123' },
+  create_dashboard_tab: { name: 'Markets' },
+  rename_dashboard_tab: { tabId: 'tab-main01-abc123', name: 'Workspace' },
+  delete_dashboard_tab: { tabId: 'tab-main01-abc123', confirm: true },
   get_access_context: {},
   open_sign_in: {},
 };
@@ -213,6 +238,9 @@ const WEBMCP_MAINTAINER_SOURCES = [
   'src/app/webmcp-search-controller.ts',
   'src/app/webmcp-search-effects.ts',
   'src/app/search-selection-dispatcher.ts',
+  'src/app/panel-layout.ts',
+  'src/services/tab-store.ts',
+  'src/services/dashboard-tab-actions.ts',
   'src/components/GlobalProcurementPanel.ts',
   'pro-test/welcome.html',
   'vercel.json',
@@ -237,6 +265,7 @@ const WEBMCP_FOCUSED_VERIFICATION_TESTS = [
   'tests/webmcp-map-layer-catalog.test.mts',
   'tests/webmcp-search-effects.test.mts',
   'tests/webmcp-dashboard.test.mts',
+  'tests/dashboard-tab-actions.test.mts',
   'tests/webmcp-panel-catalog.test.mts',
   'tests/webmcp-runtime.test.mjs',
   'tests/webmcp-analytics-policy.test.mjs',
@@ -561,6 +590,7 @@ describe('WebMCP imperative schema and budget contract', () => {
       applyDashboardAction: async () => { throw privateError; },
       searchDashboard: async () => { throw privateError; },
       openSearchResult: async () => { throw privateError; },
+      applyDashboardTabAction: async () => { throw privateError; },
       getAccessContext: async () => { throw privateError; },
       openSignIn: async () => { throw privateError; },
     }), () => {});

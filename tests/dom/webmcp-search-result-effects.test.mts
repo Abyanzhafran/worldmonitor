@@ -472,6 +472,9 @@ describe('open_search_result rejects a caller-supplied effect class', () => {
         truncated: false,
       }),
       openSearchResult: async () => ({ ok: true, status: 'opened' }),
+      applyDashboardTabAction: async () => {
+        throw new Error('Unexpected dashboard tab action.');
+      },
       listDashboardPanels: async () => {
         throw new Error('Unexpected dashboard panel catalog read.');
       },
