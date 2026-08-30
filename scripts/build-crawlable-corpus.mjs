@@ -32,6 +32,10 @@ import {
   scanUpstreamHosts,
   sourceAttributionStats,
 } from './source-attribution.mjs';
+import {
+  CHANGELOG_PAGINATION_ROBOTS_CONTENT,
+  INDEXABLE_ROBOTS_CONTENT,
+} from '../shared/seo-robots.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -62,7 +66,7 @@ export const SOURCE_CATALOG_LASTMOD_PATHS = Object.freeze([
 // Last substantive change to the shared HTML template/content language. Data
 // families take the later of this version and their own committed source date,
 // so template changes are reflected without pretending every deploy is fresh.
-export const CORPUS_GENERATOR_CONTENT_VERSION = '2026-08-12';
+export const CORPUS_GENERATOR_CONTENT_VERSION = '2026-08-29';
 const COUNTRY_PAGE_CONTENT_VERSION = '2026-07-28';
 const CHOKEPOINT_PAGE_CONTENT_VERSION = '2026-07-28';
 const SOURCES_PAGE_CONTENT_VERSION = '2026-08-20';
@@ -1139,6 +1143,7 @@ function pageDocument({
   ogType = 'article',
   ogImage = OG_IMAGE_PATH,
   ogImageAlt = OG_IMAGE_ALT,
+  robots = INDEXABLE_ROBOTS_CONTENT,
 }) {
   const canonical = absoluteUrl(baseUrl, path);
   const ld = [
@@ -1163,7 +1168,7 @@ function pageDocument({
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(title)}</title>
     <meta name="description" content="${escapeHtml(description)}">
-    <meta name="robots" content="index, follow">
+    <meta name="robots" content="${escapeHtml(robots)}">
     <link rel="canonical" href="${escapeHtml(canonical)}">
     ${lastmod ? `<meta name="lastmod" content="${escapeHtml(lastmod)}">` : []}
     ${paginationLinks.map((link) => `<link rel="${escapeHtml(link.rel)}" href="${escapeHtml(absoluteUrl(baseUrl, link.path))}">`).join(String.fromCharCode(10) + "    ")}
@@ -1980,6 +1985,9 @@ ${release.bullets.map((bullet) => `          <li>${escapeHtml(bullet)}</li>`).jo
     description,
     lastmod,
     paginationLinks,
+    // Pagination beyond the changelog index is crawlable for humans but
+    // intentionally noindex + omitted from the root sitemap (#7380).
+    robots: pageIndex === 0 ? INDEXABLE_ROBOTS_CONTENT : CHANGELOG_PAGINATION_ROBOTS_CONTENT,
     jsonLd: {
       '@context': 'https://schema.org',
       '@type': 'CollectionPage',
@@ -2050,9 +2058,13 @@ function buildManifest({ data, baseUrl, changelogPageCount }) {
         routes: toolRoutes,
       },
       changelog: {
+        // count remains total generated pages (index + pagination).
+        // routes is the sitemap inventory only — page/2+ stay noindex and
+        // are omitted from the root sitemap (#7380).
         count: changelogRoutes.length,
         index: '/reference/changelog/',
-        routes: changelogRoutes,
+        routes: [changelogRoutes[0]],
+        paginationRoutes: changelogRoutes.slice(1),
         sourceLastmod: data.lastmod.changelog,
       },
       research: {
