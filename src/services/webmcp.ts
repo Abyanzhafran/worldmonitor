@@ -106,6 +106,7 @@ import {
 } from './webmcp-map-layer-catalog';
 import type { SetPanelEnabledResult } from '../config/panel-enablement';
 import {
+  MISSION_PRESET_APPLY_DENY_REASONS,
   MissionPresetCatalogError,
   isMissionPresetId,
   type MissionPresetApplyDenyReason,
@@ -118,6 +119,7 @@ import type {
   PanelLayoutSnapshot,
 } from './panel-layout-actions';
 import {
+  PANEL_LAYOUT_DENIAL_REASONS,
   PANEL_LAYOUT_ID_MAX_CHARS,
   PANEL_LAYOUT_REGIONS,
 } from './panel-layout-actions';
@@ -1188,14 +1190,9 @@ function boundSetPanelEnabledResult(result: SetPanelEnabledResult): SetPanelEnab
   };
 }
 
-const MISSION_PRESET_APPLY_REASONS = new Set<MissionPresetApplyDenyReason>([
-  'malformed_arguments',
-  'unknown_preset',
-  'preset_incompatible',
-  'preset_not_entitled',
-  'app_destroyed',
-  'apply_failed',
-]);
+const MISSION_PRESET_APPLY_REASON_SET: ReadonlySet<string> = new Set(
+  MISSION_PRESET_APPLY_DENY_REASONS,
+);
 
 function boundMissionPresetCatalog(result: MissionPresetCatalogResult): MissionPresetCatalogResult {
   const presets = (Array.isArray(result.presets) ? result.presets : []).map((preset) => {
@@ -1243,7 +1240,7 @@ function boundApplyMissionPresetResult(result: ApplyMissionPresetResult): ApplyM
     ? result.status
     : 'denied';
   const ok = result.ok === true && (status === 'applied' || status === 'unchanged');
-  const reason = result.reason && MISSION_PRESET_APPLY_REASONS.has(result.reason)
+  const reason = result.reason && MISSION_PRESET_APPLY_REASON_SET.has(result.reason)
     ? result.reason
     : undefined;
   const map = result.map && typeof result.map === 'object'
@@ -1272,20 +1269,9 @@ function boundApplyMissionPresetResult(result: ApplyMissionPresetResult): ApplyM
   };
 }
 
-const PANEL_LAYOUT_DENIAL_REASONS = new Set([
-  'malformed_arguments',
-  'panel_not_found',
-  'panel_not_mounted',
-  'region_unavailable',
-  'invalid_region',
-  'invalid_index',
-  'collapse_unsupported',
-  'fullscreen_unsupported',
-  'panel_fixed',
-  'persist_failed',
-  'layout_unavailable',
-  'app_destroyed',
-]);
+const PANEL_LAYOUT_DENIAL_REASON_SET: ReadonlySet<string> = new Set(
+  PANEL_LAYOUT_DENIAL_REASONS,
+);
 
 function boundPanelLayoutSnapshot(
   snapshot: PanelLayoutSnapshot,
@@ -1406,7 +1392,7 @@ function boundPanelLayoutMutationResult(
     ? result.status
     : 'denied';
   const ok = result.ok === true && status === 'applied';
-  const reason = result.reason && PANEL_LAYOUT_DENIAL_REASONS.has(result.reason)
+  const reason = result.reason && PANEL_LAYOUT_DENIAL_REASON_SET.has(result.reason)
     ? result.reason
     : undefined;
   const region = result.region === 'sidebar' || result.region === 'bottom'
