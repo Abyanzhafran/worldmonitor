@@ -1146,6 +1146,8 @@ function pageDocument({
   robots = INDEXABLE_ROBOTS_CONTENT,
 }) {
   const canonical = absoluteUrl(baseUrl, path);
+  // Allow a single JSON-LD object or an array of sibling graphs (e.g. WebPage
+  // + FAQPage + ItemList for AI-extractable use-case workflows — #7381).
   const ld = [
     ...(Array.isArray(jsonLd) ? jsonLd : jsonLd ? [jsonLd] : []),
     breadcrumbs,
