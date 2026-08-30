@@ -8701,6 +8701,9 @@
       "status": "excluded",
       "references": [
         {
+          "path": "api/telegram-feed.js"
+        },
+        {
           "path": "scripts/ais-relay.cjs"
         },
         {
@@ -8708,6 +8711,9 @@
         },
         {
           "path": "src/services/story-share.ts"
+        },
+        {
+          "path": "src/services/telegram-intel.ts"
         }
       ]
     },
