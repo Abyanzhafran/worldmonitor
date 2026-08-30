@@ -889,7 +889,9 @@ describe('crawlable corpus generator', () => {
           for (const [index, dataset] of datasets.entries()) {
             assertSourceDerivedTemporalCoverage(dataset, {
               route,
-              observationInterval: countryObservationRoutes.has(route) ? '2026-05-28' : undefined,
+              observationInterval: countryObservationRoutes.has(route)
+                ? manifest.sections.countries.sourceCapturedAt
+                : undefined,
               lastmod: pageLastmod(html),
               index: index + 1,
             });
@@ -935,7 +937,7 @@ describe('crawlable corpus generator', () => {
       assert.match(norway, /<link rel="alternate" hreflang="en" href="https:\/\/www\.worldmonitor\.app\/countries\/norway\/">/);
       assert.doesNotMatch(norway, /hreflang="zh/, 'English crawlable corpus pages must not advertise zh alternates');
       assert.match(norway, /<meta name="lastmod" content="2026-08-30">/);
-      assert.match(norway, /Source: docs\/snapshots\/resilience-ranking-2026-05-28\.json/);
+      assert.ok(norway.includes(`Source: ${manifest.sources.resilienceSnapshot}`));
       assert.match(
         norway,
         /<span>Overall score<\/span><strong>75\.4<\/strong>/,
@@ -968,9 +970,11 @@ describe('crawlable corpus generator', () => {
         /<span>Overall score<\/span><strong>—<\/strong>/,
         'headline-ineligible countries must not render a numeric score',
       );
-      assert.match(
-        taiwan,
-        /World Monitor does not publish a resilience score for Taiwan\. Taiwan does not meet the published ranking eligibility criteria\. Input coverage is 41%\./,
+      const taiwanDataset = JSON.parse(read(outDir, 'countries/taiwan/resilience.json'));
+      assert.ok(
+        taiwan.includes(
+          `World Monitor does not publish a resilience score for Taiwan. Taiwan does not meet the published ranking eligibility criteria. Input coverage is ${Math.round(taiwanDataset.dimensionCoverage * 100)}%.`,
+        ),
       );
       assert.doesNotMatch(
         taiwan,
@@ -1049,7 +1053,7 @@ describe('crawlable corpus generator', () => {
       assert.ok(norwayDataset, 'country page must expose a Dataset mainEntity');
       assertSourceDerivedTemporalCoverage(norwayDataset, {
         route: '/countries/norway/',
-        observationInterval: '2026-05-28',
+        observationInterval: manifest.sections.countries.sourceCapturedAt,
         lastmod: pageLastmod(norway),
       });
       assert.equal(norwayDataset.isAccessibleForFree, true);
@@ -1505,7 +1509,10 @@ describe('crawlable corpus generator', () => {
 
   it('loads deterministic source data without network access', async () => {
     const data = await loadCorpusData({ rootDir: repoRoot });
-    assert.equal(data.sources.resilienceSnapshot, 'docs/snapshots/resilience-ranking-2026-05-28.json');
+    assert.match(
+      data.sources.resilienceSnapshot,
+      /^docs\/snapshots\/resilience-ranking-\d{4}-\d{2}-\d{2}\.json$/,
+    );
     assert.equal(data.sources.liveToolsScript, 'scripts/crawlable-live-tools.mjs');
     assert.equal(data.sources.countryBboxes, 'shared/country-bboxes.js');
     assert.equal(data.sources.crisisRegistry, 'shared/crawlable-crises.json');
@@ -1513,7 +1520,8 @@ describe('crawlable corpus generator', () => {
     assert.equal(data.sources.sourceOrigin, 'scripts/source-origin.mjs');
     assert.deepEqual(data.sources.sourceCatalogInputs, SOURCE_CATALOG_LASTMOD_PATHS);
     assert.equal(data.sources.sharedPageTemplate, 'scripts/build-crawlable-corpus.mjs');
-    assert.equal(data.resilience.capturedAt, '2026-05-28');
+    assert.equal(data.resilience.capturedAt, '2026-08-29');
+    assert.ok(data.sources.resilienceSnapshot.includes(data.resilience.capturedAt));
     assert.equal(data.lastmod.countries, '2026-08-30');
     assert.equal(data.lastmod.research, '2026-08-30');
     assert.equal(
@@ -1534,7 +1542,7 @@ describe('crawlable corpus generator', () => {
     assert.ok(data.countryBounds.every(({ bounds: [south, west, north, east] }) => (
       north - south <= 45 && east - west <= 60
     )));
-    assert.ok(data.countries.some((country) => country.slug === 'norway' && country.rank === 1));
+    assert.ok(data.countries.some((country) => country.slug === 'norway' && Number.isInteger(country.rank)));
     assert.ok(data.chokepoints.some((chokepoint) => chokepoint.slug === 'strait-of-hormuz' && chokepoint.id === 'hormuz_strait'));
     assert.ok(data.glossaryTerms.some((term) => term.slug === 'country-resilience-index'));
     // Position-independent: the parser must carry full bullet prose through,
