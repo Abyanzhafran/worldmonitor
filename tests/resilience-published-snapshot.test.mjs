@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
+import YAML from 'yaml';
 
 import * as crawlableCorpus from '../scripts/build-crawlable-corpus.mjs';
 
@@ -107,5 +108,13 @@ describe('published resilience snapshot freshness', () => {
     assert.match(workflow, /gh pr list --state all/);
     assert.match(workflow, /gh pr create/);
     assert.doesNotMatch(workflow, /push --force/);
+
+    const parsed = YAML.parse(workflow);
+    const checkout = parsed.jobs.refresh.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+    assert.equal(
+      checkout?.with?.ref,
+      'refs/heads/main',
+      'publication checkout must pin main so workflow_dispatch cannot snapshot a feature branch',
+    );
   });
 });
