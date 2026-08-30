@@ -936,6 +936,11 @@ describe('crawlable corpus generator', () => {
       assert.doesNotMatch(norway, /hreflang="zh/, 'English crawlable corpus pages must not advertise zh alternates');
       assert.match(norway, /<meta name="lastmod" content="2026-08-30">/);
       assert.match(norway, /Source: docs\/snapshots\/resilience-ranking-2026-05-28\.json/);
+      assert.match(
+        norway,
+        /<span>Overall score<\/span><strong>75\.4<\/strong>/,
+        'headline-eligible countries must retain their published score',
+      );
       assert.doesNotMatch(norway, /id="app"/, 'country page must be raw static HTML, not the SPA shell');
       assert.match(norway, /data-live-country-risk data-country-code="NO" data-country-name="Norway"/);
       assert.match(norway, /Instability is a fast-moving composite/);
@@ -956,6 +961,77 @@ describe('crawlable corpus generator', () => {
       assert.doesNotMatch(uk, /<h1>Uk /);
       const dprk = read(outDir, 'countries/democratic-peoples-republic-of-korea/index.html');
       assert.match(dprk, /<title>North Korea Country Risk and Resilience \| World Monitor<\/title>/);
+
+      const taiwan = read(outDir, 'countries/taiwan/index.html');
+      assert.match(
+        taiwan,
+        /<span>Overall score<\/span><strong>—<\/strong>/,
+        'headline-ineligible countries must not render a numeric score',
+      );
+      assert.match(
+        taiwan,
+        /World Monitor does not publish a resilience score for Taiwan\. Taiwan does not meet the published ranking eligibility criteria\. Input coverage is 41%\./,
+      );
+      assert.doesNotMatch(
+        taiwan,
+        /below the threshold/,
+        'ineligible country copy must not blame ranking exclusion on coverage alone',
+      );
+      const taiwanWebPage = jsonLdObjects(taiwan)
+        .find((entry) => entry['@type'] === 'WebPage');
+      assert.equal(taiwanWebPage?.mainEntity?.value, undefined);
+      assert.equal(taiwanWebPage?.mainEntity?.overallScore, undefined);
+      assert.match(
+        taiwanWebPage?.mainEntity?.description ?? '',
+        /does not meet the published ranking eligibility criteria/,
+      );
+      assert.doesNotMatch(
+        taiwanWebPage?.mainEntity?.description ?? '',
+        /below the ranking threshold|input coverage is below/i,
+      );
+
+      const corpusData = await loadCorpusData({ rootDir: repoRoot });
+      const headlineIneligible = corpusData.countries
+        .filter((country) => country.headlineEligible === false);
+      assert.equal(headlineIneligible.length, corpusData.resilience.totals.greyedOutCount);
+      for (const country of headlineIneligible) {
+        const html = read(outDir, `countries/${country.slug}/index.html`);
+        assert.doesNotMatch(
+          html,
+          /<span>Overall score<\/span><strong>\d/,
+          `${country.name} must not render a numeric resilience score`,
+        );
+        assert.doesNotMatch(
+          html,
+          /below the threshold/,
+          `${country.name} must not explain ranking exclusion as low coverage`,
+        );
+      }
+      const coveredIneligible = headlineIneligible.find((country) => (
+        Number(country.dimensionCoverage) >= 0.65
+      ));
+      assert.ok(
+        coveredIneligible,
+        'snapshot must include an ineligible country with coverage at or above 65%',
+      );
+      const coveredHtml = read(outDir, `countries/${coveredIneligible.slug}/index.html`);
+      const coveredCoverage = `${Math.round(Number(coveredIneligible.dimensionCoverage) * 100)}%`;
+      assert.ok(
+        coveredHtml.includes(
+          `World Monitor does not publish a resilience score for ${coveredIneligible.name}. ${coveredIneligible.name} does not meet the published ranking eligibility criteria. Input coverage is ${coveredCoverage}.`,
+        ),
+        `${coveredIneligible.name} must use neutral eligibility wording and keep coverage as a separate fact`,
+      );
+      const coveredWebPage = jsonLdObjects(coveredHtml)
+        .find((entry) => entry['@type'] === 'WebPage');
+      assert.match(
+        coveredWebPage?.mainEntity?.description ?? '',
+        /does not meet the published ranking eligibility criteria/,
+      );
+      assert.doesNotMatch(
+        coveredWebPage?.mainEntity?.description ?? '',
+        /below the ranking threshold|input coverage is below/i,
+      );
 
       const liveRiskScript = read(outDir, 'tools/live-tools.js');
       assert.match(liveRiskScript, /\/api\/wm-session/);
