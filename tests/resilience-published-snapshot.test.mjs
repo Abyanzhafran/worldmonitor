@@ -68,7 +68,7 @@ describe('published resilience snapshot freshness', () => {
       assert.ok(norway.includes(data.resilience.snapshotNote), 'country page must surface snapshotNote verbatim');
       assert.match(
         norway,
-        new RegExp(`<meta name="lastmod" content="${data.resilience.capturedAt}">`),
+        new RegExp(`<meta name="lastmod" content="${data.lastmod.countries}">`),
       );
       assert.ok(
         norway.includes(`Source: ${data.sources.resilienceSnapshot}.`),
