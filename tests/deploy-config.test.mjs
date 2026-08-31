@@ -46,7 +46,7 @@ const frontendDockerfileSource = readFileSync(resolve(__dirname, '../docker/Dock
 const dockerignoreSource = readFileSync(resolve(__dirname, '../.dockerignore'), 'utf-8');
 const vercelIgnoreSource = readFileSync(resolve(__dirname, '../scripts/vercel-ignore.sh'), 'utf-8');
 const variantDashboardSource = readFileSync(resolve(__dirname, '../src/config/variant-dashboard-html.ts'), 'utf-8');
-const SPA_HTML_CACHE_SOURCE = '/((?!api|mcp|a2a|ask|oauth|assets|blog|docs|countries|chokepoints|crises|tools|research|reference|changelog|sources|use-cases|src|tmp|server|embed|embed\\.html|favico|map-styles|data|textures|pro|sw\\.js|workbox-[a-f0-9]+\\.js|manifest\\.webmanifest|offline\\.html|robots\\.txt|robots\\.www\\.txt|robots\\.variant\\.txt|robots\\.api\\.txt|sitemap\\.xml|schemamap\\.xml|sandbox|llms\\.txt|llms-full\\.txt|llms\\*\\.txt|openapi\\.yaml|openapi\\.json|auth\\.md|pricing\\.md|support\\.md|ai-search\\.md|agents\\.md|developers\\.md|developers/llms\\.txt|mcp-server\\.md|openapi\\.md|sdks\\.md|agent\\.txt|\\.well-known|wm-widget-sandbox\\.html|mcp-grant\\.html|mcp-grant|.*\\.md$).*)';
+const SPA_HTML_CACHE_SOURCE = '/((?!api|mcp|a2a|ask|oauth|assets|blog|docs|countries|chokepoints|crises|tools|research|reference|changelog|sources|use-cases|src|tmp|server|embed|embed\\.html|favico|map-styles|data|textures|pro|sw\\.js|workbox-[a-f0-9]+\\.js|manifest\\.webmanifest|offline\\.html|robots\\.txt|robots\\.www\\.txt|robots\\.variant\\.txt|robots\\.api\\.txt|sitemap\\.xml|schemamap\\.xml|sandbox|llms\\.txt|llms-full\\.txt|llms\\*\\.txt|openapi\\.yaml|openapi\\.json|plugin\\.json|auth\\.md|pricing\\.md|support\\.md|ai-search\\.md|agents\\.md|developers\\.md|developers/llms\\.txt|mcp-server\\.md|openapi\\.md|sdks\\.md|world-monitor\\.md|api-versioning\\.md|agent\\.txt|\\.well-known|wm-widget-sandbox\\.html|mcp-grant\\.html|mcp-grant|.*\\.md$).*)';
 const GLOBAL_SECURITY_HEADER_SOURCE = '/((?!docs|embed|embed\\.html|wm-widget-sandbox\\.html).*)';
 const APP_ROOT_HOST_PATTERN = '^(?:(?:www|tech|finance|commodity|happy|energy)\\.)?worldmonitor\\.app$';
 const WEBMCP_PRODUCTION_HOST_PATTERN = '^(?:www|tech|finance|commodity|happy|energy)\\.worldmonitor\\.app$';
@@ -660,34 +660,61 @@ describe('crawlable content corpus deployment contracts', () => {
       );
       writeFixturePage(
         publicDir,
-        'reference/changelog/page/1/index.html',
-        '<link rel="canonical" href="https://www.worldmonitor.app/reference/changelog/page/1/" /><link rel="next" href="https://www.worldmonitor.app/reference/changelog/page/2/" />'
+        'reference/changelog/index.html',
+        '<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" /><link rel="canonical" href="https://www.worldmonitor.app/reference/changelog/" /><link rel="next" href="https://www.worldmonitor.app/reference/changelog/page/2/" />'
       );
       writeFixturePage(
         publicDir,
         'reference/changelog/page/2/index.html',
-        '<link rel="canonical" href="https://www.worldmonitor.app/reference/changelog/page/2/" /><link rel="prev" href="https://www.worldmonitor.app/reference/changelog/page/1/" />'
+        '<meta name="robots" content="noindex, follow" /><link rel="canonical" href="https://www.worldmonitor.app/reference/changelog/page/2/" /><link rel="prev" href="https://www.worldmonitor.app/reference/changelog/" />'
       );
 
       const pages = discoverContentCorpusPages({ publicDir });
       const locations = pages.map((page) => page.loc).sort();
       assert.deepEqual(locations, [
-        'https://www.worldmonitor.app/reference/changelog/page/1/',
-        'https://www.worldmonitor.app/reference/changelog/page/2/',
+        'https://www.worldmonitor.app/reference/changelog/',
         'https://www.worldmonitor.app/chokepoints/suez-canal/',
         'https://www.worldmonitor.app/crises/ukraine-war/',
         'https://www.worldmonitor.app/countries/ukraine/',
         'https://www.worldmonitor.app/tools/natural-hazard-pulse/',
       ].sort());
+      assert.ok(
+        !locations.some((loc) => loc.includes('/changelog/page/')),
+        'paginated changelog URLs must be omitted from the sitemap inventory',
+      );
 
       writeFixturePage(
         publicDir,
         'reference/changelog/page/3/index.html',
-        '<link rel="canonical" href="https://www.worldmonitor.app/reference/changelog/page/3/" />'
+        '<meta name="robots" content="noindex, follow" /><link rel="canonical" href="https://www.worldmonitor.app/reference/changelog/page/3/" />'
       );
       assert.throws(
         () => discoverContentCorpusPages({ publicDir }),
         /missing rel="(?:prev|next)" pagination link/
+      );
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects noindex changelog pagination whose canonical path does not match the file', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'wm-content-corpus-'));
+    const publicDir = join(tempRoot, 'public');
+    try {
+      writeFixturePage(
+        publicDir,
+        'reference/changelog/index.html',
+        '<meta name="robots" content="index, follow" /><link rel="canonical" href="https://www.worldmonitor.app/reference/changelog/" /><link rel="next" href="https://www.worldmonitor.app/reference/changelog/page/2/" />'
+      );
+      writeFixturePage(
+        publicDir,
+        'reference/changelog/page/2/index.html',
+        '<meta name="robots" content="noindex, follow" /><link rel="canonical" href="https://www.worldmonitor.app/reference/changelog/page/3/" /><link rel="prev" href="https://www.worldmonitor.app/reference/changelog/" />'
+      );
+
+      assert.throws(
+        () => discoverContentCorpusPages({ publicDir }),
+        /canonical \/reference\/changelog\/page\/3\/ does not match raw static path \/reference\/changelog\/page\/2\//
       );
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
@@ -706,16 +733,20 @@ describe('deploy/cache configuration guardrails', () => {
     // path-to-regexp source-pattern parser rejects `(?:...)` in `source` fields
     // (deploy-fail PR #3646 round-2 review).
     //
-    // The header uses `private, no-cache, must-revalidate` rather than the
-    // previous `no-cache, no-store, must-revalidate` (PR #4004 / issue #3993).
-    // `no-store` fully disabled Chrome's bfcache (Lighthouse flagged 7 failure
-    // reasons rooted in this header). `no-cache` without `no-store` still
-    // revalidates on every navigation but lets bfcache restore on back/forward.
-    // `private` keeps shared caches (CDN, corporate proxies) from holding
-    // personalized HTML.
+    // The header uses `public, max-age=0, must-revalidate` for HTML entry
+    // routes (issue #7382): CDN-cacheable with always-revalidate, which cuts
+    // shared-cache TTFB vs `private` while still revalidating on navigation.
+    // `no-store` remains forbidden — it disables Chrome bfcache (#3993/#4004).
     const spaNoCache = getCacheHeaderValue(SPA_HTML_CACHE_SOURCE);
     assert.equal(spaNoCache, 'private, no-cache, must-revalidate');
     assert.ok(!spaNoCache.includes('no-store'), 'HTML must not set no-store — it disables bfcache');
+    for (const route of ['/', '/dashboard', '/dashboard.html']) {
+      assert.equal(
+        effectiveCacheControl(route),
+        'public, max-age=0, must-revalidate',
+        `${route} must keep the public revalidation policy after all matching rules apply`,
+      );
+    }
   });
 
   it('disables caching for the apex /mcp-grant Pro-MCP consent page (both URL forms)', () => {
@@ -770,6 +801,15 @@ describe('deploy/cache configuration guardrails', () => {
     );
     assert.doesNotMatch(viteConfigSource, /globPatterns:\s*\['\*\*\/\*\.\{js,css,html/);
   });
+
+  it('emits public sourcemaps for preview attribution while production stays opt-in (#7382)', () => {
+    assert.match(
+      viteConfigSource,
+      /const emitPublicSourceMaps = process\.env\.WM_EMIT_SOURCEMAPS === '1'[\s\S]*\|\| process\.env\.VERCEL_ENV === 'preview'/,
+    );
+    assert.match(viteConfigSource, /sourcemap:\s*emitPublicSourceMaps/);
+  });
+
 
   it('keeps off-page public assets out of the PWA precache', () => {
     const assertGlobIgnore = (pattern) => {
@@ -953,7 +993,7 @@ describe('welcome landing page routing', () => {
     }
   });
 
-  it('keeps variant crawler-stub canonicals aligned with variant metadata', () => {
+  it('keeps variant social-preview canonicals aligned with variant metadata', () => {
     const variantUrls = getVariantUrls();
     const nonFullUrls = Object.entries(variantUrls).filter(([variant]) => variant !== 'full');
 
@@ -961,38 +1001,26 @@ describe('welcome landing page routing', () => {
       assert.match(
         middlewareSource,
         new RegExp(`\\b${variant}:\\s*\\{[\\s\\S]*?url:\\s*'${escapeRegExp(url)}'`),
-        `${variant} crawler-stub OG/canonical URL must match variant-meta.ts`
+        `${variant} social-preview OG/canonical URL must match variant-meta.ts`
       );
     }
 
-    assert.ok(
-      middlewareSource.includes(`href="${variantUrls.full}"`),
-      'AI crawler body must link the full dashboard canonical',
-    );
     assert.match(
       middlewareSource,
-      /const AI_CRAWLER_VARIANT_LINKS = Object\.values\(VARIANT_HOST_MAP\)/,
-      'AI crawler body links must be derived from the canonical variant host map',
-    );
-    assert.match(
-      middlewareSource,
-      /const og = VARIANT_OG\[variant\]/,
-      'AI crawler body link labels and URLs must come from variant metadata',
+      /const og = VARIANT_OG\[variant as keyof typeof VARIANT_OG\]/,
+      'social-preview metadata must come from the variant registry',
     );
     assert.match(
       middlewareSource,
       /escHtml\(og\.url\)/,
-      'AI crawler body link URLs must stay HTML-escaped',
+      'social-preview URLs must stay HTML-escaped',
     );
     assert.match(
       middlewareSource,
-      /escHtml\(og\.name\)/,
-      'AI crawler body link labels must stay HTML-escaped',
+      /path === '\/' && SOCIAL_PREVIEW_UA\.test\(ua\)/,
+      'only social preview bots may receive the variant root stub',
     );
-    assert.ok(
-      middlewareSource.includes('${AI_CRAWLER_VARIANT_LINKS}'),
-      'AI crawler body must render the generated variant links',
-    );
+    assert.doesNotMatch(middlewareSource, /AI_CRAWLER_UA|AI_CRAWLER_VARIANT_LINKS/);
   });
 
   it('redirects legacy root map-state deep links to /dashboard before welcome routing', () => {
@@ -1115,20 +1143,29 @@ describe('welcome landing page routing', () => {
 
   it('requires revalidation for /dashboard HTML without disabling bfcache', () => {
     const dashboardCache = getCacheHeaderValue('/dashboard');
-    assert.equal(dashboardCache, 'private, no-cache, must-revalidate');
+    assert.equal(dashboardCache, 'public, max-age=0, must-revalidate');
     assert.ok(!dashboardCache.includes('no-store'), 'HTML must not set no-store — it disables bfcache');
   });
 
   it('requires revalidation for root welcome HTML without disabling bfcache', () => {
     const welcomeCache = getCacheHeaderValue('/');
-    assert.equal(welcomeCache, 'private, no-cache, must-revalidate');
+    assert.equal(welcomeCache, 'public, max-age=0, must-revalidate');
     assert.ok(!welcomeCache.includes('no-store'), 'HTML must not set no-store — it disables bfcache');
   });
 
   it('requires revalidation for direct dashboard.html without disabling bfcache', () => {
     const dashboardCache = getCacheHeaderValue('/dashboard.html');
-    assert.equal(dashboardCache, 'private, no-cache, must-revalidate');
+    assert.equal(dashboardCache, 'public, max-age=0, must-revalidate');
     assert.ok(!dashboardCache.includes('no-store'), 'HTML must not set no-store — it disables bfcache');
+  });
+
+  it('redirects bare /api to the docs API reference hub (#7382)', () => {
+    for (const source of ['/api', '/api/']) {
+      const apiRedirect = vercelConfig.redirects.find((r) => r.source === source);
+      assert.ok(apiRedirect, `expected a redirect for ${source}`);
+      assert.equal(apiRedirect.destination, '/docs/api-reference');
+      assert.equal(apiRedirect.permanent, false);
+    }
   });
 
   it('starts installed PWAs on /dashboard, not the public welcome page', () => {
@@ -1884,6 +1921,21 @@ describe('security header guardrails', () => {
     assert.match(webMcpCancellationE2eSource, /window\.addEventListener\('unhandledrejection'/);
     assert.match(webMcpCancellationE2eSource, /lateLeakWindowMs/);
     assert.match(webMcpE2eSource, /headers\['origin-trial'\]/);
+    assert.match(
+      webMcpE2eSource,
+      /const unconfiguredLocalFixture =\s*!productionSmoke && accessSnapshot\.clerk === 'unavailable'/,
+      'clerk_unavailable is only valid on the local unconfigured Clerk fixture',
+    );
+    assert.match(
+      webMcpE2eSource,
+      /production smoke must open the real Clerk sign-in modal/,
+      'production WebMCP smoke must require the real Clerk modal',
+    );
+    assert.match(
+      webMcpE2eSource,
+      /signIn: \{ tool: 'open_sign_in'/,
+      'production smoke must attach open_sign_in modal evidence',
+    );
     assert.match(webMcpE2eSource, /testInfo\.outputPath\(name\)/);
     assert.match(webMcpE2eSource, /writeFile\(path/);
     assert.match(webMcpE2eSource, /testInfo\.attach\(name, \{ path/);
@@ -2858,6 +2910,9 @@ describe('agent readiness: api-catalog + openapi build', () => {
     );
     assert.ok(hrefs.includes('https://worldmonitor.app/support.md'), 'service-meta must advertise support.md');
     assert.ok(hrefs.includes('https://worldmonitor.app/agents.md'), 'service-meta must advertise agents.md (#4952)');
+    assert.ok(hrefs.includes('https://worldmonitor.app/world-monitor.md'), 'service-meta must advertise world-monitor.md');
+    assert.ok(hrefs.includes('https://worldmonitor.app/api-versioning.md'), 'service-meta must advertise api-versioning.md');
+    assert.ok(hrefs.includes('https://worldmonitor.app/plugin.json'), 'service-meta must advertise /plugin.json');
     // The Commerce spec lives outside the root openapi bundle (size budget,
     // #4853) — without this link no advertised descriptor reaches it
     // (post-#4867 review finding); Mintlify serves the raw YAML at this URL.
@@ -2941,6 +2996,20 @@ describe('agent readiness: api-catalog + openapi build', () => {
       SPA_HTML_CACHE_SOURCE.includes('openapi'),
       'HTML cache catch-all must keep excluding openapi.json'
     );
+  });
+
+  it('no dashboard-serving rewrite can shadow the static /plugin.json Agent Plugin manifest', () => {
+    const shadow = vercelConfig.rewrites.find((r) =>
+      r.destination === DASHBOARD_HTML_DESTINATION && sourceToRegExp(r.source).test('/plugin.json')
+    );
+    assert.equal(shadow, undefined, '/plugin.json must serve the static manifest, not the app shell');
+    assert.ok(
+      SPA_HTML_CACHE_SOURCE.includes('plugin\\.json'),
+      'HTML cache catch-all must keep excluding plugin.json'
+    );
+    assert.equal(getHeaderValueForSource('/plugin.json', 'Content-Type'), 'application/json; charset=utf-8');
+    assert.equal(getHeaderValueForSource('/plugin.json', 'Access-Control-Allow-Origin'), '*');
+    assert.equal(effectiveCacheControl('/plugin.json'), 'public, max-age=3600');
   });
 
   it('every web-variant build regenerates inventory facts and OpenAPI', () => {
@@ -3388,7 +3457,7 @@ describe('agent readiness: remaining markdown twins', () => {
   // joined the set with its canonical Link header (#4999): it is
   // sitemap-listed, and without the catch-all exclusion the SPA cache-header
   // catch-all (later in the headers array) overrides its max-age rule.
-  for (const mdPath of ['/pricing.md', '/support.md', '/agents.md', '/ai-search.md']) {
+  for (const mdPath of ['/pricing.md', '/support.md', '/agents.md', '/ai-search.md', '/world-monitor.md', '/api-versioning.md']) {
     it(`serves ${mdPath} as markdown, never the app shell`, () => {
       assert.equal(getHeaderValueForSource(mdPath, 'Content-Type'), 'text/markdown; charset=utf-8');
       assert.equal(getHeaderValueForSource(mdPath, 'Access-Control-Allow-Origin'), '*');
@@ -3480,6 +3549,7 @@ describe('agent readiness: homepage Link headers', () => {
         'rel="http://www.iana.org/assignments/relation/oauth-authorization-server"',
         'rel="mcp-server-card"',
         'rel="agent-skills-index"',
+        'rel="deprecation"',
       ];
       for (const rel of requiredRels) {
         assert.ok(
@@ -3523,6 +3593,11 @@ describe('agent readiness: homepage Link headers', () => {
         linkHeader.value,
         /<\/openapi\.yaml>; rel="service-desc"; type="application\/vnd\.oai\.openapi"/,
         'Link header must still advertise /openapi.yaml as the OpenAPI service-desc'
+      );
+      assert.match(
+        linkHeader.value,
+        /<\/api-versioning\.md>; rel="deprecation"; type="text\/markdown"/,
+        'Link header must advertise the static REST deprecation policy'
       );
 
       // Target URIs must be root-relative (start with /, not http://).
@@ -4015,7 +4090,7 @@ describe('markdown canonical Link headers (#4999)', () => {
   // agents, so they cannot carry a <link rel="canonical">. RFC 6596 allows the
   // HTTP Link header form; without it these are the only indexable URLs with
   // no canonical signal at all.
-  const MD_PAGES = ['/pricing.md', '/support.md', '/ai-search.md', '/developers.md', '/mcp-server.md', '/openapi.md', '/sdks.md', '/auth.md', '/agents.md', '/home.md'];
+  const MD_PAGES = ['/pricing.md', '/support.md', '/ai-search.md', '/developers.md', '/mcp-server.md', '/openapi.md', '/sdks.md', '/auth.md', '/agents.md', '/home.md', '/world-monitor.md', '/api-versioning.md'];
 
   for (const page of MD_PAGES) {
     it(`${page} declares a self-referencing canonical Link header`, () => {
@@ -4031,7 +4106,7 @@ describe('markdown canonical Link headers (#4999)', () => {
     });
   }
 
-  const CORPUS_PAGES = ['/llms.txt', '/llms-full.txt', '/agent.txt', '/openapi.yaml', '/openapi.json', '/schemamap.xml'];
+  const CORPUS_PAGES = ['/llms.txt', '/llms-full.txt', '/agent.txt', '/openapi.yaml', '/openapi.json', '/plugin.json', '/schemamap.xml'];
 
   for (const page of CORPUS_PAGES) {
     it(`${page} declares a www canonical Link header`, () => {
@@ -4494,8 +4569,10 @@ describe('variant-host canonicalization (#6833–#6836)', () => {
     const catchAllHeader = vercelConfig.headers.find((r) => r.source === SPA_HTML_CACHE_SOURCE);
     assert.ok(catchAllHeader, 'expected the pinned SPA cache-header rule');
     assert.equal(getCacheHeaderValue(SPA_HTML_CACHE_SOURCE), 'private, no-cache, must-revalidate');
-    // The enumerated SPA entry routes keep the no-cache policy.
-    for (const path of ['/dashboard', '/stocks', '/stocks/AAPL', '/story']) {
+    // Explicit /dashboard entry uses public revalidate (#7382); other SPA
+    // pretty-URLs still inherit the catch-all private policy.
+    assert.equal(effectiveCacheControl('/dashboard'), 'public, max-age=0, must-revalidate');
+    for (const path of ['/stocks', '/stocks/AAPL', '/story']) {
       assert.equal(effectiveCacheControl(path), 'private, no-cache, must-revalidate', path + ' must stay no-cache');
     }
   });

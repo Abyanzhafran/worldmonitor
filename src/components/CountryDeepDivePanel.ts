@@ -22,7 +22,8 @@ import { PORTS } from '@/config/ports';
 import { getChokepointRoutes } from '@/config/trade-routes';
 import { STRATEGIC_WATERWAYS } from '@/config/geo';
 import { hasPremiumAccess } from '@/services/panel-gating';
-import { getAuthState } from '@/services/auth-state';
+import { getAuthState, subscribeAuthState } from '@/services/auth-state';
+import { onEntitlementChange } from '@/services/entitlements';
 import { trackGateHit } from '@/services/analytics';
 import { fetchBypassOptions, fetchChokepointStatus } from '@/services/supply-chain';
 import { haversineDistanceKm } from '@/services/related-assets';
@@ -49,6 +50,9 @@ import type {
   CountryProduct,
   MultiSectorShockResponse,
   MultiSectorShock,
+  GetCountryVulnerabilitiesResponse,
+  CommodityVulnerability,
+  VulnerabilityInput,
 } from '@/services/supply-chain';
 import { CHINA_DECISION_SIGNAL_GROUP_IDS } from '../../shared/china-decision-signals';
 import { fetchMultiSectorCostShock, HS2_SHORT_LABELS } from '@/services/supply-chain';
@@ -62,6 +66,8 @@ import type { CountryEvidenceBundleInput } from '@/utils/export';
 import { ciiBandForLevel } from './CountryDeepDivePanel-cii';
 import { renderDefenseIndustrialSection } from './CountryDeepDivePanel-defense-industrial';
 import { renderDemographicsCapabilitySection } from './CountryDeepDivePanel-demographics-capability';
+import { renderFiveFactorScorecardSection } from './CountryDeepDivePanel-five-factor-scorecard';
+import { combineAbortSignals } from '@/services/timeout-signal';
 
 const DEPENDENCY_FLAG_LABELS: Record<string, { text: string; cls: string }> = {
   DEPENDENCY_FLAG_SINGLE_SOURCE_CRITICAL:   { text: 'Single Source',   cls: 'cdp-dep-critical' },
@@ -156,6 +162,11 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   private resilienceWidgetRequestId = 0;
   private foodStocksRequestId = 0;
   private demographicsCapabilityRequestId = 0;
+  private fiveFactorScorecardRequestId = 0;
+  private fiveFactorScorecardAbortController: AbortController | null = null;
+  private fiveFactorScorecardAuthUnsubscribe: (() => void) | null = null;
+  private fiveFactorScorecardEntitlementUnsubscribe: (() => void) | null = null;
+  private fiveFactorScorecardBody: HTMLElement | null = null;
   private energyBody: HTMLElement | null = null;
   private maritimeBody: HTMLElement | null = null;
   private tradeExposureBody: HTMLElement | null = null;
@@ -164,6 +175,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   private cachedTradeExposureData: GetCountryChokepointIndexResponse | null = null;
   private cachedSectors: SectorExposureSummary[] = [];
   private productImportsBody: HTMLElement | null = null;
+  private commodityVulnerabilityBody: HTMLElement | null = null;
   private debtBody: HTMLElement | null = null;
   private sanctionsBody: HTMLElement | null = null;
   private comtradeBody: HTMLElement | null = null;
@@ -313,6 +325,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.destroyResilienceWidget();
     this.foodStocksRequestId += 1;
     this.demographicsCapabilityRequestId += 1;
+    this.tearDownFiveFactorScorecard();
     this.tearDownFollowButton();
     if (this.isMaximizedState) {
       this.isMaximizedState = false;
@@ -1047,7 +1060,12 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       wrap.append(legend);
       this.energyBody.append(wrap);
 
-      const src = this.el('div', 'cdp-economic-source', `Data: ${data.mixYear} (OWID)`);
+      // mixYear is 0 when OWID reports no electricity mix for the country
+      // (the proto zero-value stands in for null). Rendering "Data: 0 (OWID)"
+      // reads as a real vintage, so label it unknown instead.
+      const src = this.el('div', 'cdp-economic-source', data.mixYear > 0
+        ? `Data: ${data.mixYear} (OWID)`
+        : 'Data: year unavailable (OWID)');
       this.energyBody.append(src);
     }
 
@@ -2099,6 +2117,125 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.renderProductSelector(data.products);
   }
 
+  public updateCommodityVulnerabilities(data: GetCountryVulnerabilitiesResponse | null): void {
+    if (!this.commodityVulnerabilityBody) return;
+    this.commodityVulnerabilityBody.replaceChildren();
+    if (!data || data.upstreamUnavailable) {
+      this.commodityVulnerabilityBody.append(this.makeEmpty(t('components.supplyVulnerability.unavailable')));
+      return;
+    }
+    if (data.vulnerabilities.length === 0) {
+      this.commodityVulnerabilityBody.append(this.makeEmpty(t('components.supplyVulnerability.noCoverage')));
+      return;
+    }
+
+    const list = this.el('div', 'cdp-vulnerability-list');
+    for (const vulnerability of data.vulnerabilities.slice(0, 10)) {
+      list.append(this.renderCommodityVulnerability(vulnerability));
+    }
+    this.commodityVulnerabilityBody.append(list);
+    const footer = this.el('div', 'cdp-card-footer');
+    footer.append(document.createTextNode(`${t('components.supplyVulnerability.methodology')}: `));
+    const link = this.el('a', 'cdp-vulnerability-methodology', data.methodologyVersion);
+    link.href = '/docs/methodology/supply-vulnerability';
+    link.target = '_blank';
+    link.rel = 'noopener';
+    footer.append(link);
+    this.commodityVulnerabilityBody.append(footer);
+  }
+
+  private renderCommodityVulnerability(vulnerability: CommodityVulnerability): HTMLElement {
+    const row = this.el('details', `cdp-vulnerability-row cdp-vulnerability-${vulnerability.band || 'unknown'}`);
+    const summary = this.el('summary', 'cdp-vulnerability-summary');
+    const identity = this.el('span', 'cdp-vulnerability-commodity', vulnerability.commodity);
+    const score = vulnerability.score == null
+      ? t('components.supplyVulnerability.unknown')
+      : vulnerability.score.toFixed(1);
+    const badge = this.el('span', 'cdp-vulnerability-score', score);
+    badge.dataset.state = vulnerability.state;
+    badge.title = vulnerability.reasons.join(', ');
+    const stateLabel = vulnerability.state === 'ok'
+      ? t('components.supplyVulnerability.stateOk')
+      : vulnerability.state === 'stale_input'
+        ? t('components.supplyVulnerability.stateStale')
+        : t('components.supplyVulnerability.stateInsufficient');
+    const state = this.el('span', 'cdp-vulnerability-state', stateLabel);
+    state.dataset.state = vulnerability.state;
+    summary.append(identity, state, badge);
+    row.append(summary);
+
+    const components = this.el('div', 'cdp-vulnerability-components');
+    components.append(
+      this.vulnerabilityComponent(
+        t('components.supplyVulnerability.concentration'),
+        vulnerability.components?.sourceConcentration?.value,
+        vulnerability.components?.sourceConcentration?.coverage || '',
+      ),
+      this.vulnerabilityComponent(
+        t('components.supplyVulnerability.transit'),
+        vulnerability.components?.transitExposure?.value,
+        vulnerability.components?.transitExposure?.chokepoints
+          .map((entry) => entry.name)
+          .slice(0, 2)
+          .join(', ') || '',
+      ),
+      this.vulnerabilityComponent(
+        t('components.supplyVulnerability.buffer'),
+        vulnerability.components?.buffer?.vulnerability,
+        vulnerability.components?.buffer?.state || '',
+      ),
+    );
+    row.append(components);
+
+    const reasons = [...vulnerability.coverage, ...vulnerability.reasons];
+    if (reasons.length > 0) {
+      row.append(this.el('div', 'cdp-vulnerability-reasons', reasons.join(' · ')));
+    }
+
+    const sources = this.collectVulnerabilitySources(vulnerability);
+    if (sources.length > 0) {
+      const sourceList = this.el('div', 'cdp-vulnerability-sources');
+      sourceList.append(this.el('span', 'cdp-vulnerability-source-label', `${t('components.supplyVulnerability.sources')}: `));
+      for (const [index, source] of sources.entries()) {
+        const link = this.el('a', 'cdp-vulnerability-source', source.sourceName || source.sourceKey);
+        link.href = sanitizeUrl(source.sourceUrl);
+        link.target = '_blank';
+        link.rel = 'noopener';
+        sourceList.append(link);
+        if (index < sources.length - 1) sourceList.append(document.createTextNode(' · '));
+      }
+      row.append(sourceList);
+    }
+    return row;
+  }
+
+  private vulnerabilityComponent(label: string, value: number | undefined, detail: string): HTMLElement {
+    const item = this.el('div', 'cdp-vulnerability-component');
+    item.append(
+      this.el('span', 'cdp-vulnerability-component-label', label),
+      this.el(
+        'strong',
+        'cdp-vulnerability-component-value',
+        value == null ? t('components.supplyVulnerability.unknown') : `${Math.round(value * 100)}%`,
+      ),
+    );
+    if (detail) item.append(this.el('span', 'cdp-vulnerability-component-detail', detail.replace(/_/g, ' ')));
+    return item;
+  }
+
+  private collectVulnerabilitySources(vulnerability: CommodityVulnerability): VulnerabilityInput[] {
+    const inputs = [
+      ...(vulnerability.components?.sourceConcentration?.inputs || []),
+      ...(vulnerability.components?.transitExposure?.chokepoints.flatMap((entry) => entry.inputs) || []),
+      ...(vulnerability.components?.buffer?.inputs || []),
+    ];
+    const unique = new Map<string, VulnerabilityInput>();
+    for (const input of inputs) {
+      if (input.sourceUrl && !unique.has(input.sourceUrl)) unique.set(input.sourceUrl, input);
+    }
+    return [...unique.values()].slice(0, 4);
+  }
+
   private renderProductSelector(products: CountryProduct[]): void {
     if (!this.productImportsBody) return;
     const wrap = this.el('div', 'cdp-product-selector');
@@ -2639,6 +2776,12 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       demographicsBody.append(this.makeProLocked(t('countryBrief.demographicsCapability.proLocked')));
     }
 
+    const [fiveFactorScorecardCard, fiveFactorScorecardBody] = this.sectionCard(
+      t('countryBrief.fiveFactorScorecard.title'),
+      t('countryBrief.fiveFactorScorecard.help'),
+    );
+    this.mountFiveFactorScorecard(code, fiveFactorScorecardBody);
+
     const [maritimeCard, maritimeBody] = this.sectionCard('Maritime Activity', 'Port-level tanker call volume and import/export cargo weight over 30 days. ⚠ badge = port running below 50% of its 30-day baseline. Source: IMF PortWatch.');
     this.maritimeBody = maritimeBody;
     maritimeBody.append(this.makeLoading('Loading port activity\u2026'));
@@ -2659,6 +2802,13 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     const [productImportsCard, productImportsCardBody] = this.sectionCard('Product Imports', 'Top imported products by HS4 code with supplier breakdown and concentration risk.');
     this.productImportsBody = productImportsCardBody;
     productImportsCardBody.append(isPro ? this.makeLoading('Loading product data\u2026') : this.makeProLocked('Upgrade to PRO for product import data'));
+
+    const [commodityVulnerabilityCard, commodityVulnerabilityCardBody] = this.sectionCard(
+      t('components.supplyVulnerability.title'),
+      t('components.supplyVulnerability.help'),
+    );
+    this.commodityVulnerabilityBody = commodityVulnerabilityCardBody;
+    commodityVulnerabilityCardBody.append(this.makeLoading(t('components.supplyVulnerability.loading')));
 
     const [debtCard, debtBody] = this.sectionCard('National Debt', 'Government debt-to-GDP ratio, total debt, and year-over-year growth.');
     this.debtBody = debtBody;
@@ -2715,7 +2865,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     marketsBody.append(this.makeLoading(t('countryBrief.loadingMarkets')));
     briefBody.append(this.makeLoading(t('countryBrief.generatingBrief')));
 
-    bodyGrid.append(briefCard, ...(chinaSummaryCard ? [chinaSummaryCard] : []), factsExpanded, demographicsCard, foodStocksCard, energyCard, maritimeCard, tradeCard, costShockCalcCard, productImportsCard, debtCard, sanctionsCard, comtradeCard, tariffCard, signalsCard, timelineCard, newsCard, militaryCard, infraCard, economicCard, housingCard, marketsCard);
+    bodyGrid.append(briefCard, ...(chinaSummaryCard ? [chinaSummaryCard] : []), factsExpanded, fiveFactorScorecardCard, demographicsCard, foodStocksCard, energyCard, maritimeCard, tradeCard, commodityVulnerabilityCard, costShockCalcCard, productImportsCard, debtCard, sanctionsCard, comtradeCard, tariffCard, signalsCard, timelineCard, newsCard, militaryCard, infraCard, economicCard, housingCard, marketsCard);
     shell.append(header, summaryGrid, bodyGrid);
     this.content.append(shell);
   }
@@ -2836,6 +2986,78 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
         });
       }
       if (stillCurrent()) body.replaceChildren(this.makeEmpty(t('countryBrief.demographicsCapability.unavailable')));
+    }
+  }
+
+  private mountFiveFactorScorecard(code: string, body: HTMLElement): void {
+    this.tearDownFiveFactorScorecard();
+    this.fiveFactorScorecardBody = body;
+    let lastAccess: boolean | null = null;
+    const syncAccess = (): void => {
+      if (this.currentCode !== code || this.fiveFactorScorecardBody !== body) return;
+      const hasAccess = hasPremiumAccess(getAuthState());
+      if (hasAccess === lastAccess) return;
+      lastAccess = hasAccess;
+      this.fiveFactorScorecardRequestId += 1;
+      this.fiveFactorScorecardAbortController?.abort();
+      this.fiveFactorScorecardAbortController = null;
+      if (!hasAccess) {
+        body.replaceChildren(this.makeProLocked(t('countryBrief.fiveFactorScorecard.proLocked')));
+        return;
+      }
+      body.replaceChildren(this.makeLoading(t('countryBrief.fiveFactorScorecard.loading')));
+      const accessController = new AbortController();
+      this.fiveFactorScorecardAbortController = accessController;
+      void this.renderFiveFactorScorecard(code, body, accessController.signal);
+    };
+    this.fiveFactorScorecardAuthUnsubscribe = subscribeAuthState(syncAccess);
+    this.fiveFactorScorecardEntitlementUnsubscribe = onEntitlementChange(syncAccess);
+    syncAccess();
+  }
+
+  private tearDownFiveFactorScorecard(): void {
+    this.fiveFactorScorecardRequestId += 1;
+    this.fiveFactorScorecardAbortController?.abort();
+    this.fiveFactorScorecardAbortController = null;
+    this.fiveFactorScorecardAuthUnsubscribe?.();
+    this.fiveFactorScorecardAuthUnsubscribe = null;
+    this.fiveFactorScorecardEntitlementUnsubscribe?.();
+    this.fiveFactorScorecardEntitlementUnsubscribe = null;
+    this.fiveFactorScorecardBody = null;
+  }
+
+  private async renderFiveFactorScorecard(code: string, body: HTMLElement, accessSignal: AbortSignal): Promise<void> {
+    const requestId = ++this.fiveFactorScorecardRequestId;
+    const stillCurrent = (): boolean => requestId === this.fiveFactorScorecardRequestId
+      && this.currentCode === code
+      && this.fiveFactorScorecardBody === body;
+    const signal = this.signal;
+    try {
+      if (typeof location === 'undefined') {
+        if (stillCurrent()) body.replaceChildren(this.makeEmpty(t('countryBrief.fiveFactorScorecard.unavailable')));
+        return;
+      }
+      const { getFiveFactorScorecard } = await import('@/services/scorecard');
+      if (!stillCurrent() || signal.aborted || accessSignal.aborted) return;
+      const response = await getFiveFactorScorecard(code, combineAbortSignals([signal, accessSignal]));
+      if (!stillCurrent() || !hasPremiumAccess(getAuthState())) return;
+      body.replaceChildren(renderFiveFactorScorecardSection(response, t));
+    } catch (error) {
+      console.warn('[CountryDeepDivePanel] five-factor scorecard load failed', error);
+      const cancelled = signal.aborted || accessSignal.aborted || !stillCurrent();
+      if (!cancelled) {
+        this.captureCountryDeepDiveLoadFailure(error, code, {
+          message: 'Five-factor scorecard load failed',
+          widget: 'five-factor-scorecard',
+        });
+      }
+      if (stillCurrent() && hasPremiumAccess(getAuthState())) {
+        body.replaceChildren(this.makeEmpty(t('countryBrief.fiveFactorScorecard.unavailable')));
+      }
+    } finally {
+      if (this.fiveFactorScorecardAbortController?.signal === accessSignal) {
+        this.fiveFactorScorecardAbortController = null;
+      }
     }
   }
 
@@ -2961,6 +3183,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   }
 
   private resetPanelContent(): void {
+    this.tearDownFiveFactorScorecard();
     this.destroyResilienceWidget();
     this.tearDownFollowButton();
     this.selectedSectorHs2 = null;
@@ -2977,6 +3200,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.tradeExposureBody = null;
     this.chinaSummaryBody = null;
     this.productImportsBody = null;
+    this.commodityVulnerabilityBody = null;
     this.debtBody = null;
     this.housingBody = null;
     this.sanctionsBody = null;

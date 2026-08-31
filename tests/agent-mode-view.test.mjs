@@ -75,6 +75,7 @@ describe('agent-mode view (/?mode=agent)', () => {
       ['application/json', 'https://www.worldmonitor.app/?mode=agent'],
       ['text/plain', '/llms.txt'],
       ['text/markdown', '/index.md'],
+      ['text/markdown', '/world-monitor.md'],
     ];
     for (const path of ['pro-test/welcome.html', 'public/pro/welcome.html']) {
       const html = readFileSync(join(ROOT, path), 'utf-8');
@@ -168,6 +169,7 @@ describe('agent-mode view (/?mode=agent)', () => {
   it('every discovery URL it advertises resolves to a tracked file or a live rewrite', () => {
     // Static, repo-tracked surfaces — a typo here ships a dead link to agents.
     const trackedPaths = {
+      'https://worldmonitor.app/plugin.json': 'public/plugin.json',
       'https://worldmonitor.app/.well-known/agent-skills/index.json':
         'public/.well-known/agent-skills/index.json',
       'https://worldmonitor.app/.well-known/api-catalog': 'public/.well-known/api-catalog',

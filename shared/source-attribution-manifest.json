@@ -571,6 +571,9 @@
       "status": "excluded",
       "references": [
         {
+          "path": "api/user/passkey-offer.ts"
+        },
+        {
           "path": "server/auth-session.ts"
         }
       ]
@@ -1325,6 +1328,12 @@
         },
         {
           "path": "server/worldmonitor/economic/v1/list-world-bank-indicators.ts"
+        },
+        {
+          "path": "server/worldmonitor/resilience/v1/_dimension-scorers.ts"
+        },
+        {
+          "path": "server/worldmonitor/resilience/v1/_indicator-source-policy.ts"
         }
       ]
     },
@@ -2498,6 +2507,9 @@
         },
         {
           "path": "scripts/seed-recovery-reexport-share.mjs"
+        },
+        {
+          "path": "scripts/seed-supply-vulnerability.mjs"
         },
         {
           "path": "scripts/seed-trade-flows.mjs"
@@ -5745,6 +5757,9 @@
           "path": "src/components/LiveNewsPanel.ts"
         },
         {
+          "path": "src/services/desktop-runtime.ts"
+        },
+        {
           "path": "src/services/wm-session.ts"
         }
       ]
@@ -6841,6 +6856,12 @@
       "references": [
         {
           "path": "scripts/seed-low-carbon-generation.mjs"
+        },
+        {
+          "path": "server/worldmonitor/resilience/v1/_dimension-scorers.ts"
+        },
+        {
+          "path": "server/worldmonitor/resilience/v1/_indicator-source-policy.ts"
         }
       ]
     },
@@ -7305,13 +7326,16 @@
     },
     {
       "host": "query.wikidata.org",
-      "provider": "query.wikidata.org",
+      "provider": "Wikidata",
       "kind": "structured",
       "observed": true,
-      "license": "Provider terms for this upstream API/dataset; verify before redistribution",
-      "attribution": "Credit query.wikidata.org and link to the original upstream API/dataset.",
-      "status": "terms-review",
+      "license": "Creative Commons CC0 1.0 Universal",
+      "attribution": "Wikidata structured data is CC0. Credit Wikidata and link each reused entity identifier as a best practice.",
+      "status": "reviewed",
       "references": [
+        {
+          "path": "scripts/freeze-resilience-ranking.mjs"
+        },
         {
           "path": "server/worldmonitor/intelligence/v1/get-country-facts.ts"
         }
@@ -7370,6 +7394,20 @@
         },
         {
           "path": "server/worldmonitor/market/v1/get-country-stock-index.ts"
+        }
+      ]
+    },
+    {
+      "host": "radar.cloudflare.com",
+      "provider": "radar.cloudflare.com",
+      "kind": "structured",
+      "observed": true,
+      "license": "Provider terms for this upstream API/dataset; verify before redistribution",
+      "attribution": "Credit radar.cloudflare.com and link to the original upstream API/dataset.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/resilience/v1/_indicator-source-policy.ts"
         }
       ]
     },
@@ -7492,6 +7530,20 @@
         },
         {
           "path": "src/services/story-share.ts"
+        }
+      ]
+    },
+    {
+      "host": "registry.modelcontextprotocol.io",
+      "provider": "registry.modelcontextprotocol.io",
+      "kind": "structured",
+      "observed": true,
+      "license": "Excluded: first-party, control-plane, UI, or rendering transport",
+      "attribution": "Excluded from the external-provider count: not an ingested upstream dataset.",
+      "status": "excluded",
+      "references": [
+        {
+          "path": "scripts/publish-mcp-registry.mjs"
         }
       ]
     },
@@ -8652,6 +8704,9 @@
       "status": "excluded",
       "references": [
         {
+          "path": "api/telegram-feed.js"
+        },
+        {
           "path": "scripts/ais-relay.cjs"
         },
         {
@@ -8659,6 +8714,9 @@
         },
         {
           "path": "src/services/story-share.ts"
+        },
+        {
+          "path": "src/services/telegram-intel.ts"
         }
       ]
     },
@@ -9514,6 +9572,20 @@
       ]
     },
     {
+      "host": "uis.unesco.org",
+      "provider": "uis.unesco.org",
+      "kind": "structured",
+      "observed": true,
+      "license": "Provider terms for this upstream API/dataset; verify before redistribution",
+      "attribution": "Credit uis.unesco.org and link to the original upstream API/dataset.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/resilience/v1/_indicator-source-policy.ts"
+        }
+      ]
+    },
+    {
       "host": "ukrinform.net",
       "provider": "ukrinform.net",
       "kind": "feed",
@@ -10028,7 +10100,13 @@
           "path": "scripts/notification-relay.cjs"
         },
         {
+          "path": "scripts/publish-mcp-registry.mjs"
+        },
+        {
           "path": "scripts/seed-digest-notifications.mjs"
+        },
+        {
+          "path": "scripts/seed-five-factor-scorecard.mjs"
         },
         {
           "path": "scripts/seed-hyperliquid-flow.mjs"
@@ -10111,6 +10189,9 @@
       "references": [
         {
           "path": "api/docs-mcp.ts"
+        },
+        {
+          "path": "src/config/docs-locale-seo.ts"
         }
       ]
     },
@@ -10569,6 +10650,20 @@
       "references": [
         {
           "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
+      "host": "www.bgs.ac.uk",
+      "provider": "British Geological Survey World Mineral Statistics",
+      "kind": "structured",
+      "observed": true,
+      "license": "BGS mineral statistics terms; attribution required; redistribution restricted",
+      "attribution": "British Geological Survey (BGS) World Mineral Production; credit BGS and link to https://www.bgs.ac.uk/mineralsuk/statistics/world-mineral-statistics/.",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/seed-supply-vulnerability.mjs"
         }
       ]
     },
@@ -13067,6 +13162,9 @@
       "references": [
         {
           "path": "scripts/seed-mineral-production.mjs"
+        },
+        {
+          "path": "scripts/seed-supply-vulnerability.mjs"
         }
       ]
     },
@@ -13251,6 +13349,20 @@
       "references": [
         {
           "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
+      "host": "www.statcan.gc.ca",
+      "provider": "www.statcan.gc.ca",
+      "kind": "structured",
+      "observed": true,
+      "license": "Provider terms for this upstream API/dataset; verify before redistribution",
+      "attribution": "Credit www.statcan.gc.ca and link to the original upstream API/dataset.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/resilience/v1/_indicator-source-policy.ts"
         }
       ]
     },
@@ -14022,6 +14134,20 @@
       ]
     },
     {
+      "host": "www.worldbank.org",
+      "provider": "www.worldbank.org",
+      "kind": "structured",
+      "observed": true,
+      "license": "Provider terms for this upstream API/dataset; verify before redistribution",
+      "attribution": "Credit www.worldbank.org and link to the original upstream API/dataset.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/resilience/v1/_indicator-source-policy.ts"
+        }
+      ]
+    },
+    {
       "host": "www.worldmonitor.app",
       "provider": "World Monitor web app",
       "kind": "structured",
@@ -14049,6 +14175,9 @@
           "path": "scripts/build-crawlable-corpus.mjs"
         },
         {
+          "path": "scripts/build-openapi-json.mjs"
+        },
+        {
           "path": "scripts/build-research-reports.mjs"
         },
         {
@@ -14062,6 +14191,12 @@
         },
         {
           "path": "scripts/discover-content-corpus-pages.mjs"
+        },
+        {
+          "path": "scripts/freeze-crawlable-live-pulse.mjs"
+        },
+        {
+          "path": "scripts/freeze-resilience-ranking.mjs"
         },
         {
           "path": "scripts/generate-sandbox-fixtures.mjs"
@@ -14085,7 +14220,13 @@
           "path": "scripts/verify-sitemaps.mjs"
         },
         {
+          "path": "server/_shared/deprecation-policy.ts"
+        },
+        {
           "path": "src/components/RuntimeConfigPanel.ts"
+        },
+        {
+          "path": "src/config/docs-locale-seo.ts"
         },
         {
           "path": "src/config/variant-meta.ts"
@@ -14254,6 +14395,12 @@
       "references": [
         {
           "path": "scripts/lib/statcan-wds.mjs"
+        },
+        {
+          "path": "server/worldmonitor/resilience/v1/_canada-national-overlay.ts"
+        },
+        {
+          "path": "server/worldmonitor/resilience/v1/_indicator-source-policy.ts"
         }
       ]
     },

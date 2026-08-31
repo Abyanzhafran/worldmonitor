@@ -230,6 +230,68 @@
       "manufacturingShare": "Manufacturing employment",
       "source": "Sources: {{sources}}.",
       "retained": "{{stage}} data retained from the last successful refresh."
+    },
+    "fiveFactorScorecard": {
+      "title": "五维韧性记分卡",
+      "help": "食品、能源、人口、技术和国防领域的 v1 冻结证据得分。展开行以查看输入项、数据来源及缺失数据原因。",
+      "loading": "正在加载五维记分卡…",
+      "unavailable": "五维记分卡不可用。",
+      "proLocked": "升级至 PRO 以获取五维韧性记分卡",
+      "insufficient": "数据不足",
+      "notAvailable": "不可用",
+      "noEvidence": "该支柱暂无可用证据。",
+      "score": "{{score}}/5",
+      "coverage": "{{coverage}}% 覆盖率",
+      "methodologyVersion": "方法论 v{{version}}",
+      "methodologyLink": "查看方法论",
+      "pillars": {
+        "food": "粮食",
+        "energy": "能源",
+        "demographics": "人口",
+        "technology": "技术",
+        "defense": "国防"
+      },
+      "reasons": {
+        "source-unavailable": "数据源不可用",
+        "country-unavailable": "国家数据不可用",
+        "invalid-value": "源数据值无效",
+        "stale": "证据已过期",
+        "coverage-below-floor": "覆盖率低于评分下限",
+        "required-group-missing": "缺少必需的证据组",
+        "missing-population": "人口数据不可用",
+        "redistribution-blocked": "源数据不允许再分发",
+        "pillar-unavailable": "支柱数据不可用"
+      },
+      "inputs": {
+        "population": "Population",
+        "food_productionBalance": "生产平衡",
+        "food_stocksToUse": "可用库存",
+        "food_waterSecurity": "水安全",
+        "food_importDiversity": "进口多样性",
+        "energy_productionBalance": "生产平衡",
+        "energy_lowCarbonShare": "低碳能源占比",
+        "energy_gridEfficiency": "电网效率",
+        "demographics_totalDependency": "总抚养比",
+        "demographics_oldAgeDependency": "老年抚养比",
+        "demographics_workingAgeProjection": "劳动年龄人口预测",
+        "demographics_tertiaryEnrollment": "高等教育入学率",
+        "demographics_researchersPerMillion": "每百万人口研究人员数",
+        "demographics_stemGraduateShare": "STEM毕业生占比",
+        "demographics_trainedIndustrialShare": "受过培训产业劳动力占比",
+        "demographics_manufacturingEmploymentShare": "制造业就业占比",
+        "technology_internetUse": "互联网使用",
+        "technology_mobileSubscriptions": "移动用户数",
+        "technology_fixedBroadband": "固定宽带",
+        "technology_rdSpend": "研发支出",
+        "technology_researchersPerMillion": "每百万人口研究人员数",
+        "technology_stemGraduateShare": "STEM毕业生占比",
+        "technology_electricityAccess": "电力普及率",
+        "defense_expenditureUsd": "军事支出",
+        "defense_expenditurePctGdp": "军费负担",
+        "defense_personnel": "武装部队人员",
+        "defense_industrialBalance": "国防工业平衡",
+        "defense_supplierDiversity": "武器供应商多样性"
+      }
     }
   },
   "header": {
@@ -1749,6 +1811,16 @@
       "loading": "正在连接Telegram中继...",
       "empty": "暂无消息",
       "disabled": "Telegram中继未激活",
+      "watchlistPlaceholder": "通过 @username 添加公开频道",
+      "resolving": "正在查找频道...",
+      "invalidUsername": "请使用公开的 Telegram @username",
+      "resolveFailed": "找不到频道",
+      "watchlistLimit": "最多可关注 {{count}} 个自定义频道",
+      "previewMembers": "{{count}} 位成员",
+      "addChannel": "添加频道",
+      "added": "已添加",
+      "remove": "移除",
+      "custom": "自定义",
       "filterAll": "全部",
       "filterBreaking": "突发",
       "filterConflict": "冲突",
@@ -1960,6 +2032,22 @@
       "metals": {
         "gold": "Gold",
         "silver": "Silver"
+      },
+      "divergence": {
+        "compositeValue": "物理压力指数：{{value}} / 100",
+        "fiveDayTrend": "五个交易日溢价趋势",
+        "regimes": {
+          "normal": "正常",
+          "elevated": "升高",
+          "stressed": "受压",
+          "extreme": "极端"
+        },
+        "states": {
+          "insufficientHistory": "预热中：{{count}} / {{required}} 个交易点",
+          "staleInput": "物理基准数据已过期",
+          "missingInput": "分歧信号不可用"
+        },
+        "twentyDayTrend": "二十个交易日溢价趋势"
       }
     },
     "crypto": {
@@ -2111,6 +2199,25 @@
         "failedToLoad": "加载失败"
       },
       "cissStale": "欧洲中央银行尚未发布新数值 — 此读数可能已过期。"
+    },
+    "supplyVulnerability": {
+      "title": "大宗商品脆弱性",
+      "help": "基于供应商集中度、海运通道和可用战略缓冲评估各国分商品风险敞口。",
+      "loading": "正在加载大宗商品脆弱性…",
+      "unavailable": "大宗商品脆弱性数据不可用",
+      "noCoverage": "该国家的证据不足",
+      "unknown": "未知",
+      "concentration": "集中度",
+      "transit": "运输通道",
+      "buffer": "战略缓冲",
+      "sources": "来源",
+      "methodology": "方法论",
+      "hormuzTitle": "大宗商品依赖",
+      "dependentCountries": "依赖国家",
+      "dependentCommodities": "依赖商品",
+      "stateOk": "当前",
+      "stateStale": "输入已过期",
+      "stateInsufficient": "数据不足"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>霍尔木兹贸易追踪器</strong> 通过全球最关键的石油咽喉要道霍尔木兹海峡的AIS船舶实时追踪。监控油轮数量、中断事件和每周流量变化。全球约20%的石油供应每天经此通过。",
@@ -2646,6 +2753,18 @@
       "rubBase": "俄罗斯央行 — 每 1 单位卢布",
       "rubPerUnit": "每单位卢布",
       "sourceCbr": "来源：俄罗斯央行"
+    },
+    "passkeyOffer": {
+      "title": "保存通行密钥？",
+      "body": "下次登录时使用指纹、面容或设备PIN即可——无需记住密码。",
+      "accept": "保存通行密钥",
+      "dismiss": "暂不保存",
+      "close": "关闭",
+      "announce": "保存通行密钥以便下次更快登录。",
+      "busy": "正在等待设备响应…",
+      "succeeded": "通行密钥已保存。下次登录时可以使用。",
+      "retryable": "操作未完成。您可以重试。",
+      "failed": "无法在此设备上保存通行密钥。"
     }
   },
   "popups": {
@@ -3427,7 +3546,8 @@
   "auth": {
     "signIn": "登录",
     "createAccount": "创建账户",
-    "settings": "设置"
+    "settings": "设置",
+    "passkeyOffer": {}
   },
   "mcp": {
     "connectPanel": "连接 MCP",

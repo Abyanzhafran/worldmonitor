@@ -390,6 +390,9 @@
     "demographicsCapability": {
       "title": "Demographics & Workforce"
     },
+    "fiveFactorScorecard": {
+      "title": "Five-Factor Resilience Scorecard"
+    },
     "defenseIndustrial": {
       "title": "Defense Industrial Base",
       "expenditure": "Military spend",
@@ -799,6 +802,12 @@
     },
     "webcams": {
       "previewStatus": "Live preview"
+    },
+    "passkeyOffer": {
+      "title": "Save a passkey?"
+    },
+    "supplyVulnerability": {
+      "title": "Commodity Vulnerability"
     }
   },
   "modals": {

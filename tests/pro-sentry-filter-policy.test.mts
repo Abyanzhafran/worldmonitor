@@ -148,6 +148,40 @@ describe('marketing ignoreErrors', () => {
     assert.equal(isIgnored('ReferenceError', "Can't find variable: zaloJSV2Extended"), false);
   });
 
+  it('drops the injected bare-jQuery ReferenceError (WORLDMONITOR-11F)', () => {
+    // Verbatim production value. Firefox 148 / Linux, single frame on the
+    // prerendered welcome document, `sentry.javascript.react` with a null
+    // release — a marketing-bundle event, so the dashboard's own
+    // `/jQuery is not defined/` entry never ran on it.
+    assert.equal(isIgnored('ReferenceError', 'jQuery is not defined'), true);
+  });
+
+  // Positive control for the anchors. `ignoreErrors` is frame-blind, so an
+  // unanchored copy of the dashboard's pattern would also swallow a
+  // first-party message that merely contains the phrase. Drop the `^`/`$` and
+  // this goes red.
+  it('keeps a first-party message that merely contains the jQuery phrase', () => {
+    assert.equal(
+      isIgnored('Error', 'Checkout aborted: jQuery is not defined on the host page'),
+      false,
+    );
+    assert.equal(isIgnored('ReferenceError', 'jQueryUI is not defined'), false);
+  });
+
+  it('pins the marketing surface as bare-jQuery-free, which is what licenses the rule', () => {
+    // The WORLDMONITOR-11F suppression is licensed by the identifier, not by
+    // the frame: a `ReferenceError: jQuery is not defined` can only come from
+    // code that reads `jQuery` as a bare identifier, and no first-party source
+    // on this surface holds one. If that changes, the entry must move behind a
+    // frame gate — fail loudly here rather than silently hide a real bug.
+    const offenders = marketingFirstPartySources()
+      .filter((f) => !f.rel.includes('sentry-filter-policy'))
+      .filter((f) => /\bjQuery\b/.test(f.code))
+      .map((f) => f.rel);
+    assert.deepEqual(offenders, [],
+      'the marketing surface now references jQuery — re-derive the WORLDMONITOR-11F rule');
+  });
+
   // Positive control: the array must not have grown a pattern broad enough to
   // swallow an ordinary marketing-bundle bug.
   it('keeps a genuine first-party error message', () => {
@@ -357,6 +391,52 @@ describe('marketing ignoreErrors — in-app-browser injected globals (2026-08-27
 
   it('keeps the unprefixed WKWebView word so a real message still reports', () => {
     assert.equal(isIgnored('Error', 'WKWebView failed to render our checkout frame'), false);
+  });
+
+  it("drops Android WebView's Java-bridge teardown error (WORLDMONITOR-117)", () => {
+    // Verbatim production value: Instagram 415 on Android 13, fired from a
+    // `beforeunload` listener, with only infra frames (the `/pro/assets/
+    // sentry-*.js` chunk and two `<anonymous>`) — so `marketingBeforeSend`'s
+    // frame gates have nothing to act on and this must be message-level.
+    assert.equal(
+      isIgnored('Error', 'Error invoking enableButtonsClickedMetaDataLogging: Java object is gone'),
+      true,
+    );
+    // The method name in the sentence is whatever bridge the host app called,
+    // so the pattern keys on Chromium's fixed suffix, not the one observed
+    // method.
+    assert.equal(isIgnored('Error', 'Error invoking getDeviceInfo: Java object is gone'), true);
+  });
+
+  it('drops the envelope with a non-ASCII bridge method name', () => {
+    // Java identifiers are not ASCII-only — `@JavascriptInterface
+    // obtenirDonnées()` is legal and Chromium emits the same sentence for it.
+    // An `[\w$]+` slot silently misses these because JavaScript's `\w` is
+    // ASCII-only, which is what these controls exist to catch (PR #7356
+    // review).
+    assert.equal(isIgnored('Error', 'Error invoking obtenirDonnées: Java object is gone'), true);
+    assert.equal(isIgnored('Error', 'Error invoking 获取设备信息: Java object is gone'), true);
+    assert.equal(isIgnored('Error', 'Error invoking процесс: Java object is gone'), true);
+  });
+
+  it('keeps a first-party message that merely CONTAINS the phrase', () => {
+    // The control that matters, and the one an unanchored `/Java object is
+    // gone/` fails: `ignoreErrors` is frame-blind, so a substring pattern drops
+    // this even with a `/pro/assets/*.js` frame on the stack. Changing a word
+    // the pattern requires (`gateway` for `object`) does NOT exercise this —
+    // that control passes against the unanchored pattern too, so it can never
+    // fail (PR #7354 review).
+    assert.equal(isIgnored('Error', 'Our Java object is gone'), false);
+    assert.equal(isIgnored('Error', 'Session expired: Java object is gone'), false);
+    assert.equal(
+      isIgnored('Error', 'Error invoking foo: Java object is gone (retrying)'),
+      false,
+    );
+  });
+
+  it('keeps other Java-flavoured messages so a real one still reports', () => {
+    assert.equal(isIgnored('Error', 'Java object is missing'), false);
+    assert.equal(isIgnored('Error', 'Our Java gateway is gone'), false);
   });
 });
 

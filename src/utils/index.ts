@@ -136,15 +136,17 @@ export function loadFromStorage<T>(key: string, defaultValue: T): T {
   return defaultValue;
 }
 
-export function saveToStorage<T>(key: string, value: T): void {
+export function saveToStorage<T>(key: string, value: T): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch (e) {
     if (isQuotaError(e)) {
       markStorageQuotaExceeded();
     } else {
       console.warn(`Failed to save ${key} to storage:`, e);
     }
+    return false;
   }
 }
 
@@ -189,7 +191,8 @@ export function shuffle<T>(arr: T[]): T[] {
 }
 
 export { proxyUrl, fetchWithProxy, hasNoStoreCacheDirective, rssProxyUrl } from './proxy';
-export { buildMapUrl, parseMapUrlState } from './urlState';
+export { buildMapUrl, parseMapUrlState, readDashboardSearchQuery } from './urlState';
+export { DASHBOARD_SEARCH_QUERY_MAX_CHARS } from './urlState';
 export { withTimeout, TimeoutError } from './with-timeout';
 export type { ParsedMapUrlState } from './urlState';
 export { CircuitBreaker, createCircuitBreaker, getCircuitBreakerStatus, getCircuitBreakerCooldownInfo } from './circuit-breaker';

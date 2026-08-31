@@ -128,6 +128,7 @@
     <script async defer src="https://abacus.worldmonitor.app/script.js" data-website-id="e8800335-c853-46a8-8497-c993ed2f58bc" data-domains="worldmonitor.app,www.worldmonitor.app,happy.worldmonitor.app" nonce="wm-static-bootstrap"></script>
     <title>World Monitor — Free Real-Time Global Intelligence Dashboard</title>
     <meta name="description" content="By the time it's news, you already knew. Conflicts, shipping chokepoints, military flights, markets and cyber on one free live world map, with AI analysis. No signup." />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
     <meta name="keywords" content="global intelligence dashboard, real-time world map, geopolitical monitoring, conflict tracking, OSINT dashboard, market monitoring, shipping chokepoints, satellite tracking, situational awareness, free intelligence platform, world news dashboard, AI news analysis" />
     <link rel="canonical" href="https://www.worldmonitor.app/" />
     <link rel="alternate" hreflang="x-default" href="https://www.worldmonitor.app/" />
@@ -151,6 +152,7 @@
     <link rel="alternate" type="application/json" href="https://www.worldmonitor.app/?mode=agent" title="World Monitor agent-mode view (machine-readable)" />
     <link rel="alternate" type="text/plain" href="/llms.txt" title="World Monitor LLM briefing" />
     <link rel="alternate" type="text/markdown" href="/index.md" title="World Monitor homepage in Markdown" />
+    <link rel="alternate" type="text/markdown" href="/world-monitor.md" title="World Monitor brand identity (NAP)" />
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -165,6 +167,7 @@
         "https://github.com/koala73/worldmonitor",
         "https://www.npmjs.com/package/worldmonitor",
         "https://x.com/worldmonitorai",
+        "https://x.com/eliehabib",
         "https://discord.gg/re63kWKxaz",
         "https://www.wired.com/story/world-monitor-elie-habib/"
       ],
@@ -172,7 +175,13 @@
         "@type": "ContactPoint",
         "contactType": "customer support",
         "email": "support@worldmonitor.app",
-        "url": "https://www.worldmonitor.app/support.md"
+        "url": "https://www.worldmonitor.app/support.md",
+        "availableLanguage": "English"
+      },
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Dubai",
+        "addressCountry": "AE"
       }
     }
     </script>
@@ -187,6 +196,14 @@
       "description": "By the time it's news, you already knew. Conflicts, shipping chokepoints, military flights, markets and cyber on one free live world map, with AI analysis. No signup.",
       "publisher": {
         "@id": "https://www.worldmonitor.app/#organization"
+      },
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": {
+          "@type": "EntryPoint",
+          "urlTemplate": "https://www.worldmonitor.app/dashboard?q={search_term_string}"
+        },
+        "query-input": "required name=search_term_string"
       },
       "inLanguage": "en"
     }
@@ -204,6 +221,9 @@
       "publisher": {
         "@id": "https://www.worldmonitor.app/#organization"
       },
+      "isBasedOn": {
+        "@id": "https://www.worldmonitor.app/#source"
+      },
       "sameAs": [
         "https://github.com/koala73/worldmonitor",
         "https://www.npmjs.com/package/worldmonitor",
@@ -219,7 +239,7 @@
         "sameAs": [
           "https://x.com/eliehabib",
           "https://github.com/koala73",
-          "https://www.linkedin.com/in/elie-habib-7047b931",
+          "https://www.linkedin.com/in/eliashabib",
           "https://www.wikidata.org/wiki/Q121365724",
           "https://www.crunchbase.com/person/elie-habib-2"
         ]
@@ -268,6 +288,22 @@
         }
       ],
       "featureList": "Real-time global map with registry-backed data layers, curated news feeds, Country Instability Index for the Tier-1 registry, live conflict tracking, market quotes and sector heatmaps, shipping chokepoints with vessel transit intelligence, real-time satellite tracking, GPS jamming zones, submarine cable map, AI datacenter map, daily AI brief, Scenario Engine, custom monitors and alerts, MCP server, desktop apps, Android TV app, and localized interfaces"
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareSourceCode",
+      "@id": "https://www.worldmonitor.app/#source",
+      "name": "World Monitor source code",
+      "description": "Source code for the World Monitor real-time global intelligence platform.",
+      "codeRepository": "https://github.com/koala73/worldmonitor",
+      "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+      "programmingLanguage": ["TypeScript", "JavaScript", "Rust"],
+      "runtimePlatform": ["Web", "Windows", "macOS", "Linux"],
+      "targetProduct": {
+        "@id": "https://www.worldmonitor.app/#software"
+      }
     }
     </script>
     <script type="application/ld+json">

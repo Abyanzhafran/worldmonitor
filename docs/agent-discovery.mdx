@@ -41,7 +41,8 @@ Link: </.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+j
 | [`/.well-known/api-catalog`](https://worldmonitor.app/.well-known/api-catalog) | [RFC 9727](https://datatracker.ietf.org/doc/html/rfc9727) | JSON linkset bundling every other discovery URL — start here if you want one fetch and a map |
 | [`/openapi.yaml`](https://www.worldmonitor.app/openapi.yaml) | OpenAPI 3.1 | Single bundled spec covering **every** REST service (Conflict, Resilience, Market, Economic, Maritime, Aviation, Climate, …) — feed it to any code-generator |
 | [`/openapi.json`](https://www.worldmonitor.app/openapi.json) | OpenAPI 3.1 | Minified JSON bundle for tooling and scanners that only parse JSON. Same operations, parameters, request bodies and responses as `/openapi.yaml`; shared structures are `$ref`-collapsed and component schemas no operation can reach are omitted, to stay under scanner body caps |
-| [`/docs/api-versioning`](https://www.worldmonitor.app/docs/api-versioning) | Policy | REST compatibility, deprecation notice, and sunset-header contract |
+| [`/api-versioning.md`](https://www.worldmonitor.app/api-versioning.md) | Policy | Static markdown REST compatibility, deprecation, and sunset contract (RFC 9745 `Link rel="deprecation"`) |
+| [`/docs/api-versioning`](https://www.worldmonitor.app/docs/api-versioning) | Policy | HTML twin of the same REST compatibility, deprecation notice, and sunset-header contract |
 | [`/.well-known/mcp/server-card.json`](https://worldmonitor.app/.well-known/mcp/server-card.json) | MCP | Transport (`streamableHttp`), endpoint, OAuth resource, scopes, streaming, capability flags |
 | [`/.well-known/oauth-authorization-server`](https://api.worldmonitor.app/.well-known/oauth-authorization-server) | [RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414) | OAuth 2.1 authorization-server metadata (PKCE, DCR, token endpoints) |
 | [`/.well-known/oauth-protected-resource`](https://worldmonitor.app/.well-known/oauth-protected-resource) | [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) | Resource metadata for `https://worldmonitor.app/mcp` |
@@ -49,11 +50,12 @@ Link: </.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+j
 | [`/.well-known/agent-card.json`](https://worldmonitor.app/.well-known/agent-card.json) | [A2A](https://a2a-protocol.org) | Agent card for the `/a2a` JSON-RPC concierge (see below) — transport, protocol version, skills, no auth required |
 | [`/.well-known/http-message-signatures-directory`](https://worldmonitor.app/.well-known/http-message-signatures-directory) | [RFC 9421](https://datatracker.ietf.org/doc/html/rfc9421) / Web Bot Auth | Ed25519 public-key directory (`application/http-message-signatures-directory+json`) so third parties can verify WorldMonitor-originated signed automated requests. Keys advertise a rolling 24 h `nbf`/`exp` window; cached `public, max-age=3600` |
 | [`/.well-known/agent-skills/index.json`](https://worldmonitor.app/.well-known/agent-skills/index.json) | (custom) | Index of pre-packaged agent skills (`fetch-country-brief`, `fetch-resilience-score`, …) — each skill is a self-contained recipe |
+| [`/plugin.json`](https://worldmonitor.app/plugin.json) | [Agent Plugins 1.0.0](https://agent-plugins.org/specification) | Manifest for the World Monitor agent plugin (`name: worldmonitor`). The GitHub repository is the plugin package: root `plugin.json`, `mcp.json`, and regular `skills/*/SKILL.md` files (not git symlinks — Windows checkouts and zip extracts still get YAML frontmatter). Plugin recipes match the well-known catalog except REST examples use the public site origin `https://worldmonitor.app` |
 | [`/llms.txt`](https://worldmonitor.app/llms.txt) | [llmstxt.org](https://llmstxt.org) | LLM-friendly markdown briefing — overview, capabilities, links |
 | [`/llms-full.txt`](https://worldmonitor.app/llms-full.txt) | (extension) | Long-form variant covering all data layers, panels, and data sources |
 | [`/api/health`](https://api.worldmonitor.app/api/health) | (custom) | Per-key seed status, freshness, record counts — agents can gate fetches on this |
 
-The header-discoverable static assets (`.well-known/*`, `/openapi.yaml`, `/openapi.json`) serve `Access-Control-Allow-Origin: *` and are cached `public, max-age=3600` — safe to memoize. `/api/health` uses the normal API CORS allowlist and is **not** cached (`private, no-store`) because it reflects real-time seed freshness; agents should hit it fresh whenever they need to gate on data availability.
+The header-discoverable static assets (`.well-known/*`, `/openapi.yaml`, `/openapi.json`, `/plugin.json`) serve `Access-Control-Allow-Origin: *` and are cached `public, max-age=3600` — safe to memoize. `/api/health` uses the normal API CORS allowlist and is **not** cached (`private, no-store`) because it reflects real-time seed freshness; agents should hit it fresh whenever they need to gate on data availability.
 
 ## Agent front doors
 
@@ -164,6 +166,6 @@ The point isn't novelty — RFCs 8414, 8288, 9727, 9728 are old. The point is th
 - [WebMCP](/webmcp) — experimental tools discovered from the current browser page, not through the MCP server card
 - [Agent Skills Catalog](/agent-skills) — human-readable catalog of the public agent recipes
 - [API Reference](/api-reference) — human-readable service catalog and MCP→REST tool mapping
-- [API versioning and deprecation](/api-versioning) — compatibility guarantees and retirement signals
+- [API versioning and deprecation](/api-versioning) — compatibility guarantees and retirement signals ([static markdown](https://www.worldmonitor.app/api-versioning.md))
 - [Authentication](/usage-auth) — browser, API key, and OAuth modes
 - [Quickstart](/usage-quickstart) — first call in under a minute

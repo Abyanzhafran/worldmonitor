@@ -5,8 +5,36 @@ import {
   throwIfWebMcpAborted,
   type DashboardActionResult,
   type DashboardContextSnapshot,
+  type WebMcpMonitorKey,
+  type WebMcpNavigationResult,
 } from '@/services/webmcp';
+import {
+  normalizeCatalogVariant,
+  type MapLayerCatalogSnapshot,
+} from '@/services/webmcp-map-layer-catalog';
+import type { MapLayerRuntimeAvailability } from '@/services/map-layer-runtime-availability';
+import {
+  listDashboardPanelCatalog,
+  type DashboardPanelCatalogPage,
+  type DashboardPanelCatalogQuery,
+} from '@/services/webmcp-panel-catalog';
+import {
+  evaluateMissionPresetApply,
+  listMissionPresetCatalog,
+  type MissionPresetCatalogQuery,
+  type MissionPresetCatalogResult,
+} from '@/services/webmcp-mission-preset-catalog';
+import {
+  getMissionPreset,
+  loadStoredMissionPreset,
+  type MissionPresetId,
+} from '@/services/mission-presets';
+import type { ApplyMissionPresetResult } from '@/services/webmcp';
+import { WEBMCP_MISSION_PICKER_REASON } from '@/config/webmcp';
+import type { PanelConfig } from '@/types';
 import type { AgentBusApplierOptions } from './agent-bus-applier';
+import type { RendererKind } from '@/config/map-layer-definitions';
+import { currentDashboardMapMode } from './map-dimension-control';
 
 const APP_DESTROYED_RESULT: DashboardActionResult = {
   ok: false,
@@ -53,6 +81,12 @@ export function getWebMcpDashboardContext(
 
   const mapState = ctx.map.getState();
   const center = ctx.map.getCenter();
+  const activeTabs = Object.fromEntries(Object.entries(ctx.panels).flatMap(([panelId, panel]) => {
+    const getActiveTab = (panel as { getActiveTab?: () => unknown }).getActiveTab;
+    if (typeof getActiveTab !== 'function') return [];
+    const tab = getActiveTab.call(panel);
+    return typeof tab === 'string' ? [[panelId, tab]] : [];
+  }));
 
   return {
     variant,
@@ -60,6 +94,7 @@ export function getWebMcpDashboardContext(
       view: mapState.view,
       center,
       zoom: mapState.zoom,
+      mode: currentDashboardMapMode(ctx),
       timeRange: mapState.timeRange,
       enabledLayers: Object.entries(mapState.layers)
         .filter(([, enabled]) => enabled === true)
@@ -70,8 +105,58 @@ export function getWebMcpDashboardContext(
       enabled: Object.entries(ctx.panelSettings)
         .filter(([, config]) => config.enabled === true)
         .map(([panelId]) => panelId),
+      activeTabs,
     },
   };
+}
+
+export function getWebMcpMapLayerCatalogSnapshot(
+  ctx: AppContext,
+  variant: string,
+  hasPremium: boolean,
+  tFn?: (key: string) => string,
+  runtimeAvailability?: MapLayerRuntimeAvailability,
+): MapLayerCatalogSnapshot {
+  if (ctx.isDestroyed) {
+    throw new DashboardBindingError('app_destroyed', 'Dashboard is no longer available.');
+  }
+  if (!ctx.map) {
+    throw new DashboardBindingError('map_unavailable', 'Map is not available.');
+  }
+
+  const mapState = ctx.map.getState();
+  const rendererKind: RendererKind = ctx.map.isGlobeMode?.()
+    ? 'globe'
+    : ctx.map.isDeckGLActive?.() ? 'deck' : 'svg';
+  return {
+    variant: normalizeCatalogVariant(variant),
+    rendererKind,
+    enabledLayers: Object.entries(mapState.layers)
+      .filter(([, enabled]) => enabled === true)
+      .map(([layer]) => layer),
+    liveLayerKeys: Object.keys(ctx.mapLayers),
+    ...(runtimeAvailability ? { runtimeAvailability } : {}),
+    hasPremium,
+    deckGlActive: Boolean(ctx.map.isDeckGLActive?.()),
+    ...(tFn ? { tFn } : {}),
+  };
+}
+
+export function listWebMcpDashboardPanels(
+  ctx: AppContext,
+  variant: string,
+  query: DashboardPanelCatalogQuery,
+  options: { isPanelAllowed: (panelId: string, config: PanelConfig) => boolean },
+): DashboardPanelCatalogPage {
+  if (ctx.isDestroyed) {
+    throw new DashboardBindingError('app_destroyed', 'Dashboard is no longer available.');
+  }
+  return listDashboardPanelCatalog({
+    currentVariant: variant,
+    panelSettings: ctx.panelSettings,
+    mountedIds: new Set(Object.keys(ctx.panels)),
+    isPanelAllowed: options.isPanelAllowed,
+  }, query);
 }
 
 export async function waitForWebMcpUiReady(
@@ -130,8 +215,12 @@ export async function applyWebMcpDashboardAction(
   const { applyAgentBusAction } = await import('./agent-bus-applier');
   throwIfWebMcpAborted(signal);
   if (ctx.isDestroyed) return APP_DESTROYED_RESULT;
-  const result = applyAgentBusAction(ctx, action, options);
-  if (result.ok && result.actionType === 'set_view' && ctx.map) {
+  const result = await raceWebMcpAbort(applyAgentBusAction(ctx, action, options), signal);
+  if (
+    result.ok
+    && (result.actionType === 'set_view' || result.actionType === 'focus_country')
+    && ctx.map
+  ) {
     try {
       await raceWebMcpAbort(
         ctx.map.whenViewportSettled(result.viewportActionToken),
@@ -154,4 +243,307 @@ export async function applyWebMcpDashboardAction(
   }
   throwIfWebMcpAborted(signal);
   return result;
+}
+
+const EMPTY_NAV_CONTEXT: DashboardContextSnapshot = {
+  variant: '',
+  map: {
+    view: '',
+    center: null,
+    zoom: 0,
+    timeRange: '',
+    enabledLayers: [],
+  },
+  panels: {
+    mounted: [],
+    enabled: [],
+  },
+};
+
+function navigationContext(ctx: AppContext, variant: string): DashboardContextSnapshot {
+  try {
+    return getWebMcpDashboardContext(ctx, variant);
+  } catch {
+    return { ...EMPTY_NAV_CONTEXT, variant };
+  }
+}
+
+const APP_DESTROYED_NAV_RESULT = (
+  context: DashboardContextSnapshot,
+): WebMcpNavigationResult => ({
+  ok: false,
+  status: 'denied',
+  reason: 'app_destroyed',
+  message: 'Dashboard is no longer available.',
+  context,
+});
+
+export type WebMcpVisibleMonitorNavigation = 'none' | 'reload' | 'assign' | 'blocked' | 'unavailable';
+
+export async function applyWebMcpSwitchMonitor(
+  ctx: AppContext,
+  currentVariant: string,
+  monitor: WebMcpMonitorKey,
+  navigate: (variant: WebMcpMonitorKey) => Promise<WebMcpVisibleMonitorNavigation>,
+): Promise<WebMcpNavigationResult> {
+  const context = navigationContext(ctx, currentVariant);
+  if (ctx.isDestroyed) return APP_DESTROYED_NAV_RESULT(context);
+
+  const navigation = await navigate(monitor);
+  if (navigation === 'unavailable' || navigation === 'blocked') {
+    return {
+      ok: false,
+      status: 'denied',
+      destination: monitor,
+      reason: 'unavailable',
+      message: navigation === 'unavailable'
+        ? 'That monitor is not available on this dashboard.'
+        : 'World Monitor could not switch monitors.',
+      context,
+    };
+  }
+
+  return {
+    ok: true,
+    status: 'applied',
+    destination: monitor,
+    navigation,
+    message: navigation === 'none' ? 'Already on that monitor.' : 'Switched monitor.',
+    context: { ...navigationContext(ctx, currentVariant), variant: monitor },
+  };
+}
+
+async function openUnifiedSettingsOverlay(
+  ctx: AppContext,
+  currentVariant: string,
+  destination: 'settings' | 'alerts',
+  tab: 'settings' | 'notifications',
+): Promise<WebMcpNavigationResult> {
+  const context = navigationContext(ctx, currentVariant);
+  if (ctx.isDestroyed) return APP_DESTROYED_NAV_RESULT(context);
+  if (!ctx.unifiedSettings) {
+    return {
+      ok: false,
+      status: 'denied',
+      destination,
+      reason: 'unavailable',
+      message: destination === 'alerts'
+        ? 'Alerts are not available on this dashboard.'
+        : 'Settings are not available on this dashboard.',
+      context,
+    };
+  }
+  const opened = await Promise.resolve(ctx.unifiedSettings.open(tab));
+  if (ctx.isDestroyed) return APP_DESTROYED_NAV_RESULT(navigationContext(ctx, currentVariant));
+  if (opened === false) {
+    return {
+      ok: false,
+      status: 'denied',
+      destination,
+      reason: 'unavailable',
+      message: destination === 'alerts'
+        ? 'Alerts are not available on this dashboard.'
+        : 'Settings are not available on this dashboard.',
+      context: navigationContext(ctx, currentVariant),
+    };
+  }
+  return {
+    ok: true,
+    status: 'applied',
+    destination,
+    overlay: 'open',
+    tab,
+    message: destination === 'alerts' ? 'Opened alerts.' : 'Opened settings.',
+    context: navigationContext(ctx, currentVariant),
+  };
+}
+
+export async function applyWebMcpOpenSettings(
+  ctx: AppContext,
+  currentVariant: string,
+): Promise<WebMcpNavigationResult> {
+  return openUnifiedSettingsOverlay(ctx, currentVariant, 'settings', 'settings');
+}
+
+export async function applyWebMcpOpenAlerts(
+  ctx: AppContext,
+  currentVariant: string,
+): Promise<WebMcpNavigationResult> {
+  const context = navigationContext(ctx, currentVariant);
+  if (ctx.isDestroyed) return APP_DESTROYED_NAV_RESULT(context);
+  if (ctx.isDesktopApp) {
+    return {
+      ok: false,
+      status: 'denied',
+      destination: 'alerts',
+      reason: 'unavailable',
+      message: 'Alerts are not available on this dashboard.',
+      context,
+    };
+  }
+  return openUnifiedSettingsOverlay(ctx, currentVariant, 'alerts', 'notifications');
+}
+
+export function listWebMcpMissionPresets(
+  ctx: AppContext,
+  variant: string,
+  query: MissionPresetCatalogQuery = {},
+  options: {
+    hasPremium: boolean;
+    targetCancellationSupported?: boolean;
+    isPanelEntitled?: (panelId: string) => boolean;
+  },
+): MissionPresetCatalogResult {
+  if (ctx.isDestroyed) {
+    throw new DashboardBindingError('app_destroyed', 'Dashboard is no longer available.');
+  }
+  return listMissionPresetCatalog({
+    variant,
+    hasPremium: options.hasPremium,
+    activePresetId: loadStoredMissionPreset()?.id ?? null,
+    targetCancellationSupported: options.targetCancellationSupported,
+    isPanelEntitled: options.isPanelEntitled,
+  }, query);
+}
+
+export function applyWebMcpMissionPreset(
+  ctx: AppContext,
+  variant: string,
+  presetId: unknown,
+  options: {
+    hasPremium: boolean;
+    isPanelEntitled?: (panelId: string) => boolean;
+    apply: (id: MissionPresetId) => { changed: boolean; priorPresetId: string | null };
+  },
+): ApplyMissionPresetResult {
+  if (ctx.isDestroyed) {
+    return {
+      ok: false,
+      status: 'denied',
+      reason: 'app_destroyed',
+      message: 'Dashboard is no longer available.',
+    };
+  }
+
+  const decision = evaluateMissionPresetApply(presetId, {
+    variant,
+    hasPremium: options.hasPremium,
+    activePresetId: loadStoredMissionPreset()?.id ?? null,
+    isPanelEntitled: options.isPanelEntitled,
+  });
+  if (!decision.ok || !decision.presetId) {
+    return {
+      ok: false,
+      status: decision.reason === 'malformed_arguments' || decision.reason === 'unknown_preset'
+        ? 'invalid'
+        : 'denied',
+      ...(decision.presetId ? { presetId: decision.presetId } : {}),
+      ...(decision.label ? { label: decision.label } : {}),
+      reason: decision.reason,
+      message: decision.message,
+    };
+  }
+
+  const preset = getMissionPreset(decision.presetId);
+  if (!preset) {
+    return {
+      ok: false,
+      status: 'invalid',
+      reason: 'unknown_preset',
+      message: 'Unknown mission preset.',
+    };
+  }
+
+  try {
+    const { changed } = options.apply(decision.presetId);
+    if (ctx.isDestroyed) {
+      // Apply already committed through the mission path. Prefer reporting the
+      // durable outcome over a post-commit deny that would mislead callers into
+      // retrying a state that already landed.
+      return {
+        ok: true,
+        status: changed ? 'applied' : 'unchanged',
+        presetId: preset.id,
+        label: preset.label,
+        changed,
+        monitor: variant,
+        message: changed
+          ? `Mission preset applied: ${preset.label}.`
+          : `Mission preset already active: ${preset.label}.`,
+      };
+    }
+    let context;
+    try {
+      context = getWebMcpDashboardContext(ctx, variant);
+    } catch {
+      return {
+        ok: true,
+        status: changed ? 'applied' : 'unchanged',
+        presetId: preset.id,
+        label: preset.label,
+        changed,
+        monitor: variant,
+        message: changed
+          ? `Mission preset applied: ${preset.label}.`
+          : `Mission preset already active: ${preset.label}.`,
+      };
+    }
+    return {
+      ok: true,
+      status: changed ? 'applied' : 'unchanged',
+      presetId: preset.id,
+      label: preset.label,
+      changed,
+      monitor: context.variant,
+      map: {
+        view: context.map.view,
+        zoom: context.map.zoom,
+        timeRange: context.map.timeRange,
+        enabledLayers: context.map.enabledLayers,
+      },
+      panels: {
+        enabled: context.panels.enabled,
+      },
+      message: changed
+        ? `Mission preset applied: ${preset.label}.`
+        : `Mission preset already active: ${preset.label}.`,
+    };
+  } catch {
+    return {
+      ok: false,
+      status: 'denied',
+      presetId: preset.id,
+      label: preset.label,
+      reason: 'apply_failed',
+      message: 'Mission preset application failed and was rolled back.',
+    };
+  }
+}
+
+export function applyWebMcpOpenMissionPicker(
+  ctx: AppContext,
+  currentVariant: string,
+  openPicker: () => boolean,
+): WebMcpNavigationResult {
+  const context = navigationContext(ctx, currentVariant);
+  if (ctx.isDestroyed) return APP_DESTROYED_NAV_RESULT(context);
+  const opened = openPicker();
+  if (!opened) {
+    return {
+      ok: false,
+      status: 'denied',
+      destination: 'mission_picker',
+      reason: WEBMCP_MISSION_PICKER_REASON.unavailable,
+      message: 'Mission presets are not available on this dashboard.',
+      context,
+    };
+  }
+  return {
+    ok: true,
+    status: 'applied',
+    destination: 'mission_picker',
+    overlay: 'open',
+    message: 'Opened mission presets.',
+    context: navigationContext(ctx, currentVariant),
+  };
 }

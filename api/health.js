@@ -354,6 +354,7 @@ const STANDALONE_KEYS = {
   // here (not in BOOTSTRAP_KEYS) is what makes the activation-marker cutover
   // pending before the first successful publish and strict after it.
   physicalPremiums:      'market:physical-premium:v1',
+  physicalDivergence:    'market:physical-divergence:v1',
   bisPropertyResidential: 'economic:bis:property-residential:v1',
   bisPropertyCommercial:  'economic:bis:property-commercial:v1',
   imfMacro:             'economic:imf:macro:v2',
@@ -419,6 +420,11 @@ const STANDALONE_KEYS = {
   // Meta-only aggregate: payloads are sharded by country, so use the seed-meta
   // key as the probe target rather than pretending one country key is global.
   comtradeBilateralHs4:  'seed-meta:comtrade:bilateral-hs4',
+  // Authoritative shared cohort pointer read by all vulnerability RPCs. The
+  // country and inverse manifests are compatibility projections; probing only
+  // them can report OK while every public handler is unavailable.
+  supplyVulnerability:   'supply-chain:vulnerability:cohort:v1',
+  supplyChokepointDependencies: 'supply-chain:chokepoint-dependencies:v1',
   thermalEscalation:     'thermal:escalation:v1',
   thermalEscalationBootstrap: 'thermal:escalation-bootstrap:v1',
   // Meta-only aggregate: payloads are sharded one key per reporter, so probe
@@ -455,6 +461,9 @@ const STANDALONE_KEYS = {
   // UN WPP + UNESCO/World Bank + ILOSTAT capability data (#6437). The country
   // deep-dive fetches this seeded key on demand; it is not bootstrap-hydrated.
   demographicsCapability:   'demographics:capability:v1',
+  // Atomic country evidence + derived five-factor results (#6441). The public
+  // API and MCP service read this key only; no request-time source fan-out.
+  scorecardFiveFactor:       'scorecard:five-factor:v1',
   resilienceRanking:        'resilience:ranking:v28',
   productCatalog:           'product-catalog:v3',
   energySpineCountries:     'energy:spine:v1:_countries',
@@ -558,6 +567,8 @@ const STANDALONE_KEYS = {
   // into canadaAlerts / canadaRoads / torontoRoads. No map panel yet.
   torontoTps: 'safety:toronto-tps:v1',
 };
+
+const FIVE_FACTOR_SCORECARD_READ_MODEL_KEY = 'scorecard:five-factor:v1:read-model';
 
 const SEED_META = {
   // scripts/seed-conflict-intel.mjs cron runs every 15min, while HAPI is gated
@@ -663,6 +674,19 @@ const SEED_META = {
       fromKey: null,
       issue: 6436,
       activationKey: 'seed-activated:market:physical-premium',
+    },
+  },
+  physicalDivergence: {
+    key: 'seed-meta:market:physical-divergence',
+    maxStaleMin: 4320,
+    minRecordCount: 2,
+    enforceInputFreshUntil: true,
+    activationKey: 'seed-activated:market:physical-divergence',
+    cutover: {
+      mode: 'activation-marker',
+      fromKey: null,
+      issue: 6448,
+      activationKey: 'seed-activated:market:physical-divergence',
     },
   },
   goldExtended:     { key: 'seed-meta:market:gold-extended',  maxStaleMin: 30 },
@@ -998,6 +1022,42 @@ const SEED_META = {
   customsRevenue:      { key: 'seed-meta:trade:customs-revenue',              maxStaleMin: 1440 },
   comtradeFlows:       { key: 'seed-meta:trade:comtrade-flows',               maxStaleMin: 2880 }, // 24h cron; 2880min = 48h = 2x interval
   comtradeBilateralHs4: { key: 'seed-meta:comtrade:bilateral-hs4',             maxStaleMin: 50400, minRecordCount: 110 }, // 35d health budget for monthly seed; 40d payload/meta TTL leaves a 5d stale-but-queryable warning window. minRecordCount mirrors MIN_COUNTRY_COVERAGE in scripts/seed-comtrade-bilateral-hs4.mjs (110 of 197 clusters) so a shrunken run reads COVERAGE_PARTIAL, not OK — without it 3-of-197 and 197-of-197 were indistinguishable for the full 35d window.
+  supplyVulnerability: {
+    key: 'seed-meta:supply-chain:vulnerability',
+    maxStaleMin: 2880,
+    minRecordCount: 110,
+    minRankableRecordCount: 110,
+    requiredRedistributionPolicyVersion: 1,
+    requireVulnerabilityCoverage: {
+      bilateralCountryCount: 110,
+      completeCountryCount: 110,
+      rankableCountryCount: 110,
+      rankableRecordCount: 110,
+      reviewedCommodityCount: 23,
+      reviewedHs4Count: 22,
+      reviewedHs2Count: 9,
+    },
+    activationKey: 'seed-activated:supply-chain:vulnerability',
+    cutover: {
+      mode: 'activation-marker',
+      fromKey: null,
+      issue: 6449,
+      activationKey: 'seed-activated:supply-chain:vulnerability',
+    },
+  },
+  supplyChokepointDependencies: {
+    key: 'seed-meta:supply-chain:chokepoint-dependencies',
+    maxStaleMin: 2880,
+    minRecordCount: 7,
+    requiredRedistributionPolicyVersion: 1,
+    activationKey: 'seed-activated:supply-chain:vulnerability',
+    cutover: {
+      mode: 'activation-marker',
+      fromKey: null,
+      issue: 6449,
+      activationKey: 'seed-activated:supply-chain:vulnerability',
+    },
+  },
   blsSeries:           { key: 'seed-meta:economic:bls-series',                maxStaleMin: 2880 }, // daily seed; 2880min = 48h = 2x interval
   sanctionsPressure:   { key: 'seed-meta:sanctions:pressure',                 maxStaleMin: 720 }, // 6h cron; 12h = 2× interval, before the 18h data TTL
   crossSourceSignals:  { key: 'seed-meta:intelligence:cross-source-signals',  maxStaleMin: 30 }, // 15min cron; 30min = 2x interval
@@ -1155,6 +1215,19 @@ const SEED_META = {
       fromKey: null,
       issue: 6437,
       status: 'EMPTY',
+    },
+  },
+  scorecardFiveFactor: {
+    key: 'seed-meta:scorecard:five-factor',
+    maxStaleMin: 2160, // Daily section; 36h allows one delayed Railway tick before the 3d data TTL.
+    minRecordCount: 180,
+    minPoolCounts: { population: 150, food: 80, energy: 120, demographics: 150, technology: 120, defense: 30 },
+    activationKey: 'seed-activated:scorecard:five-factor',
+    cutover: {
+      mode: 'activation-marker',
+      fromKey: null,
+      issue: 6441,
+      activationKey: 'seed-activated:scorecard:five-factor',
     },
   },
   resilienceRanking:   { key: 'seed-meta:resilience:ranking',          maxStaleMin: 840, requireResilienceCacheState: true }, // RPC cache (12h TTL, refreshed every 6h by seed-resilience-scores cron); 14h budget tolerates 1 missed tick (12h gap) + ~2h jitter for in-flight deploys that preempt a scheduled tick; alerts at 2 missed ticks (18h gap). Bumped from 720 — see comment below.
@@ -1412,6 +1485,17 @@ const ON_DEMAND_KEYS = new Set([
   // publish of the canonical snapshot. Before that first publish, absence is
   // pending activation; after it, missing or stale data is strict.
   'physicalPremiums',
+  'physicalDivergence',
+  // Five-factor scorecard (#6441). Vercel can ship this probe before the
+  // Railway resilience bundle publishes the first daily cohort. The seeder
+  // writes a permanent marker in the same EVAL as that first successful
+  // cohort; absence is pending until then and strict afterward.
+  'scorecardFiveFactor',
+  // Daily commodity-vulnerability producer. One durable cohort marker bridges
+  // the Edge reader deploy to the first Railway publish; both projections are
+  // strict forever after the marker exists.
+  'supplyVulnerability',
+  'supplyChokepointDependencies',
   'riskScoresLive',
   'usniFleetStale', 'positiveEventsLive',
   'bisPolicy', 'bisExchange', 'bisCredit',
@@ -1492,7 +1576,11 @@ const ACTIVATION_MARKERS = {
   torontoTfs: SEED_META.torontoTfs.activationKey,
   torontoTps: SEED_META.torontoTps.activationKey,
   physicalPremiums: SEED_META.physicalPremiums.activationKey,
+  physicalDivergence: SEED_META.physicalDivergence.activationKey,
+  scorecardFiveFactor: SEED_META.scorecardFiveFactor.activationKey,
   imdCycloneMarine: SEED_META.imdCycloneMarine.activationKey,
+  supplyVulnerability: SEED_META.supplyVulnerability.activationKey,
+  supplyChokepointDependencies: SEED_META.supplyChokepointDependencies.activationKey,
   newsFeedHealth: 'seed-activated:news:feed-health',
   newsRecallBenchmark: 'seed-activated:news:recall-benchmark',
   // Written by scripts/_seed-history.mjs on every ingest-health report,
@@ -1899,6 +1987,9 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
     }
   }
   const metaRankableCount = parseRankableRecordCount(meta);
+  const redistributionPolicyVersion = Number.isInteger(meta?.redistributionPolicyVersion)
+    ? meta.redistributionPolicyVersion
+    : null;
   const poolCounts = parsePoolCounts(meta?.poolCounts, seedCfg.minPoolCounts);
   const errorCode = typeof meta?.errorCode === 'string'
     && /^[A-Z0-9_]{1,64}$/.test(meta.errorCode)
@@ -1919,6 +2010,7 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
       metaReadFailed: false,
       metaCount,
       metaRankableCount,
+      redistributionPolicyVersion,
       poolCounts,
       contentAge: null,
       contentFreshness: null,
@@ -1957,10 +2049,14 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
   // Source-specific producers can preserve usable last-good records while a
   // current upstream attempt is degraded. Surface that state immediately as a
   // warning without discarding the retained record count from health output.
-  const sourceDegraded = typeof meta?.sourceState === 'string'
+  const inputFreshUntil = Number(meta?.inputFreshUntil);
+  const inputFreshnessExpired = seedCfg.enforceInputFreshUntil === true
+    && meta?.sourceState === 'ok'
+    && (!Number.isFinite(inputFreshUntil) || inputFreshUntil <= now);
+  const sourceDegraded = inputFreshnessExpired || (typeof meta?.sourceState === 'string'
     && meta.sourceState !== 'ok'
     && !sourceUnavailable
-    && !sourceBlocked;
+    && !sourceBlocked);
   // Content-age trio (2026-05-04 health-readiness plan). Presence of
   // maxContentAgeMin is the opt-in signal — legacy seeders without it
   // get contentAge: null and skip the STALE_CONTENT branch in classifyKey.
@@ -2018,6 +2114,13 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
         failedPages: Number(meta.coverage.failedPages) || 0,
         completionRatio: meta.coverage.completionRatio == null ? null : Number(meta.coverage.completionRatio) || 0,
         rejectedCount: Number(meta.coverage.rejectedCount) || 0,
+        ...(meta.coverage.bilateralCountryCount == null ? {} : { bilateralCountryCount: Number(meta.coverage.bilateralCountryCount) || 0 }),
+        ...(meta.coverage.completeCountryCount == null ? {} : { completeCountryCount: Number(meta.coverage.completeCountryCount) || 0 }),
+        ...(meta.coverage.rankableCountryCount == null ? {} : { rankableCountryCount: Number(meta.coverage.rankableCountryCount) || 0 }),
+        ...(meta.coverage.rankableRecordCount == null ? {} : { rankableRecordCount: Number(meta.coverage.rankableRecordCount) || 0 }),
+        ...(meta.coverage.reviewedCommodityCount == null ? {} : { reviewedCommodityCount: Number(meta.coverage.reviewedCommodityCount) || 0 }),
+        ...(meta.coverage.reviewedHs4Count == null ? {} : { reviewedHs4Count: Number(meta.coverage.reviewedHs4Count) || 0 }),
+        ...(meta.coverage.reviewedHs2Count == null ? {} : { reviewedHs2Count: Number(meta.coverage.reviewedHs2Count) || 0 }),
         failureReasons: sanitizeCoverageFailureReasons(meta.coverage.failureReasons),
         retailers: coverageRetailers,
       }
@@ -2089,6 +2192,7 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
     metaReadFailed: false,
     metaCount,
     metaRankableCount,
+    redistributionPolicyVersion,
     poolCounts,
     contentAge,
     contentFreshness,
@@ -2192,6 +2296,7 @@ function classifyKey(name, redisKey, opts, ctx) {
     sourceBlocked,
     metaCount,
     metaRankableCount,
+    redistributionPolicyVersion,
     poolCounts,
     contentAge,
     contentFreshness,
@@ -2352,6 +2457,10 @@ function classifyKey(name, redisKey, opts, ctx) {
     else if (isOnDemand) status = 'EMPTY_ON_DEMAND';
     else status = 'EMPTY_DATA';
   } else if (seedStale === true) status = 'STALE_SEED';
+  else if (
+    seedCfg?.requiredRedistributionPolicyVersion != null
+    && redistributionPolicyVersion !== seedCfg.requiredRedistributionPolicyVersion
+  ) status = 'POLICY_INCOMPATIBLE';
   // Coverage threshold: producers that know their canonical shape size can
   // declare minRecordCount. When the writer reports a count below threshold
   // (e.g., 10/13 chokepoints because portwatch dropped some), this degrades
@@ -2364,6 +2473,13 @@ function classifyKey(name, redisKey, opts, ctx) {
   else if (
     seedCfg?.minRankableRecordCount != null &&
     (rankableRecordCount == null || rankableRecordCount < seedCfg.minRankableRecordCount)
+  ) status = 'COVERAGE_PARTIAL';
+  else if (
+    seedCfg?.requireVulnerabilityCoverage
+    && (!coverage || Object.entries(seedCfg.requireVulnerabilityCoverage)
+      .some(([field, floor]) => (
+        !Number.isFinite(coverage[field]) || coverage[field] < floor
+      )))
   ) status = 'COVERAGE_PARTIAL';
   // Per-pool coverage is independent of aggregate volume. Missing/malformed
   // diagnostics fail closed: without all configured counts health cannot prove
@@ -2454,6 +2570,13 @@ function classifyKey(name, redisKey, opts, ctx) {
     entry.minRankableRecordCount = seedCfg.minRankableRecordCount;
   }
   if (seedCfg?.minPoolCounts) entry.minPoolCounts = seedCfg.minPoolCounts;
+  if (seedCfg?.requiredRedistributionPolicyVersion != null) {
+    entry.redistributionPolicyVersion = redistributionPolicyVersion;
+    entry.requiredRedistributionPolicyVersion = seedCfg.requiredRedistributionPolicyVersion;
+  }
+  if (seedCfg?.requireVulnerabilityCoverage) {
+    entry.requiredVulnerabilityCoverage = seedCfg.requireVulnerabilityCoverage;
+  }
   if (poolCounts) entry.poolCounts = poolCounts;
   if (coverage || seedCfg?.requireCoverage) entry.coverage = coverage;
   // Emitted whenever the producer recorded a cause, not only when the fault
@@ -2535,6 +2658,9 @@ const STATUS_COUNTS = {
   REDIS_PARTIAL: 'warn',
   COVERAGE_PARTIAL: 'warn',
   COVERAGE_DEGRADED: 'warn',
+  // The stored cohort is present but every current reader rejects it. Treat
+  // this like an unavailable schema, not reduced-but-serving coverage.
+  POLICY_INCOMPATIBLE: 'crit',
   // Content-age signal — seeder is healthy but upstream stopped publishing.
   // Operator can't fix upstream cadence, so de-rank vs. STALE_SEED in alerting
   // (both bucket to 'warn' — overall status is `degraded`, not `critical`).
@@ -2701,6 +2827,17 @@ function composeChinaCoverageStatus(entry, raw, readError = false) {
     return { ...entry, ...projected, status: seedStatus, seedStatus };
   }
   return { ...entry, ...projected, seedStatus };
+}
+
+function composeScorecardReadModelStatus(entry, raw, readError = false) {
+  if (!entry) return entry;
+  if (readError) return { ...entry, status: 'REDIS_PARTIAL', readModelReady: false };
+  const readModelReady = Number(raw) === 1;
+  if (readModelReady) return { ...entry, readModelReady: true };
+  if (STATUS_COUNTS[entry.status] === 'crit' || entry.status === 'SEED_ERROR') {
+    return { ...entry, readModelReady: false };
+  }
+  return { ...entry, status: 'COVERAGE_PARTIAL', seedStatus: entry.status, readModelReady: false };
 }
 
 function parseHealthVerdictSnapshot(raw, now, { requireChecks = true } = {}) {
@@ -3163,6 +3300,7 @@ export async function handleHealth(req, ctx, options = {}) {
       ...activationEntries.map(([, marker]) => ['EXISTS', marker]),
       ['GET', CHINA_COVERAGE_SUMMARY_KEY],
       ['GET', STANDALONE_KEYS.educationAttainment],
+      ['HEXISTS', FIVE_FACTOR_SCORECARD_READ_MODEL_KEY, 'metadata'],
       ...fredRolloutCommands,
     ];
     if (!getRedisCredentials()) throw new Error('Redis not configured');
@@ -3225,7 +3363,8 @@ export async function handleHealth(req, ctx, options = {}) {
   const educationPayloadResult = results[allDataKeys.length + allMetaKeys.length + activationEntries.length + 1];
   const educationPayload = unwrapEnvelope(parseRedisValue(educationPayloadResult?.result)).data;
   const educationPayloadRankableCount = parseEducationPayloadRankableRecordCount(educationPayload);
-  const fredRolloutOffset = allDataKeys.length + allMetaKeys.length + activationEntries.length + 2;
+  const scorecardReadModelResult = results[allDataKeys.length + allMetaKeys.length + activationEntries.length + 2];
+  const fredRolloutOffset = allDataKeys.length + allMetaKeys.length + activationEntries.length + 3;
   const fredRatesRolloutUntil = parseFredRatesRolloutUntil(
     results.slice(fredRolloutOffset, fredRolloutOffset + fredRolloutCommands.length),
   );
@@ -3260,6 +3399,13 @@ export async function handleHealth(req, ctx, options = {}) {
       let entry = classifyKey(name, redisKey, opts, classifyCtx);
       if (name === 'chinaCoverage') {
         entry = composeChinaCoverageStatus(entry, chinaCoverageRaw, Boolean(chinaCoverageResult?.error));
+      }
+      if (name === 'scorecardFiveFactor') {
+        entry = composeScorecardReadModelStatus(
+          entry,
+          scorecardReadModelResult?.result,
+          Boolean(scorecardReadModelResult?.error),
+        );
       }
       checks[name] = entry;
       if (typeof entry.contentFreshnessPendingUntil === 'string') {
@@ -3435,6 +3581,7 @@ export const __testing__ = {
   CHINA_COVERAGE_SUMMARY_KEY,
   projectChinaCoverageStatus,
   composeChinaCoverageStatus,
+  composeScorecardReadModelStatus,
   healthVerdictRedisKey,
   parseHealthVerdictSnapshot,
   // U7 (Tier 3 parity test): exposed for tests/mcp-bootstrap-parity.test.mjs
