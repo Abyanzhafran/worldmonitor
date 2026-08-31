@@ -99,8 +99,9 @@ const SOURCES_PAGE_CONTENT_VERSION = '2026-08-20';
 // dateModified is pinned to the snapshot capturedAt as a truthful freshness
 // contract (#7391), so their recrawl signal is COUNTRY_PAGE_CONTENT_VERSION.
 const DATASET_SCHEMA_CONTENT_VERSION = {
-  chokepoint: '2026-08-30',
+  chokepoint: '2026-08-31',
   crisis: '2026-08-31',
+  tools: '2026-08-31',
 };
 const CRISIS_PAGE_CONTENT_VERSION = '2026-08-31';
 const TOOLS_PAGE_CONTENT_VERSION = '2026-08-30';
@@ -114,7 +115,15 @@ const CHOKEPOINT_DATASET_DOWNLOAD = 'reference.json';
 const CRISIS_DATASET_DOWNLOAD = 'tracker.json';
 const CONVERGENCE_DATASET_DOWNLOAD = 'reference.json';
 const DATA_CATALOG_FRAGMENT = '#data-catalog';
-const WORLD_MONITOR_ORG = Object.freeze({
+// Role filler for Dataset.creator / DataCatalog.publisher. The `@id` folds every
+// occurrence into the canonical Organization declared on welcome.html (#7459b),
+// but the `@type` + `name` must stay: structured-data parsers resolve `@id` within
+// ONE document, and no generated corpus page declares that node. A bare `@id` here
+// is an unresolvable stub for exactly the naive extractors #7459b set out to serve.
+// This is the same typed-stub-plus-@id shape blog-site/src/layouts/BlogPost.astro
+// already uses for the canonical Person.
+export const WORLD_MONITOR_ORG = Object.freeze({
+  '@id': 'https://www.worldmonitor.app/#organization',
   '@type': 'Organization',
   name: 'World Monitor',
   url: 'https://www.worldmonitor.app/',
@@ -1631,7 +1640,7 @@ ${countries.map((country) => {
         description,
         url: absoluteUrl(baseUrl, path),
         identifier: `country-resilience-ranking-${capturedAt}`,
-        creator: { '@type': 'Organization', name: 'World Monitor', url: 'https://www.worldmonitor.app/' },
+        creator: { ...WORLD_MONITOR_ORG },
         license: DATASET_LICENSE,
         datePublished: capturedAt,
         dateModified: capturedAt,
@@ -2575,8 +2584,10 @@ ${examples}
           license: DATASET_LICENSE,
           // This reference is a formula plus documentation-derived examples --
           // it has no observation window, so it carries no temporalCoverage and
-          // is dated from its content version, not the freeze wall clock.
-          dateModified: lastmod,
+          // is dated from its content version, not the freeze wall clock. The
+          // family schema stamp rides alongside so a Dataset-shape change signals
+          // recrawl without dragging the page lastmod with it (#7382).
+          dateModified: laterDate(lastmod, DATASET_SCHEMA_CONTENT_VERSION.tools),
           isAccessibleForFree: true,
           includedInDataCatalog: includedInDataCatalog(baseUrl),
           variableMeasured: [

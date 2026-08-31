@@ -462,15 +462,20 @@ function assertDatasetGoogleProperties(html, route, { requireDataset = false, re
       `${route} Dataset ${index + 1} description must be at most ${DATASET_DESCRIPTION_MAX_LENGTH} characters`,
     );
 
+    // A creator must be BOTH anchored on the canonical @id and self-describing.
+    // An @id alone would reference a node no generated page declares, so a
+    // per-page parser resolves it to nothing (#7459b); a name alone would mint a
+    // competing anonymous Organization. Require both together.
     const creators = Array.isArray(dataset.creator) ? dataset.creator : [dataset.creator];
     assert.ok(
       creators.some((creator) => (
         creator
+        && creator['@id'] === 'https://www.worldmonitor.app/#organization'
         && (creator['@type'] === 'Person' || creator['@type'] === 'Organization')
         && typeof creator.name === 'string'
         && creator.name.trim().length > 0
       )),
-      `${route} Dataset ${index + 1} must identify a Person or Organization creator`,
+      `${route} Dataset ${index + 1} creator must be the canonical Organization AND carry @type + name so the reference resolves in-page`,
     );
 
     const licenses = Array.isArray(dataset.license) ? dataset.license : [dataset.license];
@@ -568,6 +573,7 @@ describe('Dataset spatialCoverage Google contract', () => {
       name: 'Contract test dataset',
       description: 'A focused contract fixture with enough detail for the Google Dataset description requirement.',
       creator: {
+        '@id': 'https://www.worldmonitor.app/#organization',
         '@type': 'Organization',
         name: 'World Monitor',
       },
@@ -609,6 +615,22 @@ function assertDataCatalogPresent(html, route) {
   assert.ok(typeof catalog['@id'] === 'string' && catalog['@id'].includes('#data-catalog'), `${route} DataCatalog must use a stable @id`);
   assert.equal(catalog.isAccessibleForFree, true, `${route} DataCatalog must be free`);
   assert.ok(typeof catalog.name === 'string' && catalog.name.trim().length > 0, `${route} DataCatalog must have a name`);
+  const CANONICAL_ORG_ROLE = {
+    '@id': 'https://www.worldmonitor.app/#organization',
+    '@type': 'Organization',
+    name: 'World Monitor',
+    url: 'https://www.worldmonitor.app/',
+  };
+  assert.deepEqual(
+    catalog.publisher,
+    CANONICAL_ORG_ROLE,
+    `${route} DataCatalog.publisher must reference the canonical Organization`,
+  );
+  assert.deepEqual(
+    catalog.creator,
+    CANONICAL_ORG_ROLE,
+    `${route} DataCatalog.creator must reference the canonical Organization`,
+  );
   return catalog;
 }
 
