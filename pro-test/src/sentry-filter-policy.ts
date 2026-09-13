@@ -26,6 +26,14 @@
  * than re-deriving them from source text — same reason as `./sentry-allow-urls.ts`.
  */
 
+/**
+ * Mirror of `@sentry/core`'s `Primitive`, restated rather than imported to keep
+ * this module dependency-free. It must stay a superset of what the SDK puts in
+ * `tags`, or `ErrorEvent` stops satisfying `PolicyEvent` and every
+ * `marketingBeforeSend` call site fails to compile.
+ */
+type PolicyPrimitive = number | string | boolean | bigint | symbol | null | undefined;
+
 /** Minimal structural view of the Sentry event fields this policy reads. */
 interface PolicyFrame {
   filename?: string;
@@ -37,7 +45,7 @@ interface PolicyException {
 }
 export interface PolicyEvent {
   exception?: { values?: PolicyException[] };
-  tags?: Record<string, string | number | boolean | undefined>;
+  tags?: { [key: string]: PolicyPrimitive };
   /**
    * Where Sentry parks the rejected value when a promise rejects with a
    * non-Error: `eventFromUnknownInput` synthesises the exception and copies the
@@ -72,11 +80,22 @@ export function sanitizeMarketingRequestUrl(value: string): string | undefined {
   }
 }
 
+/**
+ * The three network wordings that used to live in `MARKETING_IGNORE_ERRORS`:
+ * Safari's `Load failed`, Chromium's `Failed to fetch`, Firefox's
+ * `NetworkError`. They moved into `marketingBeforeSend` unchanged in reach —
+ * see the use site there for why, and for the ownership tag that is now the
+ * only thing they let through.
+ */
+const MARKETING_NETWORK_NOISE = /^(?:Load failed|Failed to fetch|NetworkError)/;
+
 export const MARKETING_IGNORE_ERRORS: RegExp[] = [
   /ResizeObserver loop/,
-  /^TypeError: Load failed/,
-  /^TypeError: Failed to fetch/,
-  /^TypeError: NetworkError/,
+  // `Load failed` / `Failed to fetch` / `NetworkError` are NOT here any more.
+  // `ignoreErrors` runs as an SDK event processor inside `prepareEvent`, so it
+  // fires before `marketingBeforeSend` and cannot see tags — an owned checkout
+  // failure could never be rescued from it (WORLDMONITOR-Q4). Same drop, moved
+  // late enough to read the ownership tag.
   /Non-Error promise rejection captured with value:/,
   // WKWebView host-app JS bridge timeout — Apple WebKit emits this exact phrase
   // when a JS-to-native `postMessage` gets no reply within the host's window.
@@ -141,24 +160,36 @@ export const MARKETING_IGNORE_ERRORS: RegExp[] = [
   // postMessage` entry above covers the same bridge from the other direction
   // (WORLDMONITOR-10W, whose dashboard-side copy is added in the same pass).
   /\bWKWebView_[A-Za-z]\w*/,
-  // Android WebView's Java-bridge teardown error. Chromium's `android_webview`
-  // emits this exact sentence — `Error invoking <method>: Java object is gone` —
-  // when injected JS calls a `@JavascriptInterface` method whose Java object has
-  // already been garbage-collected or detached, which is what happens when an
-  // in-app browser's own chrome script runs during `beforeunload`. The observed
-  // event is Instagram 415 on Android 13 calling its own
-  // `enableButtonsClickedMetaDataLogging` bridge; neither that method name nor
-  // the phrase appears anywhere in this bundle, and a pure-web bundle has no
-  // `@JavascriptInterface` object to lose, so it can never be ours. Already
-  // suppressed on the dashboard since #4005 (`/Java object is gone/` in
-  // `src/bootstrap/sentry-init.ts`); the two surfaces run separate Sentry
-  // clients, so the missing marketing copy is what let WORLDMONITOR-117 through
-  // with three infra-only frames (the `/pro/assets/sentry-*.js` chunk plus two
-  // `<anonymous>`), which `marketingBeforeSend`'s frame gates cannot act on.
+  // Android WebView's Java-bridge errors. Chromium's `android_webview` wraps a
+  // failed `@JavascriptInterface` call as `Error invoking <method>: <reason>`,
+  // where the reason is a `GinJavaBridgeError` member. Two have been observed
+  // in production, and both are enumerated here:
+  //   WORLDMONITOR-117  `Error invoking enableButtonsClickedMetaDataLogging: Java object is gone`
+  //   WORLDMONITOR-126  `Error invoking log: Java bridge method invocation error`
+  // The first is an in-app browser's chrome script calling a bridge whose Java
+  // object was already collected or detached, typically during `beforeunload`
+  // (Instagram 415 on Android 13). The second is an injected `scanForForms`
+  // autofill scan on Chrome Mobile 153 / Android 10, reaching Sentry through
+  // the SDK's `setTimeout` instrumentation. Neither method name nor either
+  // sentence appears anywhere in this bundle, and a pure-web bundle owns no
+  // `@JavascriptInterface` object at all, so neither can ever be ours.
   //
-  // Anchored to the whole sentence, unlike the dashboard's bare
-  // `/Java object is gone/`. `ignoreErrors` is frame-blind, so an unanchored
-  // substring also drops any first-party message that happens to CONTAIN the
+  // Already suppressed on the dashboard (`src/bootstrap/sentry-init.ts`, which
+  // enumerates both reasons); the two surfaces run separate Sentry clients, so
+  // a missing marketing copy is what lets these through with infra-only frames
+  // (the `/pro/assets/sentry-*.js` chunk plus `<anonymous>`), which
+  // `marketingBeforeSend`'s frame gates cannot act on. That gap produced
+  // WORLDMONITOR-117, and again WORLDMONITOR-126 after #7356 copied only the
+  // first reason across.
+  //
+  // The reasons stay ENUMERATED rather than matched by a slot: a Chromium
+  // reason we have not seen should surface as a new issue and be added
+  // deliberately, which is the safe failure direction — under-suppression
+  // announces itself, over-suppression does not.
+  //
+  // Anchored to the whole sentence, as the dashboard entry has been since
+  // #7357. `ignoreErrors` is frame-blind, so an unanchored substring also
+  // drops any first-party message that happens to CONTAIN the
   // phrase (`Our Java object is gone`) even when its stack points straight at
   // `/pro/assets/*.js` — the observability blind spot this array exists to
   // avoid. Only the complete Chromium shape is third-party by construction, so
@@ -171,10 +202,10 @@ export const MARKETING_IGNORE_ERRORS: RegExp[] = [
   // obtenirDonnées()` is legal, and Chromium emits the same sentence for it)
   // while JavaScript's `\w` is, so an ASCII slot silently misses them. Widening
   // it cannot loosen the rule — the envelope is anchored at both ends and the
-  // reason is fixed, so this matches only if our own bundle emits the whole
-  // Chromium sentence. Java method names hold no colon, so excluding one keeps
-  // the slot off the reason separator (PR #7356 review).
-  /^Error invoking [^\s:]+: Java object is gone$/,
+  // reasons are enumerated, so this matches only if our own bundle emits a
+  // whole Chromium sentence. Java method names hold no colon, so excluding
+  // one keeps the slot off the reason separator (PR #7356 review).
+  /^Error invoking [^\s:]+: (?:Java object is gone|Java bridge method invocation error)$/,
   // iOS in-app WebView native bridge. The host app injects `sendDataToNative` /
   // `sendPageHideMessage` into the document and they dereference
   // `window.webkit.messageHandlers`, which only exists when a WKWebView host
@@ -221,6 +252,130 @@ export const MARKETING_IGNORE_ERRORS: RegExp[] = [
   // `/pro/assets/*.js` frame. `tests/pro-sentry-filter-policy.test.mts` pins
   // both the suppression and the bare-identifier scan that licenses it.
   /^jQuery is not defined$/,
+  // DuckDuckGo's `content-scope-scripts`. The browser injects its own feature
+  // registry into every document and rejects when a configured feature name has
+  // no registered implementation — the message is that registry's, phrased
+  // `feature named \`<name>\` was not found`. WORLDMONITOR-127 is the shape:
+  // DuckDuckGo 18.1 / macOS at `/`, an `onunhandledrejection` capture with a
+  // NULL stacktrace, so `marketingBeforeSend`'s frame gates have nothing to act
+  // on and only a message rule can reach it.
+  //
+  // The licence is the whole sentence, not the feature name: the registry, its
+  // wording and its features all live in the browser, and `feature named`
+  // appears in no marketing first-party source (the guard test pins that scan).
+  // A pure-web bundle has no DuckDuckGo feature registry to miss a lookup in,
+  // so it can never emit this.
+  //
+  // The name is SLOTTED rather than enumerated — unlike the `Error invoking`
+  // reasons above — because it is a third-party identifier, not a fixed
+  // vocabulary we want to review one member at a time: DuckDuckGo adds features
+  // per release and each new one would otherwise open a fresh issue with the
+  // same disposition. The backticks are matched literally, so a re-quoted
+  // future wording reports instead of being swallowed, which is the safe
+  // failure direction this file keeps: under-suppression announces itself,
+  // over-suppression does not.
+  //
+  // Already suppressed on the dashboard (`/feature named .\w+. was not found/`
+  // in `src/bootstrap/sentry-init.ts`); the two surfaces run separate Sentry
+  // clients, which is the same gap that let WORLDMONITOR-15/-102/-107/-108/
+  // -10N/-10T/-117/-126 through. Anchored here rather than copied bare, for the
+  // reason the `jQuery` entry above spells out.
+  /^feature named `[\w-]+` was not found$/,
+  // A synthetic `unhandledrejection` CustomEvent, dispatched by injected script
+  // and swept up by Sentry's global rejection handler. WORLDMONITOR-11S is the
+  // shape: Safari 26.6.2 / macOS on `/pro`, zero frames, and
+  // `extra.__serialized__` = `{type: 'unhandledrejection', isTrusted: false,
+  // target: '[object Window]', currentTarget: '[object Window]', detail: null}`.
+  // `isTrusted: false` is the browser saying the Event was constructed and
+  // dispatched by script — a browser-fired `unhandledrejection` is always
+  // trusted — so the page was handed a fake rejection event.
+  //
+  // The licence is the CONSTRUCTOR, not the frame: Sentry only writes
+  // ``Event `CustomEvent` … captured as promise rejection`` when the rejected
+  // value is a real `CustomEvent` instance, and the marketing surface never
+  // constructs one — `CustomEvent` appears in neither `pro-test/src`, the
+  // `shared/` leaves it imports, nor either inline script (the dashboard DOES
+  // construct them, e.g. `WM_SESSION_DEGRADED_EVENT`, which is why its own copy
+  // of this entry is separately argued). Frame-blind suppression is the only
+  // option available anyway: the event carries `stacktrace: null`, so
+  // `marketingBeforeSend`'s `!hasFirstParty` gate has nothing to act on.
+  //
+  // Anchored to the whole synthetic sentence rather than copying the
+  // dashboard's bare `/Event `CustomEvent`.*captured as promise rejection/`,
+  // for the reason the `Error invoking` entry above spells out. Sibling of the
+  // dashboard's `ProgressEvent` entry (WORLDMONITOR-SQ).
+  /^Event `CustomEvent` \(type=[\w-]+\) captured as promise rejection$/,
+  // javascript-obfuscator's hex-suffixed identifier scheme. WORLDMONITOR-11P is
+  // the shape: `ReferenceError: _0x58c9 is not defined` on Chrome 152 /
+  // Windows at `/`, whose only frames are three `<anonymous>:1` — an injected
+  // userscript or extension bundle referencing its own obfuscated global before
+  // define. Same class as the `mainWorldSdk` / `extDomain` / `crusoe` entries
+  // the dashboard carries.
+  //
+  // Matched on the identifier so BOTH engine phrasings are covered from one
+  // entry — Chromium says `<name> is not defined`, WebKit says `Can't find
+  // variable: <name>` — and on the SHAPE rather than the one observed name,
+  // because the hex suffix is regenerated on every obfuscation run. `_0x`
+  // followed by four or more hex digits is javascript-obfuscator's output
+  // convention and nothing else: Vite's esbuild/terser minifier emits
+  // single-letter and `$`-prefixed names, never a `_0x` prefix, and the literal
+  // appears nowhere in `pro-test/src`, `shared/`, or either inline script.
+  //
+  // The dashboard has carried only the WebKit half (`/Can't find variable:
+  // _0x/`) since #4005; this pass adds the same shape there alongside it.
+  /\b_0x[0-9a-f]{4,}\b/,
+  // WebAuthn on a shell that has no authenticator. WORLDMONITOR-11Q is the
+  // shape: `NotSupportedError: The user agent does not support public key
+  // credentials.` (`DOMException.code: 9`) on Electron 33.4.11 / Windows at
+  // `/pro`, arriving via `onunhandledrejection` with zero frames, breadcrumbs
+  // ending at Clerk's `POST /v1/client/sign_ins`.
+  //
+  // The sentence is emitted by the browser's own `navigator.credentials`
+  // implementation, so only a WebAuthn CALLER can raise it — and the marketing
+  // surface has none: neither `navigator.credentials` nor
+  // `PublicKeyCredential` appears in `pro-test/src`, the `shared/` leaves, or
+  // either inline script. The only passkey on this surface is Clerk's own
+  // sign-in UI (the `Passkey sign-in` string in `locales/*.json` is marketing
+  // copy for it), so the throw belongs to the Clerk SDK on an Electron shell
+  // that ships no authenticator — the same disposition as the `ClerkJS:
+  // Network error` and `[clerk] failed to load` entries on the dashboard.
+  //
+  // Anchored to the whole sentence: bare `NotSupportedError` is generic enough
+  // that our own bundle could raise it (the dashboard keeps it behind a
+  // `!hasFirstParty` gate for exactly that reason), so only the WebAuthn
+  // wording — which no first-party call site can reach — is suppressed here.
+  /^(?:Error: )?NotSupportedError: The user agent does not support public key credentials\.$/,
+  // The same WebAuthn surface as the entry above, reached from the other
+  // direction: a SECOND credential request issued while one is still
+  // outstanding. WORLDMONITOR-11T is the shape: `Error: OperationError: A
+  // request is already pending.` on Chrome 151 / Windows at `/pro`, arriving
+  // via `onunhandledrejection` with zero frames, breadcrumbs running Clerk's
+  // `GET /v1/environment` -> `GET /v1/client` -> a button click ->
+  // `POST /v1/client/sign_ins`.
+  //
+  // Chrome serialises `navigator.credentials` requests per page and rejects the
+  // overlapping one with this exact sentence. The documented triggers are a
+  // user double-clicking the sign-in button and a submit issued while a
+  // conditional-mediation passkey autofill request is still open
+  // (keycloak/keycloak#41037; w3c/webauthn#1790 records that the spec leaves
+  // the overlap undefined and that Chrome errors). Clerk's sign-in UI opens
+  // exactly that conditional request, so both triggers sit behind the marketing
+  // sign-in button and neither is reachable from this bundle to fix.
+  //
+  // Same licence as the `NotSupportedError` entry above, and it holds twice
+  // over. Only a WebAuthn CALLER can raise the sentence, and this surface has
+  // none - `navigator.credentials` and `PublicKeyCredential` appear in no
+  // `pro-test/src` file, no `shared/` leaf and neither inline script, which the
+  // WebAuthn-free scan that licenses that entry already pins. Independently,
+  // `OperationError` is a browser-minted DOMException name and the only
+  // DOMException this bundle ever constructs is `timeout-signal.ts`'s
+  // `TimeoutError`, so the type alone is unreachable from first-party code.
+  //
+  // Anchored to the whole sentence for the reason the `Error invoking` entry
+  // spells out: `ignoreErrors` is frame-blind, so an unanchored `A request is
+  // already pending` would also drop a first-party message that merely CONTAINS
+  // the phrase while riding a `/pro/assets/*.js` frame.
+  /^(?:Error: )?OperationError: A request is already pending\.$/,
 ];
 
 /** Sentry's own hashed SDK chunk — infrastructure, never evidence of our code. */
@@ -244,6 +399,14 @@ const MODULE_LOAD_FAILURE =
  * infinitely, and suppressing this by message alone would hide it.
  */
 const STACK_OVERFLOW = /Maximum call stack size exceeded|too much recursion/i;
+/**
+ * A fetch cancelled by a bare `AbortController.abort()`, in the engine's own
+ * default wording. Deliberately NOT in `MARKETING_IGNORE_ERRORS`: this bundle
+ * aborts fetches itself (`createTimeoutSignal`, the checkout transport, the
+ * entitlement poll), so suppressing the message alone would hide a first-party
+ * abort that genuinely escaped a `.catch`.
+ */
+const LEAKED_ABORT = /^(?:AbortError: )?The user aborted a request\.?$/;
 /**
  * A marketing document frame: `/`, `/pro`, or an absolute URL on any production,
  * preview, or custom host with one of those paths. Query strings, hashes, and a
@@ -271,6 +434,16 @@ const MARKETING_DOCUMENT_FRAME =
  * first-party evidence.
  */
 const MASKED_URL_FRAME = /^webkit-masked-url:/;
+/**
+ * The browser refusing `eval`/`new Function` under our `script-src`, which
+ * omits 'unsafe-eval'. Chrome says "Evaluating a string as JavaScript violates
+ * the following Content Security Policy directive because 'unsafe-eval'…";
+ * Safari says "Refused to evaluate … 'unsafe-eval' … Content Security Policy
+ * directive". Deliberately NOT in `MARKETING_IGNORE_ERRORS`: if our own bundle
+ * or a dependency ever evaluates a string, the CSP breaks that code path, and
+ * that must page.
+ */
+const CSP_EVAL_BLOCK = /unsafe-eval.*Content Security Policy|Content Security Policy.*unsafe-eval/;
 /**
  * A script the browser fetched but could not PARSE. Deliberately NOT in
  * `MARKETING_IGNORE_ERRORS`: a `SyntaxError` message is generic enough that our
@@ -328,6 +501,27 @@ export function marketingBeforeSend<T extends PolicyEvent>(event: T): T | null {
   // (WORLDMONITOR-ZZ, -ZW).
   if (msg.length <= 3 && BARE_SYMBOL_MESSAGE.test(msg)) return null;
 
+  // Network failures, relocated verbatim from `MARKETING_IGNORE_ERRORS`.
+  //
+  // Reach is deliberately unchanged: still every `TypeError` whose message
+  // opens with one of the three engine wordings, still no frame gate, so an
+  // ordinary marketing network failure is exactly as suppressed as it was.
+  // The single difference is the escape hatch — an event a first-party call
+  // site has claimed with a `kind` tag now survives.
+  //
+  // It had to move because `ignoreErrors` is an SDK event processor running
+  // inside `prepareEvent`: it fires before this function and reads only the
+  // message, so no tag could ever reach it. The checkout catch on this surface
+  // reports precisely these wordings, and the Cloudflare 52x retry widening
+  // made them more reachable here, so leaving them there would have kept the
+  // paid funnel's own failures invisible (WORLDMONITOR-Q4).
+  const exceptionType = exceptionValues[0]?.type ?? '';
+  if (
+    event.tags?.kind === undefined
+    && (exceptionType === 'TypeError' || msg.startsWith('TypeError: '))
+    && MARKETING_NETWORK_NOISE.test(msg.replace(/^TypeError: /, ''))
+  ) return null;
+
   const frames = exceptionValues[0]?.stacktrace?.frames ?? [];
   const nonInfraFrames = frames.filter(
     (f) =>
@@ -360,6 +554,63 @@ export function marketingBeforeSend<T extends PolicyEvent>(event: T): T | null {
   // (WORLDMONITOR-103).
   if (!hasFirstParty && STACK_OVERFLOW.test(msg)) return null;
 
+  // A leaked fetch cancellation. WORLDMONITOR-11M is the shape: `AbortError:
+  // The user aborted a request.` (`DOMException.code: 20`) on Chrome 151 /
+  // macOS at `/`, via `onunhandledrejection` with zero frames.
+  //
+  // The wording is what a bare `controller.abort()` produces — no reason
+  // argument. This bundle's own aborts do not look like that and do not escape:
+  // `createTimeoutSignal` aborts with an explicit `TimeoutError` DOMException
+  // (see `./timeout-signal.ts`, and Chrome's native `AbortSignal.timeout` says
+  // `signal timed out`), and every fetch that carries one — the pricing
+  // catalog, the teaser loaders, the entitlement poll, the checkout transport —
+  // sits inside a `catch`. So on this surface a bare-abort rejection reaching
+  // the global handler comes from the Clerk SDK or an injected script.
+  //
+  // Gated on `!hasFirstParty` rather than suppressed by message, because that
+  // census is a fact about today's call sites, not an invariant: a future
+  // first-party `controller.abort()` that escapes its chain must still page,
+  // and it would ride a `/pro/assets/*.js` frame. Dashboard-side this class is
+  // covered by the standing `(?:AbortError: )?The user aborted a request` entry
+  // in `src/bootstrap/sentry-init.ts`.
+  if (!hasFirstParty && LEAKED_ABORT.test(msg)) return null;
+
+  // No deadline sibling here, deliberately. `TimeoutError: signal timed out`
+  // (WORLDMONITOR-11Y) looks like an obvious companion to the abort rule above,
+  // and it is not: the `!hasFirstParty` gate cannot carry it.
+  //
+  // `AbortSignal.timeout` builds its DOMException at the timer boundary, so the
+  // reason's stack holds only engine-internal frames and never the caller's.
+  // A marketing fetch that loses its own catch therefore reaches
+  // `unhandledrejection` with the SAME zero-frame shape as third-party noise;
+  // ownership adds no `/pro/assets/*.js` frame to distinguish them. Six call
+  // sites here carry a timeout signal, so suppressing the shape would blind a
+  // revenue path to silence one event. Same keep-visible reasoning as the
+  // zero-frame stack overflow in WORLDMONITOR-WK.
+  //
+  // Two of those six, `checkout.ts` and `checkout-transport.ts`, were once
+  // cited as the reason this rule stays absent. They are the wrong witnesses:
+  // the checkout catch at `services/checkout.ts` logs to the console and
+  // returns false without capturing, and the non-ok branch captures only for
+  // 429 and the two 409 envelopes. So a checkout timeout on THIS surface is
+  // invisible whatever this policy does — a real gap, tracked separately, not
+  // an argument about the filter. The rule stays absent on the strength of the
+  // other four call sites.
+  //
+  // The dashboard's gate in `src/bootstrap/sentry-init.ts` (WORLDMONITOR-66/-62)
+  // is still not a precedent to copy, though the old reason given here — that
+  // the dashboard bundle mints its own DOMException carrying caller frames —
+  // was wrong, and cost WORLDMONITOR-Q4. `createTimeoutSignal` only mints one
+  // on the pre-Baseline-2024 fallback path; every current engine takes the
+  // native `AbortSignal.timeout` branch and produces the same frameless
+  // rejection seen here (Chromium 141: `stack` is the header line alone).
+  // What separates the two surfaces is that the dashboard gate exempts any
+  // event carrying a first-party `kind` tag, which its checkout and panel
+  // reports set. No call site on THIS surface sets one, so the gate would go
+  // back to suppressing owned failures. Adding it here means tagging the six
+  // timeout call sites first. `tests/pro-sentry-filter-policy.test.mts` locks
+  // this absence in.
+
   // Safari-masked injected script. The observed event (WORLDMONITOR-110,
   // `TypeError: Attempting to change value of a readonly property.` on iOS
   // 18.7) runs four `webkit-masked-url://hidden/` frames through `appendChild`
@@ -373,6 +624,26 @@ export function marketingBeforeSend<T extends PolicyEvent>(event: T): T | null {
   // `Attempting to change value of a readonly property` entry in
   // `src/bootstrap/sentry-init.ts`.
   if (!hasFirstParty && nonInfraFrames.some((f) => MASKED_URL_FRAME.test(f.filename ?? ''))) return null;
+
+  // An injected script's `eval` refused by our CSP. WORLDMONITOR-129 is the
+  // shape: `EvalError` on Edge 150 / Windows at `/pro`, an `onerror` capture
+  // whose only frames are two `<anonymous>:1` entries, the filename V8 gives
+  // code evaluated from a string. The dashboard drops this message outright in
+  // its `ignoreErrors`; the two surfaces run separate Sentry clients, which is
+  // the same gap that let WORLDMONITOR-15/-102/-108/-117 through.
+  //
+  // Frame-gated rather than copied into `MARKETING_IGNORE_ERRORS` (see
+  // CSP_EVAL_BLOCK), and gated on the WHOLE stack being `<anonymous>` or infra
+  // rather than on `!hasFirstParty`. `hasFirstParty` does not count document
+  // frames, and this surface ships executable inline script (see
+  // MARKETING_DOCUMENT_FRAME): an eval issued by welcome.html's bootstrap puts
+  // the document URL below the `<anonymous>` frame, and that first-party CSP
+  // break must page (PR #8022 review). Requiring an `<anonymous>` frame keeps a
+  // frameless event reporting, since an empty stack is not evidence of
+  // injection.
+  if (nonInfraFrames.length === 0
+      && CSP_EVAL_BLOCK.test(msg)
+      && frames.some((f) => f.filename === '<anonymous>')) return null;
 
   // A module the browser fetched but could not parse. WORLDMONITOR-TS is the
   // shape: `action: load-clerk` on Chrome Mobile 80 / Android 10 (a 2020

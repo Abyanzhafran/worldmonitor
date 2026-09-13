@@ -1613,7 +1613,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Upgrade para PRO para participação de países em minas e refinarias com concentração (HHI) por etapa."
     },
     "positiveNewsFeed": {
       "noStories": "Ainda não há histórias nesta categoria"
@@ -1856,7 +1857,8 @@
       "dependentCommodities": "Matérias-primas dependentes",
       "stateOk": "Atual",
       "stateStale": "Entrada desatualizada",
-      "stateInsufficient": "Dados insuficientes"
+      "stateInsufficient": "Dados insuficientes",
+      "proLocked": "Upgrade para PRO para pontuação de vulnerabilidade de commodities"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Rastreador comercial de Ormuz</strong> Rastreamento AIS de navios em tempo real através do Estreito de Ormuz, o ponto de estrangulamento petrolífero mais crítico do mundo. Monitoriza contagens de petroleiros, eventos de perturbação e alterações semanais de fluxo. Aproximadamente 20% do fornecimento global de petróleo transita aqui diariamente.",
@@ -2424,6 +2426,27 @@
       "succeeded": "Chave de acesso salva. Você pode usá-la na próxima vez que entrar.",
       "retryable": "Isso não foi concluído. Você pode tentar novamente.",
       "failed": "Não conseguimos salvar uma chave de acesso neste dispositivo."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Resumo de decisão sobre commodities",
+      "commodity": "Commodity / produto",
+      "blockedChokepoint": "Passagem considerada bloqueada",
+      "commodityCapture": "Registrar comparação de commodities",
+      "title": "Resumo de decisão",
+      "fuel": "Combustível",
+      "chokepoint": "Ponto de passagem crítico",
+      "baseline": "Interrupção de referência",
+      "comparison": "Interrupção de comparação",
+      "capture": "Capturar / atualizar ambos",
+      "downloadHtml": "Baixar resumo em HTML",
+      "downloadJson": "Baixar resumo em JSON",
+      "back": "← Voltar ao resumo do país",
+      "select": "Selecione uma interrupção energética e capture os dois cenários.",
+      "changed": "Seleção alterada. Capture os dois cenários antes de exportar.",
+      "loading": "Capturando os dois cenários…",
+      "captured": "Captura concluída. Verifique as datas de observação e as restrições antes de baixar.",
+      "failed": "Não foi possível capturar os cenários. Verifique seu acesso e tente novamente. Nenhum resultado disponível para exportar.",
+      "locked": "O resumo de decisão está disponível no Pro."
     }
   },
   "popups": {
@@ -2466,9 +2489,9 @@
     },
     "gpsJamming": {
       "title": "Interferência GPS/GNSS",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Aeronaves afetadas",
+      "samples": "Número de aeronaves afetadas",
+      "aircraft": "Total de aeronaves observadas",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -3359,7 +3382,7 @@
       "decisionSignalsUnavailable": "O instantâneo de sinais de decisão da China está atualmente indisponível."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -3461,6 +3484,9 @@
         "defense_industrialBalance": "Equilíbrio industrial de defesa",
         "defense_supplierDiversity": "Diversidade de fornecedores de armamentos"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Upgrade para PRO para dependência de fornecedores de armas e capacidade militar"
     }
   },
   "preferences": {

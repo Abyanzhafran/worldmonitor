@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import {
@@ -17,6 +18,7 @@ import {
 } from '../scripts/company-monitoring-worker.mjs';
 import {
   COMPANY_MONITORING_LEASE_FINALIZATION_RESERVE_MS,
+  MAX_COMPANY_MONITORING_X_RETURNED_POSTS,
   createXRecentSearchExecutor,
 } from '../scripts/lib/company-monitoring-x-provider.mjs';
 
@@ -58,6 +60,28 @@ describe('company-monitoring classifier rollout gate', () => {
       providerRoute: 'pinned-route',
       expectedResolvedProvider: 'Pinned Provider',
     }), undefined);
+  });
+});
+
+describe('company-monitoring X budget wiring', () => {
+  it('installs the curated daily hold before the worker can reserve X Posts', () => {
+    const source = readFileSync(new URL('../scripts/company-monitoring-worker.mjs', import.meta.url), 'utf8');
+    assert.match(source, /DEFAULT_X_CURATED_DAILY_COVERAGE_POSTS/);
+    assert.match(source, /createXPostBudget\(\{[\s\S]*dailyCoveragePosts: DEFAULT_X_CURATED_DAILY_COVERAGE_POSTS,[\s\S]*\}\)/);
+  });
+
+  it('keeps the Convex X result cap equal to the provider returned-Post ceiling', () => {
+    // The two are coordinated but declared in different languages with no shared
+    // source, so a literal 95 in this regex would still pass while they drifted.
+    // Derive one from the other instead.
+    const source = readFileSync(new URL('../convex/companyMonitoring/orchestration.ts', import.meta.url), 'utf8');
+    const declared = source.match(/RESULT_CAP: Record<Source, number> = \{ exa: 25, x: (\d+) \}/);
+    assert.ok(declared, 'RESULT_CAP.x must stay greppable for this parity check');
+    assert.equal(
+      Number(declared[1]),
+      MAX_COMPANY_MONITORING_X_RETURNED_POSTS,
+      'convex/companyMonitoring/orchestration.ts RESULT_CAP.x and MAX_COMPANY_MONITORING_X_RETURNED_POSTS must move together',
+    );
   });
 });
 

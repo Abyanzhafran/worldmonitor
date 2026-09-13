@@ -38,8 +38,10 @@ const sources = {
   },
   demographics: null,
   defense: null,
-  energyMix: { AA: { year: 2024, balanceYear: 2024, primaryEnergyConsumptionTwh: 100, balanceImportSharePercent: 0 } },
-  staticByCountry: { AA: {} },
+  energyMix: { AA: { year: 2024, primaryEnergyConsumptionYear: 2024, primaryEnergyConsumptionTwh: 100 } },
+  staticByCountry: {
+    AA: { iea: { source: 'worldbank-energy-imports', energyImportDependency: { value: 0, year: 2024, source: 'worldbank' } } },
+  },
   lowCarbon: { countries: { AA: { value: 50, year: 2024 } } },
   powerLosses: { countries: { AA: { value: 5, year: 2024 } } },
   importHhi: null,
@@ -136,7 +138,7 @@ describe('five-factor atomic snapshot', () => {
     const degraded = buildFiveFactorSnapshot(countryCodes, {
       ...sources,
       population: { countries: { [coveredCountry]: { populationMillions: 10, year: 2024 } } },
-      energyMix: { [coveredCountry]: { balanceYear: 2024, primaryEnergyConsumptionTwh: 100, balanceImportSharePercent: 0 } },
+      energyMix: { [coveredCountry]: { primaryEnergyConsumptionYear: 2024, primaryEnergyConsumptionTwh: 100 } },
     }, '2026-08-29T00:00:00.000Z');
     const coverage = scorecardCoverage(degraded);
     assert.equal(coverage.scoreableCountries, 1);
@@ -157,7 +159,11 @@ describe('five-factor atomic snapshot', () => {
       },
       energyMix: Object.fromEntries(countryCodes.map((countryCode) => [
         countryCode,
-        { balanceYear: 2024, primaryEnergyConsumptionTwh: 100, balanceImportSharePercent: 0 },
+        { primaryEnergyConsumptionYear: 2024, primaryEnergyConsumptionTwh: 100 },
+      ])),
+      staticByCountry: Object.fromEntries(countryCodes.map((countryCode) => [
+        countryCode,
+        { iea: { source: 'worldbank-energy-imports', energyImportDependency: { value: 0, year: 2024, source: 'worldbank' } } },
       ])),
     };
     const snapshot = buildFiveFactorSnapshot(countryCodes, cohortSources, '2026-08-29T00:00:00.000Z');
@@ -549,7 +555,14 @@ describe('five-factor atomic snapshot', () => {
       const startedAtMs = Date.now();
       assert.equal(await readFiveFactorSnapshot(['AA'], deadlineAtMs), null);
       assert.equal(requestCount, 1, 'expired read-model budget must not start the canonical fallback');
-      assert.ok(Date.now() - startedAtMs < 500, 'scorecard Redis fallback must stay within the caller budget');
+      // Deliberately tolerant, and deliberately still here (#7534 review): if the
+      // caller's 40ms budget stopped being forwarded, SCORECARD_READ_DEADLINE_MS
+      // (7s) would abort instead -- the stub still rejects, the call still
+      // returns null, requestCount is still 1, so every other assertion passes
+      // and only elapsed time separates our deadline from an unrelated later
+      // one. 2s is ~3.5x under that 7s regression and ~4x over the scheduler
+      // noise that made the old 500ms bound flake at --test-concurrency=16.
+      assert.ok(Date.now() - startedAtMs < 2_000, 'the caller budget must bound the read, not the 7s default');
     } finally {
       globalThis.fetch = originalFetch;
       if (originalUrl == null) delete process.env.UPSTASH_REDIS_REST_URL;

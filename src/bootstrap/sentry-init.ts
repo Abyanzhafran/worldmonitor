@@ -8,7 +8,7 @@
 
 import { isIosLikeUserAgent } from './platform-ua';
 import { SENTRY_ALLOW_URLS } from './sentry-allow-urls';
-import { getSentryBuildMetadata } from './sentry-build-metadata';
+import { getSentryBuildMetadata, isolateNonProductionSentryEvent } from '../../shared/sentry-build-metadata';
 
 type SentryNs = typeof import('@sentry/browser');
 
@@ -58,14 +58,16 @@ const THIRD_PARTY_FETCH_HOST_ALLOWLIST = new Set([
 
 function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
   const sentryDsn = import.meta.env.VITE_SENTRY_DSN?.trim();
+  const environment = (location.hostname === 'worldmonitor.app' || location.hostname.endsWith('.worldmonitor.app')) ? 'production'
+    : location.hostname.includes('vercel.app') ? 'preview'
+    : 'development';
   return {
     dsn: sentryDsn || undefined,
-    ...getSentryBuildMetadata(__APP_VERSION__, __BUILD_HASH__),
-    environment: (location.hostname === 'worldmonitor.app' || location.hostname.endsWith('.worldmonitor.app')) ? 'production'
-      : location.hostname.includes('vercel.app') ? 'preview'
-      : 'development',
+    ...getSentryBuildMetadata(__APP_VERSION__, __BUILD_HASH__, environment),
+    environment,
     enabled: Boolean(sentryDsn) && !location.hostname.startsWith('localhost') && !('__TAURI_INTERNALS__' in window),
     allowUrls: SENTRY_ALLOW_URLS,
+    maxValueLength: 2048,
     sendDefaultPii: true,
     tracesSampleRate: 0.1,
     ignoreErrors: [
@@ -76,7 +78,8 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
       /NotAllowedError/,
       /InvalidAccessError/,
       /importScripts/,
-      /^TypeError: Load failed( \(.*\))?$/,
+      // `^TypeError: Load failed$` moved to the ownership-aware check at the
+      // top of beforeSend (WORLDMONITOR-Q4) — this layer cannot read the tag.
       /^TypeError: (?:cancelled|avbruten)$/,
       /runtime\.sendMessage\(\)/,
       // Chromium's Android WebView Java bridge. `android_webview` wraps every
@@ -146,6 +149,24 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
       /objectStoreNames/,
       /Unexpected identifier 'https'/,
       /Can't find variable: _0x/,
+      // The Chromium/Gecko half of the entry above. javascript-obfuscator names
+      // its identifiers `_0x<hex>`, and a userscript or extension bundle that
+      // reads its own obfuscated global before define throws
+      // `_0x58c9 is not defined` there and `Can't find variable: _0x58c9` on
+      // WebKit — so the entry above has covered only Safari since #4005.
+      // WORLDMONITOR-11P is the other half leaking through (Chrome 152 /
+      // Windows, three `<anonymous>:1` frames and nothing else); it landed on
+      // the marketing surface, which runs a separate Sentry client, and the
+      // same hole exists here.
+      //
+      // Added ALONGSIDE the WebKit entry rather than replacing it: keying on
+      // four-or-more hex digits is what makes the identifier unmistakably
+      // obfuscator output, but it would drop a non-hex `_0x…` name that the
+      // broader Safari-phrasing entry has been suppressing for months. Neither
+      // pattern subsumes the other. Vite's esbuild/terser minifier emits
+      // single-letter and `$`-prefixed names, never a `_0x` prefix, and the
+      // literal appears nowhere in src/, api/, shared/, public/ or index.html.
+      /\b_0x[0-9a-f]{4,}\b/,
       /Can't find variable: video/,
       /hackLocationFailed is not defined/,
       /userScripts is not defined/,
@@ -200,11 +221,30 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
       /__firefox__/,
       /ifameElement\.contentDocument/,
       /Invalid video id/,
-      /Fetch is aborted/,
+      // `/Fetch is aborted/` moved to the zero-frame block in beforeSend
+      // (WORLDMONITOR-Q4). It is WebKit's wording for an AbortSignal.timeout
+      // rejection, so leaving it here dropped every Safari checkout timeout
+      // before beforeSend could read the first-party `kind` tag.
       /Stylesheet append timeout/,
       /Worker is not a constructor/,
       /_pcmBridgeCallbackHandler/,
       /UCShellJava/,
+      // UC Browser's native JS bridge object, injected into every page by the
+      // in-app WebView's own chrome script and referenced before (or after) the
+      // native side has defined it. Sibling of `UCShellJava` / `ucapi` /
+      // `ucConfig` / `ucbrowser_script` already here, and of the other named
+      // in-app-bridge globals (`zaloJSV2`, `iabjs_unified_bridge`,
+      // `SCDynimacBridge`). The double-underscore-prefixed vendor identifier
+      // appears nowhere in src/, api/, shared/, server/, public/ or index.html,
+      // so it can never come from our bundle, minified or not.
+      //
+      // Matched on the identifier rather than folded into the
+      // `Can.t find variable: (...)` alternation above so BOTH engine phrasings
+      // are covered from one entry — WebKit says `Can't find variable: X`,
+      // Chromium says `X is not defined`, and UC Browser ships on both engines.
+      // WORLDMONITOR-10W (UC Browser 12.2.1 / iOS 17.6.1, single `global code`
+      // frame on the /dashboard document).
+      /__BrowserJSBridgeObj/,
       /Cannot define multiple custom elements/,
       /maxTextureDimension2D/,
       /Container app not found/,
@@ -399,11 +439,34 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
     beforeSend(event) {
       const msg = event.exception?.values?.[0]?.value ?? '';
       if (msg.length <= 3 && /^[a-zA-Z_$]+$/.test(msg)) return null;
+      // WebKit's wording for a failed fetch, relocated verbatim from
+      // `ignoreErrors`. Reach is unchanged — still only a `TypeError` whose
+      // message is exactly `Load failed`, optionally with a parenthesised
+      // suffix, and still no frame gate — so ordinary Safari network noise is
+      // as suppressed as it was. The one difference is that an event a
+      // first-party call site claimed with a `kind` tag now survives.
+      //
+      // It had to move because `ignoreErrors` runs as an SDK event processor
+      // inside `prepareEvent`, ahead of this function and blind to tags: a
+      // checkout network failure on Safari could never be rescued from it, so
+      // the zero-frame exemption below was fixing WebKit in name only
+      // (WORLDMONITOR-Q4).
+      // The type check keeps the reach identical rather than merely similar:
+      // `ignoreErrors` tested both `value` and `"<type>: <value>"`, so the old
+      // entry caught a TypeError whose value is bare `Load failed` AND the
+      // combined spelling, but never a non-TypeError carrying that wording.
+      // Matching on `msg` alone would have quietly started suppressing the
+      // latter.
+      if (
+        event.tags?.kind === undefined
+        && (event.exception?.values?.[0]?.type === 'TypeError' || msg.startsWith('TypeError: '))
+        && /^(?:TypeError: )?Load failed( \(.*\))?$/.test(msg)
+      ) return null;
       const frames = event.exception?.values?.[0]?.stacktrace?.frames ?? [];
       const vendorChunk = /\/(maplibre|deck-stack|d3|topojson|i18n|sentry|transformers|onnxruntime)-[A-Za-z0-9_-]+\.js/;
       const firstPartyFile = (filename: string) => {
         if (/\.(ts|tsx)$/.test(filename) || /^src\//.test(filename)) return true;
-        if (/\/assets\/[A-Za-z0-9_-]+(-[A-Za-z0-9_-]+)*\.js/.test(filename)) return !vendorChunk.test(filename);
+        if (/\/assets\/[A-Za-z0-9_-]+\.js/.test(filename)) return !vendorChunk.test(filename);
         return false;
       };
       const nonInfraFrames = frames.filter(f => f.filename && f.filename !== '<anonymous>' && f.filename !== '[native code]' && !/\/sentry-[A-Za-z0-9_-]+\.js/.test(f.filename));
@@ -847,10 +910,43 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
       //     endpoint we don't serve). Our own `Request timeout` strings
       //     don't include a colon-and-path suffix; the format is unique to
       //     wrapper-injected code.
+      // A first-party `kind` tag identifies an app failure even when the
+      // browser-created rejection has no first-party stack frames, so it
+      // exempts the WHOLE chain below rather than one branch of it. The tag is
+      // the invariant, not a list of names: `kind` is set ONLY by our own
+      // capture call sites — six today, in main.ts, variant-theme.ts,
+      // pending-panel-data.ts, wm-session.ts (x2) and checkout.ts — and never
+      // by the SDK, an extension, or an injected script, so presence alone
+      // proves first-party ownership without anyone maintaining a census.
+      // `tests/sentry-beforesend.test.mjs` pins that no global scope tag is
+      // named `kind`, which is the precondition this rests on.
+      //
+      // Naming individual kinds here was a treadmill, and WORLDMONITOR-Q4 sat
+      // behind it: the checkout transport's 15s timeout reports through
+      // `reportCheckoutError` and was dropped as noise for lack of
+      // `panel_call_rejected`, hiding a terminal revenue failure. The
+      // csp_violation, variant_theme_load_failed and wm_session_dead reports
+      // were being dropped the same way. Gating one branch was equally
+      // half-done: the same transport's double-network-failure path arrives as
+      // a zero-frame `Failed to fetch`, and WebKit words its timeout `Fetch is
+      // aborted` (WORLDMONITOR-10F, see services/timeout-signal.ts) — both the
+      // buyer's failure, both previously invisible.
       if (
         !hasFirstParty
+        // Presence, not truthiness. `!event.tags?.kind` would read `kind: ''`
+        // as absent, so the natural future shape `kind: someVar` could reopen
+        // WORLDMONITOR-Q4 with nothing going red. An empty tag is a bug in the
+        // caller; suppressing its report is the wrong way to find out.
+        && event.tags?.kind === undefined
         && (
           /signal timed out/.test(msg)
+          // WebKit's wording for the same AbortSignal.timeout rejection. It
+          // lived in `ignoreErrors` until WORLDMONITOR-Q4: that filter is an
+          // SDK event processor running inside prepareEvent, so it fires
+          // BEFORE beforeSend and cannot see tags or frames. Nothing owned
+          // could ever be rescued from it. Here it keeps the identical
+          // zero-frame suppression while a first-party report can claim it.
+          || /Fetch is aborted/.test(msg)
           || /NotSupportedError/.test(msg)
           || /out of memory/i.test(msg)
           || /\.(?:toLowerCase|trim|indexOf|findIndex) is not a function/.test(msg)
@@ -952,6 +1048,30 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
           // future first-party WebAuthn call site would keep a source-mapped
           // .ts frame and still surface (WORLDMONITOR-11B).
           || /An unknown error occurred while talking to the credential manager/.test(msg)
+          // The overlapping-request half of the same WebAuthn surface. Chrome
+          // serialises `navigator.credentials` requests per page and rejects
+          // the second one with `OperationError: A request is already
+          // pending.`; the documented triggers are a double-clicked sign-in
+          // button and a submit issued while a conditional-mediation passkey
+          // autofill request is still open (keycloak/keycloak#41037;
+          // w3c/webauthn#1790 records that the spec leaves the overlap
+          // undefined and that Chrome errors). Clerk's sign-in UI opens exactly
+          // that conditional request, which is the same third-party origin as
+          // the CredMan entry above, and it arrives the same way — an unhandled
+          // rejection out of the Clerk bundle with zero captured frames.
+          //
+          // Kept HERE rather than in `ignoreErrors`, unlike the marketing
+          // copy in `pro-test/src/sentry-filter-policy.ts`, because the two
+          // surfaces have different licences: the marketing bundle calls no
+          // WebAuthn API at all, but this one does — `createPasskey()` in
+          // src/services/passkeys.ts drives `user.createPasskey()`. That path
+          // cannot leak today (it wraps the call in try/catch and returns a
+          // classified outcome), but a future first-party double-invoke is
+          // precisely the bug worth seeing, and it would keep a source-mapped
+          // .ts frame. `!hasFirstParty` is what preserves it (WORLDMONITOR-11T,
+          // observed on `/pro`; the same class reaches this surface through the
+          // dashboard's own Clerk sign-in).
+          || /^(?:Error: )?OperationError: A request is already pending\.$/.test(msg)
         )
       ) return null;
       if (hasAnyStack && !hasFirstParty && (
@@ -966,6 +1086,31 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
         || (excType === 'SyntaxError' && /^Unexpected (?:token|keyword)/.test(msg))
         || /^SyntaxError: Unexpected (?:token|keyword)/.test(msg)
         || /Invalid or unexpected token/.test(msg)
+        // SpiderMonkey's wording for a malformed numeric literal (`3foo`,
+        // `0x1z`) — the Gecko sibling of the `Invalid or unexpected token` /
+        // `Unexpected token` entries above, and of the `literal not terminated
+        // before end of script` and `Octal literals are not allowed in strict
+        // mode` entries already in ignoreErrors. A runtime parse error cannot
+        // come from our own bundle: it is compiled and parsed at build time, and
+        // a genuine first-party SyntaxError keeps a source-mapped .ts frame or
+        // an owned hashed-chunk URL in the message (both preserved by the
+        // `!hasFirstParty` gate). Observed only with the page DOCUMENT url as
+        // the sole frame (`https://www.worldmonitor.app/:1`), which is how
+        // WebKit/Gecko attribute a main-world injected content script —
+        // WORLDMONITOR-10B (Firefox iOS 154.1 / iOS 18.7).
+        || (excType === 'SyntaxError' && /^No identifiers allowed directly after numeric literal$/.test(msg))
+        // SpiderMonkey's wording for a malformed numeric literal (`3foo`,
+        // `0x1z`) — the Gecko sibling of the `Invalid or unexpected token` /
+        // `Unexpected token` entries above, and of the `literal not terminated
+        // before end of script` and `Octal literals are not allowed in strict
+        // mode` entries already in ignoreErrors. A runtime parse error cannot
+        // come from our own bundle: it is compiled and parsed at build time, and
+        // a genuine first-party SyntaxError keeps a source-mapped .ts frame or
+        // an owned hashed-chunk URL in the message (both preserved by the
+        // `!hasFirstParty` gate). Observed only with the page DOCUMENT url as
+        // the sole frame (`https://www.worldmonitor.app/:1`), which is how
+        // WebKit/Gecko attribute a main-world injected content script —
+        // WORLDMONITOR-10B (Firefox iOS 154.1 / iOS 18.7).
         // V8 wording when HTML (or other non-JS) is parsed as a script:
         // Electron / in-app wrappers fetch the SPA document (`/dashboard`)
         // as if it were JS, then report the parse failure against the
@@ -1011,6 +1156,7 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
       if (excType === 'SyntaxError'
           && /^(?:SyntaxError: )?(?:Invalid or unexpected token|Unexpected (?:token|keyword|identifier|EOF|end of script))/.test(msg)
           && frames.some(f => /\/(?:maplibre|deck-stack)-[A-Za-z0-9_-]+\.js/.test(f.filename ?? ''))) return null;
+      isolateNonProductionSentryEvent(event, environment);
       return event;
     },
   };

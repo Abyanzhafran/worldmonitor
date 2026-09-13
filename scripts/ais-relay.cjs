@@ -25,6 +25,7 @@ const crypto = require('crypto');
 const v8 = require('v8');
 const { WebSocketServer, WebSocket } = require('ws');
 const { parseProxyConfig, resolveProxyString, resolveProxyStringForAttempt } = require('./_proxy-utils.cjs');
+const { parseWidgetAgentResponse } = require('./_widget-response-parser.cjs');
 const {
   cooldownKeyForAccount,
   OPENSKY_LEGACY_COOLDOWN_KEY,
@@ -50,8 +51,22 @@ const {
 } = require('./lib/llm-model-policy.cjs');
 const xNewsAccounts = require('./lib/x-news-accounts.cjs');
 const { createPollGenerationGuard } = require('./lib/poll-generation-guard.cjs');
-const { createXPollCycle } = require('./lib/x-poll-cycle.cjs');
+const { createXPollCycle, xPollSlot } = require('./lib/x-poll-cycle.cjs');
+const {
+  createXPostBudget,
+  DEFAULT_X_CURATED_DAILY_COVERAGE_POSTS,
+  xPostBudgetServiceStatus,
+} = require('./lib/x-post-budget.cjs');
 const { buildClassifyCandidateMap, isStaleDigestReplay } = require('./lib/digest-stale-gate.cjs');
+const {
+  buildClassifyDigestUrl,
+  classifyDigestTransport,
+  buildClassifyDigestHeaders,
+  formatClassifyDigestFetchFailure,
+  shouldWriteClassifySeedMeta,
+  CLASSIFY_DIGEST_RETRY_DELAYS_MS,
+  classifyDigestRetryDecision,
+} = require('./lib/classify-digest-request.cjs');
 const {
   YahooQuoteSummaryClient,
   buildSectorSeedMeta,
@@ -74,7 +89,7 @@ const {
 } = require('./_ingestion-coverage.cjs');
 const { maintainClosedMarketEquityKeys: maintainClosedMarketEquityKeysWithDeps } = require('./shared/closed-market-equity-maintenance.cjs');
 const { getUsEquitySession, isMultiMarketEquityTradingDay } = require('./shared/market-hours.cjs');
-const { mergeLastGoodQuotes, planYahooRefresh } = require('./shared/market-quote-refresh.cjs');
+const { mergeLastGoodQuotes, planYahooRefresh, resolveMergedQuotesAsOf } = require('./shared/market-quote-refresh.cjs');
 // ESM module loaded via require(esm) (Node >= 22.12; relay image is node:24).
 // Same implementation the RPC handler scores with — see the module header for
 // why it lives in shared/ rather than beside the other scoring helpers.
@@ -171,9 +186,53 @@ const RELAY_GOOGLE_FLIGHTS_RATE_LIMIT_MAX = Number.isFinite(Number(process.env.R
 const RELAY_LOG_THROTTLE_MS = Math.max(1000, Number(process.env.RELAY_LOG_THROTTLE_MS || 10000));
 const ALLOW_VERCEL_PREVIEW_ORIGINS = process.env.ALLOW_VERCEL_PREVIEW_ORIGINS === 'true';
 
-// OpenSky proxy — routes through residential proxy to avoid Railway IP blocks
+// OpenSky route selection — ONE selected route, never a cascade.
+//
+// OpenSky's rate limit is per ACCOUNT (4,000 credits/day, keyed on OPENSKY_CLIENT_ID —
+// see scripts/_opensky-account-cooldown.cjs and
+// docs/solutions/integration-issues/opensky-bbox-area-billing-flat-top-tier.md), NOT per
+// exit IP. A residential exit therefore buys no extra quota, and an automatic
+// proxy-on-failure fallback would spend a SECOND account credit retrying the one error
+// class a different IP cannot fix (429). That is strictly worse on both axes: more paid
+// proxy bytes AND faster quota exhaustion. So the route is selected once, the way
+// _gdelt-fetch.mjs selects its own.
+//
+// `direct` is the default because it is free — OpenSky was 82.5% of the residential
+// proxy bill (24.86 GB / $136.75 of a ~$165 quarter) for no quota benefit. `proxy` is
+// the operator escape hatch for a genuine IP-level rejection, which is counted
+// separately as openskyRouteRejection (403/451) so the health surface can tell
+// "flip the route" apart from "wait for credits".
+const OPENSKY_ROUTE_DEFAULT = 'direct';
+const OPENSKY_ROUTES = Object.freeze(['direct', 'proxy']);
+
+function resolveOpenSkyRoute(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return OPENSKY_ROUTE_DEFAULT;
+  if (OPENSKY_ROUTES.includes(value)) return value;
+  console.warn(
+    `[Relay] Ignoring unknown OPENSKY_ROUTE="${raw}" — expected ${OPENSKY_ROUTES.join(' or ')}; `
+    + `using "${OPENSKY_ROUTE_DEFAULT}"`,
+  );
+  return OPENSKY_ROUTE_DEFAULT;
+}
+
+const OPENSKY_ROUTE_REQUESTED = resolveOpenSkyRoute(process.env.OPENSKY_ROUTE);
 const OPENSKY_PROXY_AUTH = process.env.OPENSKY_PROXY_AUTH || process.env.PROXY_URL || '';
-const OPENSKY_PROXY_ENABLED = !!OPENSKY_PROXY_AUTH;
+// Fail OPEN to the free route: an unconfigured escape hatch must not take OpenSky down.
+if (OPENSKY_ROUTE_REQUESTED === 'proxy' && !OPENSKY_PROXY_AUTH) {
+  console.warn(
+    '[Relay] OPENSKY_ROUTE=proxy but neither OPENSKY_PROXY_AUTH nor PROXY_URL is set — '
+    + 'using the direct route.',
+  );
+}
+const OPENSKY_PROXY_ENABLED = OPENSKY_ROUTE_REQUESTED === 'proxy' && !!OPENSKY_PROXY_AUTH;
+// The EFFECTIVE route — what requests actually do, which is the only thing an operator
+// can act on. Derived from OPENSKY_PROXY_ENABLED rather than tracked separately so the
+// two can never disagree: `OPENSKY_ROUTE=proxy` with no credential silently falls back
+// to direct, and reporting the REQUESTED value there would send an operator hunting a
+// proxy that was never in the request path — in exactly the misconfiguration this
+// telemetry exists to diagnose. The requested value stays available for the mismatch.
+const OPENSKY_ROUTE = OPENSKY_PROXY_ENABLED ? 'proxy' : 'direct';
 
 const PROXY_URL = process.env.PROXY_URL || ''; // generic residential proxy (US exit) — http://user:pass@host:port or host:port:user:pass (Decodo)
 
@@ -2026,12 +2085,14 @@ function startTelegramPollLoop() {
 
 // ─────────────────────────────────────────────────────────────
 // Curated X news-account monitoring (Track A / #6654)
-// Official X API user-timeline + since_id. Cadence 5–15 min.
-// Requires env: X_BEARER_TOKEN (same Bearer as company-monitoring-worker).
+// One public X List page in each fixed 15-minute UTC slot.
+// Requires the app bearer and the verified public List ID.
 // ─────────────────────────────────────────────────────────────
 const X_BEARER_TOKEN = String(process.env.X_BEARER_TOKEN || '').trim();
-const X_ENABLED = Boolean(X_BEARER_TOKEN);
-const X_POLL_INTERVAL_MS = xNewsAccounts.clampPollIntervalMs(process.env.X_POLL_INTERVAL_MS || xNewsAccounts.DEFAULT_POLL_INTERVAL_MS);
+const X_CURATED_LIST_ID = String(process.env.X_CURATED_LIST_ID || '').trim();
+const X_CURATED_LIST_CONFIGURED = /^[1-9]\d{0,18}$/.test(X_CURATED_LIST_ID);
+const X_ENABLED = Boolean(X_BEARER_TOKEN && X_CURATED_LIST_CONFIGURED);
+const X_POLL_INTERVAL_MS = 15 * 60 * 1000;
 // `Number('abc')` is NaN, and Math.max(50, NaN) is NaN — which reaches
 // mergeAndDedup as `.slice(0, NaN)` and silently publishes an EMPTY feed every
 // cycle with no error anywhere. Coerce non-numeric env values to the default.
@@ -2044,39 +2105,44 @@ const X_FEED_POLL_STATE_KEY = 'intelligence:x-feed:poll-state:v1';
 const X_FEED_POLL_LOCK_KEY = 'intelligence:x-feed:poll-lock:v1';
 const X_FEED_TTL_SECONDS = 5400;
 const X_FEED_META_TTL_SECONDS = 3600;
-const X_FEED_POLL_LOCK_TTL_SECONDS = Math.ceil((X_POLL_INTERVAL_MS + 120_000) / 1000);
-// The stuck-poll abort has to fire while the Redis lease above is still HELD,
-// and the guard only re-evaluates when a scheduled tick calls it. A threshold at
-// or above the cadence therefore pushes the first evaluation out to 2x the
-// cadence — well past the lease TTL — so between TTL expiry and that tick this
-// replica keeps issuing requests on a lapsed lease while a peer's SETNX
-// succeeds: both drain the shared bearer's quota and both write the whole cursor
-// map. Sitting a minute under the cadence (clamped to 5-15min, so 4-14min here)
-// makes the very next tick abort the run, with the lease still ours to release.
-// Derived from the same constant as the TTL so the invariant
-// X_POLL_STUCK_AFTER_MS < X_POLL_INTERVAL_MS < X_FEED_POLL_LOCK_TTL_SECONDS * 1000
-// cannot drift the way two independently tuned literals can.
-const X_POLL_STUCK_AFTER_MS = X_POLL_INTERVAL_MS - 60_000;
+// Two bounded 15-second X calls plus Redis work fit inside two minutes. A short
+// lease lets another replica recover at the next quarter-hour boundary after an
+// owner crash instead of losing two slots to the old cadence-sized lease.
+const X_FEED_POLL_LOCK_TTL_SECONDS = 120;
+// The process-local guard is checked on each scheduled boundary. If a request
+// somehow outlives the normal timeout, the next boundary aborts that generation
+// before it starts a replacement run.
+const X_POLL_STUCK_AFTER_MS = 60_000;
+const xPostBudget = createXPostBudget({
+  evalCommand: upstashEval,
+  dailyCoveragePosts: DEFAULT_X_CURATED_DAILY_COVERAGE_POSTS,
+});
 
 const xState = {
   accounts: [],
-  cursorByAccountId: Object.create(null),
-  accountIdByHandle: Object.create(null),
-  catchupByAccountId: Object.create(null),
+  lastMembershipCheckAt: 0,
   items: [],
   lookupOffset: 0,
-  accountOffset: 0,
   // Persisted snapshot version, published to Redis and to /status. NOT the poll
   // guard's run counter — see xPollGeneration below for why the two must stay
   // apart.
   generation: 0,
   lastPollAt: 0,
   lastHealthyAt: 0,
+  lastAttemptAt: 0,
+  lastProviderSuccessAt: 0,
+  lastAcceptedPublicationAt: 0,
+  lastAttemptSlot: null,
+  lastProviderSuccessSlot: null,
+  lastPublishedSlot: null,
   lastCoverage: null,
   lastError: null,
   rateLimitedUntil: 0,
   rateLimitAttempt: 0,
   backoffCause: null,
+  lastDeletionAuditAt: 0,
+  lastCycleUsage: null,
+  postBudget: null,
   // True when a Redis read failed, so last-good state is present but unreadable.
   // Blocks polling/publishing until a clean read (see the cycle's hydrate()).
   hydrationFailed: false,
@@ -2095,18 +2161,15 @@ let xPollGeneration = 0;
 
 function loadXAccounts() {
   const p = path.join(__dirname, '..', 'data', 'x-accounts.json');
-  const set = String(process.env.X_CHANNEL_SET || '').trim().toLowerCase();
   try {
     const raw = JSON.parse(readFileSync(p, 'utf8'));
     const enabledTotal = xNewsAccounts.countEnabledAccounts(raw);
     if (enabledTotal > X_TRACK_A_ACCOUNT_BUDGET) {
       console.warn(`[Relay] X registry has ${enabledTotal} enabled accounts; Track A budget is ~${X_TRACK_A_ACCOUNT_BUDGET}. Re-run spend math before growing the set.`);
     }
-    xState.accounts = set
-      ? xNewsAccounts.loadXAccounts(raw, { set })
-      : xNewsAccounts.loadXAccounts(raw);
+    xState.accounts = xNewsAccounts.loadXAccounts(raw);
     if (!xState.accounts.length) {
-      console.warn(`[Relay] X account set "${set || 'all'}" is empty — no accounts to poll`);
+      console.warn('[Relay] X account registry is empty — no accounts to poll');
     }
     return xState.accounts;
   } catch (e) {
@@ -2127,6 +2190,7 @@ function loadXAccounts() {
 const xPollCycle = createXPollCycle({
   xState,
   xNewsAccounts,
+  xPostBudget,
   loadXAccounts,
   upstashGet,
   upstashSetNx,
@@ -2140,6 +2204,8 @@ const xPollCycle = createXPollCycle({
   randomId: () => crypto.randomBytes(4).toString('hex'),
   X_ENABLED,
   X_BEARER_TOKEN,
+  X_CURATED_LIST_ID,
+  X_POLL_INTERVAL_MS,
   X_FEED_CACHE_KEY,
   X_FEED_META_KEY,
   X_FEED_POLL_STATE_KEY,
@@ -2168,32 +2234,40 @@ const xPollGuard = createPollGenerationGuard({
 });
 
 function guardedXPoll(retryAfterLeaseConflict = false) {
-  xPollGuard.run({ retryAfterLeaseConflict });
+  return xPollGuard.run({ retryAfterLeaseConflict });
 }
 
 async function startXPollLoop() {
   loadXAccounts();
   await xPollCycle.hydrate();
   if (!X_ENABLED) {
-    console.warn('[Relay] X news-account poll skipped — X_BEARER_TOKEN is not configured on ais-relay');
+    const missing = [
+      !X_BEARER_TOKEN ? 'X_BEARER_TOKEN' : null,
+      !X_CURATED_LIST_CONFIGURED ? 'valid X_CURATED_LIST_ID' : null,
+    ].filter(Boolean);
+    xState.lastError = `X List poll disabled: missing ${missing.join(' and ')}`;
+    console.warn(`[Relay] ${xState.lastError}`);
     return;
   }
+  const slot = xPollSlot(Date.now(), X_POLL_INTERVAL_MS);
   const nextDueAt = Math.max(
-    xState.lastPollAt ? xState.lastPollAt + X_POLL_INTERVAL_MS : 0,
+    xState.lastAttemptSlot === slot.id ? slot.endsAt : Date.now(),
     xState.rateLimitedUntil || 0,
   );
   const startupDelayMs = Math.max(0, nextDueAt - Date.now());
-  const startInterval = () => {
-    guardedXPoll();
-    setInterval(guardedXPoll, X_POLL_INTERVAL_MS).unref?.();
+  const pollAndScheduleNextSlot = () => {
+    const started = guardedXPoll();
+    const activeSlot = xPollSlot(Date.now(), X_POLL_INTERVAL_MS);
+    const delayMs = started ? Math.max(1000, activeSlot.endsAt - Date.now()) : 1000;
+    setTimeout(pollAndScheduleNextSlot, delayMs).unref?.();
   };
   if (startupDelayMs > 0) {
-    const timer = setTimeout(startInterval, startupDelayMs);
+    const timer = setTimeout(pollAndScheduleNextSlot, startupDelayMs);
     timer.unref?.();
   } else {
-    startInterval();
+    pollAndScheduleNextSlot();
   }
-  console.log(`[Relay] X poll loop started (${Math.round(X_POLL_INTERVAL_MS / 60000)} min cadence)`);
+  console.log('[Relay] X List poll loop started (fixed 15-minute UTC slots)');
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -3094,9 +3168,12 @@ const MARKET_YAHOO_REFRESH_INTERVAL_MS = Math.max(
     : 900_000,
 );
 
+const { loadMarketSeedUniverse } = require('./shared/market-seed-universe.cjs');
 const _stockCfg = requireShared('stocks.json');
-const MARKET_SYMBOLS = _stockCfg.symbols.map((s) => s.symbol);
-const MARKET_META = new Map(_stockCfg.symbols.map((s) => [s.symbol, { name: s.name, display: s.display }]));
+const _stockUniverse = loadMarketSeedUniverse(_stockCfg);
+const MARKET_SYMBOLS = _stockUniverse.allSymbols;
+const MARKET_AUXILIARY_SYMBOLS = _stockUniverse.auxiliarySymbols;
+const MARKET_META = _stockUniverse.metaBySymbol;
 
 const _commodityCfg = requireShared('commodities.json');
 const COMMODITY_SYMBOLS = _commodityCfg.commodities.map(c => c.symbol);
@@ -3114,33 +3191,32 @@ const YAHOO_ONLY = new Set([
   ...COMMODITY_SYMBOLS.filter(s => s.endsWith('=X')),
 ]);
 
+// CommonJS cannot import finiteObservation from _seed-utils.mjs. The relay test
+// keeps this boundary guard aligned with the cron seeder.
+function _finiteObservation(value) {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function _parseYahooChartJson(body) {
   try {
     const data = JSON.parse(body);
     const result = data?.chart?.result?.[0];
     const meta = result?.meta;
     if (!meta) return null;
-    const price = meta.regularMarketPrice;
-    const prevClose = meta.chartPreviousClose || meta.previousClose || price;
+    const price = _finiteObservation(meta.regularMarketPrice);
+    if (price == null) return null;
+    const prevClose = [meta.chartPreviousClose, meta.previousClose]
+      .map(_finiteObservation)
+      .find((value) => value != null && value !== 0) ?? price;
     const change = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
-    // Round to 7 significant digits like the cron seeders' roundSparkline
-    // (_seed-utils.mjs). Raw float64 noise made these FAST-tier keys ~2x the
-    // rounded size, and whichever writer wins the relay/cron race decides
-    // what every visitor downloads on cold load.
-    //
-    // The guard below MIRRORS toSignificantDigits in _seed-utils.mjs exactly:
-    // non-numbers, non-finite values and 0 pass through untouched so a malformed
-    // upstream degrades identically on both writers. Without it a string close
-    // ("N/A") becomes NaN and serialises to null, denting the curve on the relay
-    // path only. CJS cannot import the ESM helper, so the copy is deliberate and
-    // tests/ais-relay-sparkline-precision.test.mjs pins the two in lockstep.
     const closes = result.indicators?.quote?.[0]?.close;
     const sparkline = Array.isArray(closes)
-      ? closes.filter((v) => v != null).map((v) => (
-        typeof v === 'number' && Number.isFinite(v) && v !== 0
-          ? Number(v.toPrecision(7))
-          : v
-      ))
+      ? closes
+        .map(_finiteObservation)
+        .filter((value) => value != null)
+        .map((value) => (value !== 0 ? Number(value.toPrecision(7)) : value))
       : [];
     return { price, change, sparkline };
   } catch { return null; }
@@ -3324,6 +3400,7 @@ async function seedMarketQuotes() {
     : finnhubSymbols;
   const yahooPlan = planYahooRefresh({
     mandatoryYahooSymbols: yahooSymbols,
+    everyCycleSymbols: MARKET_AUXILIARY_SYMBOLS.filter((s) => YAHOO_ONLY.has(s)),
     missedPrimarySymbols: missedFinnhub,
     nowMs: Date.now(),
     lastRefreshAt: _lastYahooMarketRefreshAt,
@@ -3353,12 +3430,18 @@ async function seedMarketQuotes() {
   const yahooSuccessCount = freshQuotes.length - freshCountBeforeYahoo;
   const coveredByYahoo = finnhubSymbols.every((s) => quotes.some((q) => q.symbol === s));
   const skipped = !FINNHUB_API_KEY && !coveredByYahoo;
-  const payload = { quotes, finnhubSkipped: skipped, skipReason: skipped ? 'FINNHUB_API_KEY not configured' : '', rateLimited: false };
   const redisKey = `market:quotes:v1:${[...MARKET_SYMBOLS].sort().join(',')}`;
   // Compute once and thread through every write below so the envelopes'
   // _seed.fetchedAt and seed-meta.fetchedAt agree for this one publish,
   // instead of each awaited round-trip sampling Date.now() independently.
   const fetchedAt = Date.now();
+  const payload = {
+    quotes,
+    finnhubSkipped: skipped,
+    skipReason: skipped ? 'FINNHUB_API_KEY not configured' : '',
+    rateLimited: false,
+    asOf: resolveMergedQuotesAsOf(freshQuotes, quotes, previousPayload?.asOf, fetchedAt),
+  };
   const ok = await envelopeWrite(redisKey, payload, MARKET_SEED_TTL, { fetchedAt, recordCount: quotes.length, sourceVersion: 'market-stocks' });
   // Bootstrap-friendly fixed key — frontend hydrates from /api/bootstrap without RPC
   const ok2 = await envelopeWrite('market:stocks-bootstrap:v1', payload, MARKET_SEED_TTL, { fetchedAt, recordCount: quotes.length, sourceVersion: 'market-stocks' });
@@ -4821,26 +4904,55 @@ async function classifyFetchLlm(titles) {
 let classifyInFlight = false;
 
 async function seedClassifyForVariant(variant, seenTitles) {
-  const digestUrl = `https://api.worldmonitor.app/api/news/v1/list-feed-digest?variant=${variant}&lang=en`;
+  const digestUrl = buildClassifyDigestUrl(variant);
+  const transport = classifyDigestTransport(digestUrl) === 'http' ? http : https;
   let digest;
-  try {
-    const resp = await new Promise((resolve, reject) => {
-      const req = https.get(digestUrl, {
-        headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
-        timeout: 15000,
-      }, resolve);
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    });
-    if (resp.statusCode !== 200) { resp.resume(); return { total: 0, classified: 0, skipped: 0 }; }
-    const body = await new Promise((resolve) => {
-      let d = '';
-      resp.on('data', (c) => { d += c; });
-      resp.on('end', () => resolve(d));
-    });
-    digest = JSON.parse(body);
-  } catch {
-    return { total: 0, classified: 0, skipped: 0 };
+  const maxDigestAttempts = CLASSIFY_DIGEST_RETRY_DELAYS_MS.length + 1;
+  for (let attempt = 0; attempt < maxDigestAttempts; attempt++) {
+    try {
+      const resp = await new Promise((resolve, reject) => {
+        const req = transport.get(digestUrl, {
+          headers: buildClassifyDigestHeaders({
+            userAgent: CHROME_UA,
+            relayKey: RELAY_API_KEY,
+          }),
+          timeout: 15000,
+        }, resolve);
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      });
+      if (resp.statusCode !== 200) {
+        resp.resume();
+        const retry = classifyDigestRetryDecision({ attempt, status: resp.statusCode });
+        if (retry.retry) {
+          console.warn(`[Classify] digest fetch HTTP ${resp.statusCode}; retrying in ${retry.delayMs}ms`);
+          await new Promise((r) => setTimeout(r, retry.delayMs));
+          continue;
+        }
+        console.warn(formatClassifyDigestFetchFailure(resp.statusCode, RELAY_API_KEY));
+        return { total: 0, classified: 0, skipped: 0, fetchFailed: true };
+      }
+      const body = await new Promise((resolve) => {
+        let d = '';
+        resp.on('data', (c) => { d += c; });
+        resp.on('end', () => resolve(d));
+      });
+      digest = JSON.parse(body);
+      break;
+    } catch (e) {
+      const retry = classifyDigestRetryDecision({ attempt, error: e });
+      if (retry.retry) {
+        console.warn(`[Classify] digest fetch error: ${e?.message || e}; retrying in ${retry.delayMs}ms`);
+        await new Promise((r) => setTimeout(r, retry.delayMs));
+        continue;
+      }
+      console.warn('[Classify] digest fetch error:', e?.message || e);
+      return { total: 0, classified: 0, skipped: 0, fetchFailed: true };
+    }
+  }
+  if (!digest) {
+    console.warn('[Classify] digest fetch error: exhausted retries');
+    return { total: 0, classified: 0, skipped: 0, fetchFailed: true };
   }
 
   // #7084: stale RSS titles already had their alert pass when served fresh.
@@ -5006,12 +5118,16 @@ async function seedClassify() {
 
     let totalClassified = 0;
     let totalSkipped = 0;
+    let fetchOk = 0;
+    let fetchFailed = 0;
     const mergedByCountry = {};
     const seenTitles = new Set();
     for (let v = 0; v < CLASSIFY_VARIANTS.length; v++) {
       if (v > 0) await new Promise((r) => setTimeout(r, CLASSIFY_VARIANT_STAGGER_MS));
       try {
         const stats = await seedClassifyForVariant(CLASSIFY_VARIANTS[v], seenTitles);
+        if (stats.fetchFailed) fetchFailed += 1;
+        else fetchOk += 1;
         totalClassified += stats.classified;
         totalSkipped += stats.skipped;
         console.log(`[Classify] ${CLASSIFY_VARIANTS[v]}: ${stats.total} titles, ${stats.classified} classified, ${stats.skipped} skipped`);
@@ -5024,6 +5140,11 @@ async function seedClassify() {
       } catch (e) {
         console.warn(`[Classify] ${CLASSIFY_VARIANTS[v]} error:`, e?.message || e);
       }
+    }
+
+    if (!shouldWriteClassifySeedMeta({ fetchOk, fetchFailed })) {
+      console.warn('[Classify] Digest fetch failed for every variant — not writing seed-meta:classify');
+      return;
     }
 
     await upstashSet('seed-meta:news:threat-summary', { fetchedAt: Date.now(), recordCount: Object.keys(mergedByCountry).length }, 604800);
@@ -5997,10 +6118,16 @@ async function seedWeatherAlerts() {
       maxBytes: SWIC_MAX_BYTES,
     });
 
+    const sourceSuccessAt = {};
+    const fetchSource = async (source, fetchFn) => {
+      const value = await fetchFn();
+      sourceSuccessAt[source] = Date.now();
+      return value;
+    };
     const [nwsResult, ecccResult, swicResult] = await Promise.allSettled([
-      fetchNwsFeatures(),
-      fetchEcccFeatures(),
-      fetchSwicCatalog(),
+      fetchSource('nws', fetchNwsFeatures),
+      fetchSource('eccc', fetchEcccFeatures),
+      fetchSource('swic', fetchSwicCatalog),
     ]);
     if (nwsResult.status === 'rejected') {
       console.warn(`[Weather] NWS fetch failed: ${nwsResult.reason?.message || nwsResult.reason}`);
@@ -6011,10 +6138,9 @@ async function seedWeatherAlerts() {
     if (swicResult.status === 'rejected') {
       console.warn(`[Weather] SWIC fetch failed: ${swicResult.reason?.message || swicResult.reason}`);
     }
-    if (nwsResult.status === 'rejected' && ecccResult.status === 'rejected' && swicResult.status === 'rejected') {
-      console.warn('[Weather] Seed failed: NWS, ECCC, and SWIC fetches all failed');
-      return;
-    }
+    const results = { nws: nwsResult, eccc: ecccResult, swic: swicResult };
+    const failedSources = Object.keys(results).filter((source) => results[source].status === 'rejected');
+    const attemptedAt = Date.now();
 
     const nwsFeatures = nwsResult.status === 'fulfilled' ? nwsResult.value : [];
     const nwsAlerts = nwsResult.status === 'fulfilled'
@@ -6037,9 +6163,21 @@ async function seedWeatherAlerts() {
     let carriedNws = [];
     let carriedEccc = [];
     let carriedSwic = [];
-    if (nwsResult.status === 'rejected' || ecccResult.status === 'rejected' || swicResult.status === 'rejected') {
-      const prev = await envelopeRead(WEATHER_REDIS_KEY, () => null);
-      const prevAlerts = Array.isArray(prev?.alerts) ? prev.alerts : [];
+    let previousMeta = null;
+    let previousPayloadAt = null;
+    if (failedSources.length > 0) {
+      const [raw, meta] = await Promise.all([
+        upstashGet(WEATHER_REDIS_KEY, () => null),
+        upstashGet('seed-meta:weather:alerts', () => null),
+      ]);
+      previousMeta = meta;
+      // Inspect the envelope clock as well as its data: the two writes can fail independently.
+      const enveloped = raw && typeof raw === 'object' && !Array.isArray(raw) && '_seed' in raw && 'data' in raw;
+      const prev = enveloped ? raw.data : raw;
+      previousPayloadAt = enveloped ? raw._seed?.fetchedAt : null;
+      // Failed providers cannot tell us which alerts ended since the last fetch.
+      const prevAlerts = (Array.isArray(prev?.alerts) ? prev.alerts : [])
+        .filter((alert) => Date.parse(alert?.expires) > attemptedAt);
       if (nwsResult.status === 'rejected') carriedNws = prevAlerts.filter((a) => a?.source === 'nws');
       if (ecccResult.status === 'rejected') carriedEccc = prevAlerts.filter((a) => a?.source === 'eccc');
       if (swicResult.status === 'rejected') carriedSwic = prevAlerts.filter((a) => a?.source === 'swic');
@@ -6053,32 +6191,55 @@ async function seedWeatherAlerts() {
       eccc: ecccResult.status === 'fulfilled' ? ecccAlerts : carriedEccc,
       swic: swicResult.status === 'fulfilled' ? swicAlerts : carriedSwic,
     });
+    const sourceHealth = Object.fromEntries(Object.keys(results).map((source) => {
+      if (results[source].status === 'fulfilled') {
+        return [source, { lastSuccessAt: sourceSuccessAt[source], consecutiveFailures: 0, firstFailureAt: null, retainedUntil: null }];
+      }
+      const previous = previousMeta?.sourceHealth?.[source];
+      const known = previousMeta?.status !== 'error'
+        && Number.isSafeInteger(previousPayloadAt) && previousPayloadAt > 0
+        && previousPayloadAt === previousMeta?.fetchedAt
+        && Number.isSafeInteger(previous?.consecutiveFailures) && previous.consecutiveFailures >= 0;
+      const retained = alerts.filter((alert) => alert.source === source);
+      return [source, {
+        lastSuccessAt: previous?.lastSuccessAt ?? null,
+        consecutiveFailures: known ? Math.min(previous.consecutiveFailures + 1, 100) : null,
+        firstFailureAt: known && previous.consecutiveFailures === 0 ? attemptedAt : (previous?.firstFailureAt ?? null),
+        retainedUntil: retained.length > 0 ? Math.min(...retained.map((alert) => Date.parse(alert.expires))) : null,
+      }];
+    }));
+    const sourceMeta = {
+      sourceHealth,
+      lastSourceAttemptAt: attemptedAt,
+      ...(failedSources.length > 0
+        ? { sourceState: 'degraded', errorCode: 'WEATHER_ALERT_SOURCE_INCOMPLETE', failedSources }
+        : { sourceState: 'ok' }),
+    };
+    if (failedSources.length === 3) {
+      await upstashSet('seed-meta:weather:alerts', {
+        fetchedAt: previousMeta?.fetchedAt ?? 0,
+        recordCount: previousMeta?.recordCount ?? 0,
+        ...sourceMeta,
+      }, 604800);
+      console.warn('[Weather] Seed failed: NWS, ECCC, and SWIC fetches all failed');
+      return;
+    }
 
     // Always write the merged active set (#6607 purge). Do not skip overwrite
     // when a live source returns 0 — that would leave ended CA alerts cached.
     const payload = { alerts };
+    const publishedAt = Date.now();
     const ok1 = await envelopeWrite(WEATHER_REDIS_KEY, payload, WEATHER_CACHE_TTL, {
+      fetchedAt: publishedAt,
       recordCount: alerts.length,
       sourceVersion: WEATHER_ALERTS_SOURCE_VERSION,
       zeroOk: true,
     });
-    // A permanently dead source must be visible to /api/health. Without a
-    // sourceState the seed-meta stays fresh forever and the outage is invisible.
-    const failedSources = [
-      nwsResult.status === 'rejected' ? 'nws' : null,
-      ecccResult.status === 'rejected' ? 'eccc' : null,
-      swicResult.status === 'rejected' ? 'swic' : null,
-    ].filter(Boolean);
     const ok2 = await upstashSet('seed-meta:weather:alerts', {
-      fetchedAt: Date.now(),
+      fetchedAt: publishedAt,
       recordCount: alerts.length,
-      ...(failedSources.length > 0
-        ? {
-          sourceState: 'degraded',
-          errorCode: 'WEATHER_ALERT_SOURCE_INCOMPLETE',
-          failedSources,
-        }
-        : { sourceState: 'ok' }),
+      ...sourceMeta,
+      ...(!ok1 ? { status: 'error' } : {}),
     }, 604800);
     console.log(`[Weather] Seeded ${alerts.length} alerts (nws=${nwsAlerts.length} eccc=${ecccAlerts.length} swic=${swicAlerts.length}, redis: ${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     // Which high-severity alerts this tick notifies on. Distinct families,
@@ -6854,8 +7015,9 @@ async function seedCorridorRisk() {
         eventCount7d: Number(corridor.event_count_7d ?? 0),
         disruptionPct: Number(corridor.disruption_pct ?? 0),
         vesselCount: Number(corridor.vessel_count ?? 0),
-        riskSummary: String(corridor.risk_summary || '').slice(0, 200),
-        riskReportAction: String((corridor.risk_report?.action) || '').slice(0, 500),
+        // Generated prose has no verified routing or cost basis.
+        riskSummary: '',
+        riskReportAction: '',
       };
     }
     if (Object.keys(result).length === 0) {
@@ -6872,7 +7034,7 @@ async function seedCorridorRisk() {
       const label = corridorId.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
       publishNotificationEvent({
         eventType: 'corridor_risk',
-        payload: { title: `${label}: risk score ${c.riskScore}${c.riskSummary ? ' — ' + c.riskSummary.slice(0, 80) : ''}`, source: 'Corridor Risk' },
+        payload: { title: `${label}: risk score ${c.riskScore}`, source: 'Corridor Risk' },
         severity: c.riskScore >= 70 ? 'critical' : 'high',
         variant: undefined,
         dedupTtl: 3600,
@@ -7355,7 +7517,9 @@ async function seedSocialVelocity() {
       for (const p of posts) {
         // Deduplicate cross-subreddit reposts of the same article URL.
         const articleUrl = p.url || '';
-        const isExternal = articleUrl && !articleUrl.includes('reddit.com');
+        let articleHostname = '';
+        try { articleHostname = new URL(articleUrl).hostname; } catch { /* invalid URLs are not deduplicated */ }
+        const isExternal = articleHostname && articleHostname !== 'reddit.com' && !articleHostname.endsWith('.reddit.com');
         if (isExternal && seenUrls.has(articleUrl)) continue;
         if (isExternal) seenUrls.add(articleUrl);
         const ageSec = Math.max(1, nowSec - (p.created_utc || nowSec));
@@ -8161,6 +8325,7 @@ const relayMetricsLifetime = {
   openskyThrottle: 0,
   openskyTimeout: 0,
   openskyAuthRejection: 0,
+  openskyRouteRejection: 0,
   openskyFallback: 0,
   openskyTerminalFailure: 0,
   drops: 0,
@@ -8214,6 +8379,7 @@ function createRelayMetricsBucket() {
     openskyThrottle: 0,
     openskyTimeout: 0,
     openskyAuthRejection: 0,
+    openskyRouteRejection: 0,
     openskyFallback: 0,
     openskyTerminalFailure: 0,
     drops: 0,
@@ -8299,6 +8465,10 @@ const RELAY_OUTCOME_FIELDS = Object.freeze({
     throttle: 'openskyThrottle',
     timeout: 'openskyTimeout',
     authRejection: 'openskyAuthRejection',
+    // OpenSky-only: the exit IP was refused, not the credentials. Every other route
+    // keeps folding 403 into authRejection, so this key is deliberately absent from
+    // their maps — recordRelayOutcome drops an outcome a route does not declare.
+    routeRejection: 'openskyRouteRejection',
     fallback: 'openskyFallback',
     terminalFailure: 'openskyTerminalFailure',
   }),
@@ -8334,6 +8504,23 @@ function recordRelayOutcome(route, outcome, amount = 1) {
   incrementRelayMetric(metricField, amount);
 }
 
+// OpenSky-specific refinement of the shared classifier.
+//
+// classifyUpstreamOutcome collapses 401 and 403 into 'authRejection'. That is right for
+// every other route, but for OpenSky the two say opposite things and imply opposite
+// fixes: 401 = the CREDENTIALS were rejected (rotate OPENSKY_CLIENT_SECRET), 403/451 =
+// the EXIT IP was rejected (flip OPENSKY_ROUTE). Conflating them is exactly why
+// "is the direct route blocked?" could not be answered from telemetry.
+//
+// Deliberately NOT classified as a route rejection: socket errors (ECONNRESET, EPROTO,
+// timeouts). Those are ordinary network noise on either route — EPROTO in particular was
+// the #5074 double-TLS bug, not a block — and labelling them would send an operator to
+// flip the route over a transient blip. Only an explicit refusal from the origin counts.
+function classifyOpenSkyOutcome({ status, error } = {}) {
+  if (status === 403 || status === 451) return 'routeRejection';
+  return classifyUpstreamOutcome({ status, error });
+}
+
 function sampleRelayQueueSize(queueSize) {
   const bucket = getRelayMetricsBucket();
   if (queueSize > bucket.queueMax) bucket.queueMax = queueSize;
@@ -8366,6 +8553,7 @@ function getRelayRollingMetrics() {
     rollup.openskyThrottle += bucket.openskyThrottle;
     rollup.openskyTimeout += bucket.openskyTimeout;
     rollup.openskyAuthRejection += bucket.openskyAuthRejection;
+    rollup.openskyRouteRejection += bucket.openskyRouteRejection;
     rollup.openskyFallback += bucket.openskyFallback;
     rollup.openskyTerminalFailure += bucket.openskyTerminalFailure;
     rollup.drops += bucket.drops;
@@ -8504,6 +8692,16 @@ function getRelayRollingMetrics() {
     aviation: {
       coverage: aviationCoverage,
       minimumServedCoverage: AVIATION_MIN_SERVED_COVERAGE,
+      // Which OpenSky route requests actually take, and whether the origin is refusing
+      // this exit IP. routeRejection (403/451) means "flip OPENSKY_ROUTE";
+      // providerBlocked (429) means the ACCOUNT is out of credits and no route change
+      // can help. `openskyRoute` is the EFFECTIVE route; `openskyRouteRequested` is what
+      // OPENSKY_ROUTE asked for, so the two differing is itself the misconfiguration
+      // signal (proxy requested, no credential, silently serving direct).
+      openskyRoute: OPENSKY_ROUTE,
+      openskyRouteRequested: OPENSKY_ROUTE_REQUESTED,
+      openskyRouteRejection: rollup.openskyRouteRejection,
+      openskyProviderBlocked,
     },
     // Which upstream fed each theater-posture publication cycle, plus empty
     // cycles that were rejected before publication. Kept separate
@@ -8629,6 +8827,14 @@ const MAX_VESSEL_META = 50000;
 
 const vessels = new Map();
 const vesselHistory = new Map();
+// mmsi → timestamp of the vessel's most recent position fix. Retention must
+// exceed GAP_THRESHOLD: the dark-ship return check compares the CURRENT fix
+// against this value, and the vesselHistory equivalent loses the prior fix
+// to its 30-minute DENSITY_WINDOW prune and 10-entry cap long before a >1h
+// silence ends. Bounded by the same retention prune + recency eviction
+// cleanupAggregates applies to vesselHistory.
+const vesselLastFixSeen = new Map();
+const LAST_FIX_RETENTION_MS = 6 * 60 * 60 * 1000; // 6h — 6× GAP_THRESHOLD
 const densityGrid = new Map();
 const candidateReports = new Map();
 // Parallel store for tanker (AIS ship type 80-89) position reports — populated
@@ -8692,6 +8898,17 @@ const TRANSIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MIN_DWELL_MS = 5 * 60 * 1000;
 const CHOKEPOINT_TRANSIT_KEY = 'supply_chain:chokepoint_transits:v1';
 const CHOKEPOINT_TRANSIT_TTL = 3600; // 1h — 6x interval; survives ~5 consecutive missed pings
+
+// Dark-ship (AIS gap) count envelope — the trusted producer behind the
+// temporal anomalies `ais_gaps` count source (#7574). Written on its own
+// slow loop, not on the per-snapshot build: detectDisruptions runs every
+// SNAPSHOT_INTERVAL_MS, which would be a Redis write per relay heartbeat.
+const AIS_GAPS_REDIS_KEY = 'maritime:ais-gaps:v1';
+// 60min — must STRICTLY exceed the 30min health maxStaleMin (api/health.js
+// aisGaps entry) so a dead relay reads warn STALE_SEED before the envelope
+// expires to crit EMPTY; 6x the seed interval.
+const AIS_GAPS_TTL = 3600;
+const AIS_GAPS_SEED_INTERVAL_MS = 10 * 60 * 1000;
 const CHOKEPOINT_TRANSIT_INTERVAL_MS = 10 * 60 * 1000;
 
 const NAVAL_PREFIX_RE = /^(USS|USNS|HMS|HMAS|HMCS|INS|JS|ROKS|TCG|FS|BNS|RFS|PLAN|PLA|CGC|PNS|KRI|ITS|SNS|MMSI)/i;
@@ -8947,6 +9164,18 @@ function processPositionReportForSnapshot(data) {
   });
 
   const history = vesselHistory.get(mmsi) || [];
+  // Dark-ship return detection (#7574): a fix arriving more than
+  // GAP_THRESHOLD after the previous one marks the vessel as returned from
+  // extended AIS silence. The prior fix is read from vesselLastFixSeen, NOT
+  // from vesselHistory — cleanupAggregates prunes vesselHistory to the
+  // 30-min DENSITY_WINDOW and caps it at 10 entries, so by the time a >1h
+  // silence ends the old fix is long gone from that structure and a
+  // history-diffing form of this check can never fire.
+  const lastFixAt = vesselLastFixSeen.get(mmsi);
+  if (lastFixAt && now - lastFixAt > GAP_THRESHOLD) {
+    darkShipReturns.set(mmsi, now);
+  }
+  vesselLastFixSeen.set(mmsi, now);
   history.push(now);
   if (history.length > 10) history.shift();
   vesselHistory.set(mmsi, history);
@@ -9033,6 +9262,14 @@ function cleanupAggregates() {
       vesselHistory.set(mmsi, filtered);
     }
   }
+  // Retention prune + recency cap for the dark-ship last-fix map: entries
+  // older than the retention window can never be part of a live >1h silence
+  // comparison again, and the cap bounds memory against vessel churn.
+  const lastFixCutoff = now - LAST_FIX_RETENTION_MS;
+  for (const [mmsi, ts] of vesselLastFixSeen) {
+    if (ts < lastFixCutoff) vesselLastFixSeen.delete(mmsi);
+  }
+  evictMapByTimestamp(vesselLastFixSeen, MAX_VESSEL_HISTORY, (ts) => ts);
   // Hard cap: keep the most recent vessel histories.
   evictMapByTimestamp(vesselHistory, MAX_VESSEL_HISTORY, (history) => history[history.length - 1] || 0);
 
@@ -9121,6 +9358,29 @@ function cleanupAggregates() {
   }
 }
 
+// Vessels seen again after extended AIS silence: mmsi → the return-seen
+// timestamp. Entries are bounded by the 10-minute freshness window in
+// countDarkShips (pruned on read) and the 10-entry vesselHistory cap, so the
+// map cannot grow unbounded even in a flood of simultaneous returns.
+const darkShipReturns = new Map();
+
+/**
+ * Vessels that returned after extended AIS silence and were seen again
+ * within the last 10 minutes — the signal the retired client-side ais_gaps
+ * baseline counted per browser session (#7574). Sightings are recorded at
+ * ingestion (processPositionReportForSnapshot) because cleanupAggregates
+ * prunes vesselHistory to the 30-minute DENSITY_WINDOW, which can never
+ * span the 1-hour GAP_THRESHOLD.
+ */
+function countDarkShips(now = Date.now()) {
+  let darkShipCount = 0;
+  for (const [mmsi, seenAt] of darkShipReturns) {
+    if (now - seenAt >= 10 * 60 * 1000) darkShipReturns.delete(mmsi);
+    else darkShipCount++;
+  }
+  return darkShipCount;
+}
+
 function detectDisruptions() {
   const disruptions = [];
   const now = Date.now();
@@ -9154,17 +9414,7 @@ function detectDisruptions() {
     }
   }
 
-  let darkShipCount = 0;
-  for (const history of vesselHistory.values()) {
-    if (history.length >= 2) {
-      const lastSeen = history[history.length - 1];
-      const secondLast = history[history.length - 2];
-      if (lastSeen - secondLast > GAP_THRESHOLD && now - lastSeen < 10 * 60 * 1000) {
-        darkShipCount++;
-      }
-    }
-  }
-
+  const darkShipCount = countDarkShips(now);
   if (darkShipCount >= 1) {
     disruptions.push({
       id: 'global-gap-spike',
@@ -9370,11 +9620,19 @@ async function seedChokepointTransits() {
     const crossings = chokepointCrossings.get(cp.name) || [];
     const recent = crossings.filter(c => now - c.ts < TRANSIT_WINDOW_MS);
     chokepointCrossings.set(cp.name, recent);
+    // `available` is the same signal seedTransitSummaries encodes by leaving
+    // todayTotal null. Both writers read this one in-memory map and both ship
+    // in a single get-chokepoint-status bundle, so without it one response
+    // carried summaries.suez.todayTotal === null next to
+    // transits["Suez Canal"].total === 0 and an agent's answer depended on
+    // which half it read. The counts stay numeric here because the documented
+    // shape of this key is {tanker, cargo, other, total}.
     transits[cp.name] = {
       tanker: recent.filter(c => c.type === 'tanker').length,
       cargo: recent.filter(c => c.type === 'cargo').length,
       other: recent.filter(c => c.type === 'other').length,
       total: recent.length,
+      available: recent.length > 0,
     };
   }
   const payload = { transits, fetchedAt: now };
@@ -9382,6 +9640,39 @@ async function seedChokepointTransits() {
   await upstashSet('seed-meta:supply_chain:chokepoint_transits', { fetchedAt: now, recordCount: Object.keys(transits).length }, 604800);
   console.log(`[Transit] Seeded ${Object.keys(transits).length} chokepoint transit counts`);
 }
+
+/**
+ * seedAisGaps publishes the dark-ship count envelope + seed-meta.
+ *
+ * `sampledAt` is the content clock the temporal-anomalies rebuild reads
+ * (gapsContentClock); computing `now` once and threading it through both
+ * writes keeps `_seed.fetchedAt` and seed-meta in agreement (#6775).
+ *
+ * The publish is gated on AIS position freshness: while the aisstream feed
+ * is down or stale the relay cannot observe returns, so publishing a count
+ * (most robusly a zero) would stamp OK on a blind sensor. Skipping BOTH
+ * writes instead lets the 30min health budget age the missing stamp into
+ * STALE_SEED — the honest signal.
+ */
+async function seedAisGaps() {
+  const now = Date.now();
+  if (!getAisPositionFreshness(now).currentPositionReady) {
+    console.log(`[AisGaps] Skipping publish: AIS positions not fresh (ageMs=${getAisPositionFreshness(now).positionAgeMs})`);
+    return;
+  }
+  const darkShips = countDarkShips(now);
+  const envelopeOk = await envelopeWrite(AIS_GAPS_REDIS_KEY, { darkShips, sampledAt: now }, AIS_GAPS_TTL, { fetchedAt: now, recordCount: darkShips, sourceVersion: 'ais-gaps', zeroOk: true });
+  const metaOk = await upstashSet('seed-meta:maritime:ais-gaps', { fetchedAt: now, recordCount: darkShips }, 604800);
+  if (!envelopeOk || !metaOk) {
+    console.warn(`[AisGaps] Seed write FAILED (envelope=${envelopeOk} meta=${metaOk})`);
+    return;
+  }
+  console.log(`[AisGaps] Seeded dark-ship count: ${darkShips}`);
+}
+
+setTimeout(() => {
+  startBootSeedLoop('AisGaps', 'seed-meta:maritime:ais-gaps', AIS_GAPS_SEED_INTERVAL_MS, seedAisGaps, err => console.error('[AisGaps] Initial seed error:', err.message), err => console.error('[AisGaps] Seed error:', err.message));
+}, 30_000);
 
 setTimeout(() => {
   startBootSeedLoop('Transit', 'seed-meta:supply_chain:chokepoint_transits', CHOKEPOINT_TRANSIT_INTERVAL_MS, seedChokepointTransits, err => console.error('[Transit] Initial seed error:', err.message), err => console.error('[Transit] Seed error:', err.message));
@@ -9479,21 +9770,22 @@ async function seedTransitSummaries() {
 
     // Compact summary: no history field. Consumed by get-chokepoint-status on
     // every request, so keep it small.
-    // dataAvailable distinguishes genuine zero-traffic (cpData present, 0
-    // crossings) from zero-state fill (upstream missing this cycle). False
-    // here makes the RPC response explicit and lets the client render a
-    // "data unavailable" indicator instead of silently-empty stat rows.
+    // dataAvailable is PortWatch history presence, not AIS today-counts.
+    // todayTotal comes from the in-memory 24h AIS window; an empty window is
+    // unsupplied, not a published zero-traffic measurement (#7457). Leave the
+    // count absent so PortWatch WoW cannot sit next to a fake 0.
     summaries[cpId] = {
-      todayTotal: relayTransit?.total ?? 0,
-      todayTanker: relayTransit?.tanker ?? 0,
-      todayCargo: relayTransit?.cargo ?? 0,
-      todayOther: relayTransit?.other ?? 0,
+      todayTotal: relayTransit?.total ?? null,
+      todayTanker: relayTransit?.tanker ?? null,
+      todayCargo: relayTransit?.cargo ?? null,
+      todayOther: relayTransit?.other ?? null,
       wowChangePct: cpData?.wowChangePct ?? 0,
       riskLevel: cr?.riskLevel ?? '',
       incidentCount7d: cr?.incidentCount7d ?? 0,
       disruptionPct: cr?.disruptionPct ?? 0,
-      riskSummary: cr?.riskSummary ?? '',
-      riskReportAction: cr?.riskReportAction ?? '',
+      // Persisted corridor data can predate prose suppression.
+      riskSummary: '',
+      riskReportAction: '',
       anomaly,
       dataAvailable: Boolean(cpData),
     };
@@ -9722,7 +10014,17 @@ async function handleUcdpEventsRequest(req, res) {
 const openskyResponseCache = new Map(); // key: sorted query params → { data, gzip, timestamp }
 const openskyNegativeCache = new Map(); // key: cacheKey → { status, timestamp, body, gzip } — prevents retry storms on 429/5xx
 const openskyInFlight = new Map(); // key: cacheKey → Promise (dedup concurrent requests)
-const OPENSKY_CACHE_TTL_MS = Number(process.env.OPENSKY_CACHE_TTL_MS) || 60 * 1000; // 60s default — env-configurable
+// 180s default — env-configurable. This TTL is the only thing standing between the
+// dashboard's poll rate and a PAID upstream fetch: OpenSky is 82.5% of the residential
+// proxy bill (24.86 GB / $136.75 of a ~$165 quarter, per Decodo's per-target report),
+// and it serves /states/all UNCOMPRESSED — identity, gzip, deflate and br all return
+// the same ~1.49 MB, so no Accept-Encoding change can shrink a miss. Fetching less
+// often is the entire lever, hence 60s → 180s. NOTE: production overrides this with
+// OPENSKY_CACHE_TTL_MS on the ais-relay service, so raising the default alone changes
+// nothing in prod — the env var has to move with it. The client-facing Cache-Control
+// stays at 30s so browsers keep revalidating against this in-memory cache, which is
+// free, instead of pinning a 180s-stale copy of their own.
+const OPENSKY_CACHE_TTL_MS = Number(process.env.OPENSKY_CACHE_TTL_MS) || 180 * 1000;
 const OPENSKY_NEGATIVE_CACHE_TTL_MS = Number(process.env.OPENSKY_NEGATIVE_CACHE_TTL_MS) || 30 * 1000; // 30s — env-configurable
 const OPENSKY_CACHE_MAX_ENTRIES = Math.max(10, Number(process.env.OPENSKY_CACHE_MAX_ENTRIES || 128));
 const OPENSKY_NEGATIVE_CACHE_MAX_ENTRIES = Math.max(10, Number(process.env.OPENSKY_NEGATIVE_CACHE_MAX_ENTRIES || 256));
@@ -10306,7 +10608,7 @@ async function handleOpenSkyRequest(req, res, PORT) {
     const negCached = openskyNegativeCache.get(cacheKey);
     if (negCached && Date.now() - negCached.timestamp < OPENSKY_NEGATIVE_CACHE_TTL_MS) {
       incrementRelayMetric('openskyNegativeHit');
-      recordRelayOutcome('opensky', classifyUpstreamOutcome({ status: negCached.status }));
+      recordRelayOutcome('opensky', classifyOpenSkyOutcome({ status: negCached.status }));
       touchCacheEntry(openskyNegativeCache, cacheKey, negCached); // LRU
       return sendPreGzipped(req, res, 200, {
         'Content-Type': 'application/json',
@@ -10359,7 +10661,7 @@ async function handleOpenSkyRequest(req, res, PORT) {
       const dedupNeg = openskyNegativeCache.get(cacheKey);
       if (dedupNeg && Date.now() - dedupNeg.timestamp < OPENSKY_NEGATIVE_CACHE_TTL_MS) {
         incrementRelayMetric('openskyDedupNeg');
-        recordRelayOutcome('opensky', classifyUpstreamOutcome({ status: dedupNeg.status }));
+        recordRelayOutcome('opensky', classifyOpenSkyOutcome({ status: dedupNeg.status }));
         touchCacheEntry(openskyNegativeCache, cacheKey, dedupNeg); // LRU
         return sendPreGzipped(req, res, 200, {
           'Content-Type': 'application/json',
@@ -10413,8 +10715,8 @@ async function handleOpenSkyRequest(req, res, PORT) {
     const result = await openskyQueuedFetch(openskyUrl, token);
     const upstreamStatus = result.status || 502;
     const upstreamOutcome = result.error
-      ? classifyUpstreamOutcome({ status: upstreamStatus, error: result.error })
-      : classifyUpstreamOutcome({ status: upstreamStatus });
+      ? classifyOpenSkyOutcome({ status: upstreamStatus, error: result.error })
+      : classifyOpenSkyOutcome({ status: upstreamStatus });
     recordRelayOutcome('opensky', upstreamOutcome);
 
     if (upstreamStatus === 401) {
@@ -10459,7 +10761,7 @@ async function handleOpenSkyRequest(req, res, PORT) {
       ...responseHeaders,
     }, responseData);
   } catch (err) {
-    recordRelayOutcome('opensky', classifyUpstreamOutcome({ error: err }));
+    recordRelayOutcome('opensky', classifyOpenSkyOutcome({ error: err }));
     if (settleFlight) settleFlight();
     if (!cacheKey) {
       try {
@@ -11474,7 +11776,10 @@ const server = http.createServer(async (req, res) => {
   // prevention (rate limiting), not data protection. Cloudflare WAF provides edge-level protection.
   const isPublicRoute = pathname === '/health' || pathname === '/' || isRssRoute || pathname.startsWith('/widget-agent');
   if (!isPublicRoute) {
-    if (!isAuthorizedRequest(req)) {
+    const authorized = pathname === '/status'
+      ? Boolean(RELAY_SHARED_SECRET) && isAuthorizedRequest(req)
+      : isAuthorizedRequest(req);
+    if (!authorized) {
       const routeGroup = getRouteGroup(pathname);
       if (routeGroup === 'snapshot') incrementRelayMetric('aisSnapshotUnauthorizedClient');
       else if (routeGroup === 'opensky') recordRelayOutcome('opensky', 'authRejection');
@@ -11608,7 +11913,12 @@ const server = http.createServer(async (req, res) => {
         enabled: X_ENABLED,
         accounts: xState.accounts?.length || 0,
         items: xState.items?.length || 0,
+        // lastPollAt is an ACCEPTED-PUBLICATION clock: it advances only when a
+        // List page is validated, settled and published. lastAttemptAt is the
+        // attempt clock this field used to be, kept here so public consumers can
+        // still tell "not polling" from "polling but not accepting".
         lastPollAt: xState.lastPollAt ? new Date(xState.lastPollAt).toISOString() : null,
+        lastAttemptAt: xState.lastAttemptAt ? new Date(xState.lastAttemptAt).toISOString() : null,
         hasError: !!xState.lastError,
         lastError: xState.lastError || null,
         // Distinguishes "Redis unreadable, refusing to publish" from an ordinary
@@ -11656,6 +11966,46 @@ const server = http.createServer(async (req, res) => {
         // allowVercelPreviewOrigins removed per #3802. See note above.
         enabled: !AUTH_EFFECTIVELY_DISABLED,
         sharedSecretEnabled: !!RELAY_SHARED_SECRET,
+      },
+    }));
+  } else if (pathname === '/status') {
+    const postBudget = await xPostBudget.status({ requestedPosts: 5, coverageUnitPosts: 5 });
+    return sendCompressed(req, res, postBudget.available ? 200 : 503, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    }, JSON.stringify({
+      status: xPostBudgetServiceStatus(postBudget),
+      xFeed: {
+        enabled: X_ENABLED,
+        bearerConfigured: Boolean(X_BEARER_TOKEN),
+        listConfigured: X_CURATED_LIST_CONFIGURED,
+        accounts: xState.accounts?.length || 0,
+        items: xState.items?.length || 0,
+        lastPollAt: xState.lastPollAt ? new Date(xState.lastPollAt).toISOString() : null,
+        lastAttemptAt: xState.lastAttemptAt ? new Date(xState.lastAttemptAt).toISOString() : null,
+        lastProviderSuccessAt: xState.lastProviderSuccessAt
+          ? new Date(xState.lastProviderSuccessAt).toISOString()
+          : null,
+        lastAcceptedPublicationAt: xState.lastAcceptedPublicationAt
+          ? new Date(xState.lastAcceptedPublicationAt).toISOString()
+          : null,
+        lastAttemptSlot: xState.lastAttemptSlot,
+        lastProviderSuccessSlot: xState.lastProviderSuccessSlot,
+        lastPublishedSlot: xState.lastPublishedSlot,
+        lastMembershipCheckAt: xState.lastMembershipCheckAt
+          ? new Date(xState.lastMembershipCheckAt).toISOString()
+          : null,
+        lastError: xState.lastError || null,
+        coverage: xState.lastCoverage,
+        lastHealthyAt: xState.lastHealthyAt ? new Date(xState.lastHealthyAt).toISOString() : null,
+        pollInFlight: xPollGuard.isInFlight(),
+        rateLimitedUntil: xState.rateLimitedUntil ? new Date(xState.rateLimitedUntil).toISOString() : null,
+        backoffCause: xState.backoffCause || null,
+        lastDeletionAuditAt: xState.lastDeletionAuditAt
+          ? new Date(xState.lastDeletionAuditAt).toISOString()
+          : null,
+        lastCycleUsage: xState.lastCycleUsage,
+        postBudget,
       },
     }));
   } else if (pathname === '/metrics') {
@@ -11746,7 +12096,7 @@ const server = http.createServer(async (req, res) => {
     const clientId = process.env.OPENSKY_CLIENT_ID;
     const clientSecret = process.env.OPENSKY_CLIENT_SECRET;
 
-    diag.steps.push({ step: 'env_check', hasClientId: !!clientId, hasClientSecret: !!clientSecret, proxyEnabled: OPENSKY_PROXY_ENABLED });
+    diag.steps.push({ step: 'env_check', hasClientId: !!clientId, hasClientSecret: !!clientSecret, route: OPENSKY_ROUTE, routeRequested: OPENSKY_ROUTE_REQUESTED, proxyEnabled: OPENSKY_PROXY_ENABLED });
     diag.steps.push({
       step: 'auth_state',
       cachedToken: !!openskyToken,
@@ -13385,10 +13735,7 @@ async function handleWidgetAgentRequest(req, res) {
       if (response.stop_reason === 'end_turn') {
         const textBlock = response.content.find(b => b.type === 'text');
         const text = textBlock?.text ?? '';
-        const htmlMatch = text.match(/<!--\s*widget-html\s*-->([\s\S]*?)<!--\s*\/widget-html\s*-->/);
-        const html = (htmlMatch?.[1] ?? text).slice(0, maxHtml);
-        const titleMatch = text.match(/<!--\s*title:\s*([^\n]+?)\s*-->/);
-        const title = titleMatch?.[1]?.trim() ?? 'Custom Widget';
+        const { html, title } = parseWidgetAgentResponse(text, maxHtml);
         sendWidgetSSE(res, 'html_complete', { html });
         sendWidgetSSE(res, 'done', { title });
         completed = true;
@@ -13459,11 +13806,10 @@ async function handleWidgetAgentRequest(req, res) {
         const text = Array.isArray(msg.content)
           ? msg.content.filter(b => b.type === 'text').map(b => b.text).join('')
           : String(msg.content ?? '');
-        const htmlMatch = text.match(/<!--\s*widget-html\s*-->([\s\S]*?)<!--\s*\/widget-html\s*-->/);
-        if (htmlMatch?.[1]?.trim()) {
-          const titleMatch = text.match(/<!--\s*title:\s*([^\n]+?)\s*-->/);
-          sendWidgetSSE(res, 'html_complete', { html: htmlMatch[1].slice(0, maxHtml) });
-          sendWidgetSSE(res, 'done', { title: titleMatch?.[1]?.trim() ?? 'Custom Widget' });
+        const parsed = parseWidgetAgentResponse(text, maxHtml);
+        if (parsed.hasHtmlMarkers && parsed.html.trim()) {
+          sendWidgetSSE(res, 'html_complete', { html: parsed.html });
+          sendWidgetSSE(res, 'done', { title: parsed.title });
           recovered = true;
           break;
         }
@@ -13937,7 +14283,7 @@ const wss = new WebSocketServer({ server });
 server.listen(PORT, () => {
   const listeningPort = server.address()?.port || PORT;
   relayBoundPort = listeningPort;
-  console.log(`[Relay] WebSocket relay on port ${listeningPort} (OpenSky: ${OPENSKY_PROXY_ENABLED ? 'via proxy' : 'direct'})`);
+  console.log(`[Relay] WebSocket relay on port ${listeningPort} (OpenSky route: ${OPENSKY_ROUTE}${OPENSKY_ROUTE_REQUESTED !== OPENSKY_ROUTE ? ` — "${OPENSKY_ROUTE_REQUESTED}" requested but unconfigured` : ''})`);
   if (RELAY_TEST_MODE) {
     if (process.env.RELAY_TEST_THEATER_VESSEL === '1') {
       candidateReports.set('test-military-vessel', {

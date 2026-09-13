@@ -209,7 +209,16 @@ export default async function handler(req, ctx) {
           relayResponse = await fetchViaRailway(feedUrl, timeout);
         } catch (relayError) {
           console.error('RSS proxy relay retry error:', feedUrl, relayError instanceof Error ? relayError.message : String(relayError));
-          captureSilentError(relayError, { tags: { route: 'api/rss-proxy', step: 'relay-retry', feed: feedUrl }, ctx });
+          // Skip Sentry on timeout, exactly as the outer catch does for the
+          // direct leg. fetchViaRailway aborts on the same feed timeout budget,
+          // and this retry is a best-effort SECOND attempt whose failure the
+          // caller never sees — the original non-ok direct response is returned
+          // either way. Capturing it reported routine upstream latency at error
+          // level (WORLDMONITOR-11G); #7438 made the same call for
+          // api/telegram-feed.js. Real relay failures still report.
+          if (relayError?.name !== 'AbortError') {
+            captureSilentError(relayError, { tags: { route: 'api/rss-proxy', step: 'relay-retry', feed: feedUrl }, ctx });
+          }
         }
         if (relayResponse?.ok) {
           response = relayResponse;
@@ -224,7 +233,11 @@ export default async function handler(req, ctx) {
     return new Response(data, {
       status: response.status,
       headers: {
-        'Content-Type': response.headers.get('content-type') || 'application/xml',
+        // Consumers parse response.text() as feed XML. Never let an upstream
+        // MIME type or active XML turn this same-origin URL into a document.
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "sandbox; default-src 'none'",
         // validateApiKey() gates every GET. Shared caches do not key on the
         // credential header, so this must not be public / s-maxage / CDN-cached.
         // `private` keeps CDNs out; max-age lets the SPA feedCache persist.
@@ -248,7 +261,6 @@ export default async function handler(req, ctx) {
     }
     return jsonResponse({
       error: isTimeout ? 'Feed timeout' : 'Failed to fetch feed',
-      details: error.message,
       url: feedUrl
     }, isTimeout ? 504 : 502, corsHeaders);
   }

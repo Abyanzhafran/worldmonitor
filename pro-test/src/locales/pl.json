@@ -32,7 +32,7 @@
     "proF6": "Wyszukiwanie lotów i porównywanie cen",
     "proF7": "Silnik reguł alertów — własne wyzwalacze, ciche godziny, kanały szyfrowane AES-256",
     "proF8": "Watchlista rynkowa, śledzenie makro i banków centralnych",
-    "proF9": "AI Market Implications i Regional Intelligence (Wkrótce: obserwacja orbitalna, premium warstwy map, rozszerzona historia)",
+    "proF9": "Implikacje AI dla rynków i wywiad regionalny",
     "choosePlan": "Wybierz plan",
     "entTitle": "World Monitor Enterprise",
     "entDesc": "Dla zespołów, które potrzebują współdzielonego monitoringu, dostępu do API, opcji wdrożenia, aplikacji TV i bezpośredniego wsparcia.",
@@ -48,7 +48,8 @@
     "entF10": "Wdrożenie w chmurze, on-premises lub air-gapped",
     "entF11": "Dedykowane wdrożenie i wsparcie",
     "entCta": "Porozmawiaj ze sprzedażą",
-    "freeF2": "Kluczowane kanały, źródła przypisane i warstwy map"
+    "freeF2": "Kluczowane kanały, źródła przypisane i warstwy map",
+    "proF10": "Pamięć wywiadu — przeszukiwanie historyczne, osie czasu i wyszukiwanie podobnych zdarzeń"
   },
   "whyUpgrade": {
     "title": "Dlaczego warto przejść na World Monitor Pro?",
@@ -155,13 +156,14 @@
     "economyAnalyticsDesc": "PKB, inflacja, stopy procentowe i cykle wzrostu. Dane makro skorelowane z sygnałami rynkowymi i wydarzeniami geopolitycznymi.",
     "riskMonitoring": "Monitoring ryzyka i scenariusze",
     "riskMonitoringDesc": "Globalna punktacja ryzyka, analiza scenariuszy i ocena ryzyka geopolitycznego. Wykrywanie konwergencji między sygnałami rynkowymi i politycznymi.",
-    "orbitalSurveillance": "Obserwacja orbitalna",
-    "orbitalSurveillanceDesc": "(Wkrótce) Prognozy przelotów, analiza częstotliwości powrotów i alerty okna obrazowania. Wiedz, kiedy satelity wywiadowcze obserwują Twoje obszary zainteresowania.",
     "morningBriefs": "Osobiste stanowisko wywiadowcze",
     "morningBriefsDesc": "Do 30 rankingowanych artykułów na podsumowanie, zdeduplikowane w źródłach. Wybierz częstotliwość codziennie, dwa razy dziennie lub tygodniowo — lub alerty w czasie rzeczywistym dla krytycznych zdarzeń. Ocena AI i sygnały do obserwacji dostarczone na Slack, Discord, Telegram, Email lub webhook. Nie biuletyn — analityk.",
     "oneKey": "Live Services, 1 Key",
     "oneKeyDesc": "Finnhub, FRED, ACLED, UCDP, NASA FIRMS, AISStream, OpenSky i więcej — wszystkie aktywne, bez osobnych rejestracji.",
-    "deliveryLabel": "Wybierz, jak wywiad Cię znajdzie"
+    "deliveryLabel": "Wybierz, jak wywiad Cię znajdzie",
+    "supplyChainLab": "Laboratorium stresu łańcucha dostaw",
+    "supplyChainLabDesc": "Modeluj szok kosztów na świecie i sektorach. Rankinguj podatność surowców na podstawie zależności od wąskich gardeł. Śledź koncentrację od kopalni do rafinerii i rozbieżność premii fizycznej SGE–COMEX — szereg, który zmienia się przed nagłówkiem.",
+    "roadmapNote": "Na mapie drogowej: obserwacja orbitalna, dłuższa historia, premium warstwy mapy."
   },
   "slackMock": {
     "morningBrief": "Poranny brief",
@@ -363,14 +365,14 @@
       "pro": {
         "description": "Pełny pulpit analityczny",
         "features": [
-          "Wszystko z planu Free",
-          "Analiza akcji i backtesting AI",
-          "Codzienne briefingi rynkowe",
-          "Śledzenie geopolityczne i wojskowe",
-          "Konstruktor widżetów niestandardowych",
-          "10 niestandardowych pulpitów (vs 3)",
+          "Wszystko z wersji Free — panele, źródła i śledzone kraje bez limitu",
+          "Chat analityka WM + analiza AI i backtesting",
+          "Modelowanie szoku kosztów i testy stresu łańcucha dostaw",
+          "Pamięć wywiadu — przeszukiwanie historyczne, osie czasu i podobne wydarzenia",
+          "Rozbieżność metali fizycznych, koncentracja minerałów i dane długu suwerennego",
+          "Zaplanowany digest AI + silnik reguł alertów",
           "Dostęp do MCP + SDK dla Claude Desktop i innych klientów AI (50 wywołań/dzień)",
-          "Priorytetowe odświeżanie danych"
+          "Niestandardowe widgety i 10 dashboardów (zamiast 3)"
         ],
         "highlightFeatures": [
           "Licencja osobista",
@@ -384,7 +386,7 @@
           "Klucz licencyjny / API w zestawie",
           "Strumienie danych w czasie rzeczywistym",
           "60 żądań/minutę",
-          "1000 żądań/dzień w cenie",
+          "1000 żądań/dzień w pakiecie (REST + MCP razem; jedno aktywne połączenie MCP liczy się jako 2-3)",
           "Powiadomienia webhook"
         ],
         "highlightFeatures": [
@@ -412,9 +414,9 @@
         "description": "Uruchom własny produkt na danych WorldMonitor",
         "features": [
           "Wszystko z planu API Starter",
-          "Prawa do redystrybucji — osadzaj nasze dane w tym, co sprzedajesz",
+          "Prawa do redystrybucji R1–R3 dla produktów skierowanych do klientów",
           "300 żądań/minutę",
-          "10 000 żądań/dzień w pakiecie",
+          "10 000 żądań/dzień w pakiecie (REST + MCP razem; jedno aktywne połączenie MCP liczy się jako 2-3)",
           "5 licencji Pro — zapraszaj użytkowników z dowolnej firmowej domeny e-mail",
           "Wsparcie priorytetowe"
         ],
@@ -479,14 +481,18 @@
       "screenshotAlt": "Żywa mapa inteligencji World Monitor — globalna mapa z warstwami konfliktów, transportu i rynków",
       "plateNote": "Przechwycone z żywej mapy — kliknij, aby ją otworzyć",
       "trustBuild": "Buduj na jej podstawie:",
-      "positioningLink": "WorldMonitor nie jest open-source'owym Palantir"
+      "positioningLink": "WorldMonitor nie jest open-source'owym Palantir",
+      "asOf": "Stan na 8 września 2026",
+      "whatIsTitle": "Czym jest World Monitor?",
+      "whatIsBody": "World Monitor to bezpłatny, open-source'owy dashboard, który przesyła sygnały z zakresu geopolityki, rynków, żeglugi, lotnictwa, infrastruktury i cyberprzestrzeni na jedną żywą mapę świata. Koreluje oddzielne strumienie danych w jeden obraz operacyjny i sygnalizuje zbieżności zanim pojawią się nagłówki, przy czym każda liczba ma źródło, a każda metoda jest udokumentowana."
     },
     "live": {
       "eyebrow": "Na żywo teraz",
       "title": "Jakie dane na żywo wyświetla ta strona teraz?",
       "subtitle": "Cztery spośród ponad stu sygnałów, które World Monitor obserwuje przez całą dobę.",
       "liveBadge": "Na żywo",
-      "sampleBadge": "Przykład",
+      "pulseBadge": "Opublikowany pulse {{date}}",
+      "refreshNote": "Włącz JavaScript, aby odświeżyć — opublikowany pulse powyżej pozostaje dostępny bez niego.",
       "cardHeadlines": "Główne sygnały",
       "cardCii": "Indeks niestabilności",
       "ciiNote": "12 połączonych sygnałów na kraj",
@@ -584,35 +590,20 @@
       "eyebrow": "Pod maską",
       "title": "Jak głębokie jest dane World Monitor?",
       "sub": "Każdy numer poniżej działa na żywo na pulpicie nawigacyjnym dzisiaj — nie na mapie drogowej.",
-      "s1v": "Współdzielone",
-      "s1l": "Warstwy mapy",
-      "s2v": "Kluczowane",
-      "s2l": "Wyselekcjonowane kanały",
-      "s3v": "Przypisane",
-      "s3l": "Dostawcy danych",
-      "s4v": "Live",
+      "s1l": "Typy warstw mapy",
+      "s2l": "Strumienie wiadomości i OSINT",
+      "s3l": "Przypisani dostawcy",
       "s4l": "Punkty krytyczne · AIS na żywo",
-      "s5v": "Tier-1",
       "s5l": "Indeks niestabilności · na żywo",
-      "s6v": "Publiczne",
       "s6l": "Rankingi odporności",
-      "s7v": "Zmapowane",
       "s7l": "Kable podmorskie",
-      "s8v": "Zmapowane",
       "s8l": "Rurociągi i LNG",
-      "s9v": "Zmapowane",
       "s9l": "Zmapowane centra danych AI",
-      "s10v": "Oceniane",
       "s10l": "Punkty hotspot ze wynikami",
-      "s11v": "Live",
       "s11l": "Giełdy i aktywa",
-      "s12v": "Live",
       "s12l": "Narzędzia MCP",
-      "s13v": "Szybkie",
-      "s13l": "Komendy ⌘K",
-      "s14v": "Zlokalizowane",
+      "s13l": "Definicje poleceń ⌘K",
       "s14l": "Języki · w tym RTL",
-      "s15v": "5",
       "s15l": "Niezależne źródła alertów",
       "n1Title": "Śledzenie satelitów",
       "n1Desc": "Pozycje orbitalne obliczane na żywo w przeglądarce za pomocą SGP4 — obserwuj ISS, Starlinka i wojskowe satelity nad głową.",
@@ -685,7 +676,7 @@
       "q4": "Czy mogę obserwować gardła handlowe takie jak Hormuz lub Bab el-Mandeb w czasie rzeczywistym?",
       "a4": "Tak. Punkty krytyczne są monitorowane z live licznikami statków AIS, zmianą przejść tygodniowo i score'owaniem perturbacji — a anomalie gęstości są flagowane względem bazową linii każdej cieśniny na bieżąco.",
       "q5": "Czym to różni się od mapy konfliktów takie jak Liveuamap?",
-      "a5": "Konflikt to jedna warstwa mapy. World Monitor łączy konflikty z transportem morskim, lotami wojskowymi, infrastrukturą, rynkami i cyberzagrożeniami — następnie AI ocenia zbieżność: wskaźniki niestabilności, eskalację hotspotów, potwierdzane alerty breaking i codzienne briefingi.",
+      "a5": "Konflikt to jedna warstwa mapy. World Monitor łączy konflikty z transportem morskim, lotami wojskowymi, infrastrukturą, rynkami i cyberzagrożeniami — następnie AI ocenia konwergencję: indeksy niestabilności, eskalacja zagrożeń, potwierdzone alerty przełomowe i codzienne briefingi. Porównaj World Monitor z Liveuamap i innymi mapami konfliktów: worldmonitor.app/compare/liveuamap-alternatives.",
       "q6": "Dlaczego powinienem ufać alertowi?",
       "a6": "Baner przerwania pojawia się tylko gdy niezależne typy źródeł się potwierdzą — klasyfikacja wiadomości, prędkość słów kluczowych, eskalacja gorących punktów, surge wojskowości, oficjalne syreny — deduplikowane i ograniczone. Mniej alertów, prawdziwe.",
       "q7": "Czy agenci AI takie jak Claude lub GPT mogą go używać?",
@@ -718,5 +709,19 @@
       "countryRiskDesc": "Prześledzij polityczne, bezpieczeństwa, ekonomiczne i odpornościowe sygnały za zmianą kraju.",
       "open": "Otwórz dowody"
     }
+  },
+  "whatsNew": {
+    "eyebrow": "Dziennik wysyłki",
+    "title": "Co nowego w WorldMonitor",
+    "subtitle": "Nowe funkcje z ostatnich 30 dni — poprawki i infrastruktura nie uwzględnione.",
+    "proTag": "PRO",
+    "m1": "Indeks rozbieżności premii fizycznej — SGE vs COMEX, z historią",
+    "m2": "Rankingami podatności dostaw surowców — rozłożenie zależności od wąskich gardeł",
+    "m3": "Koncentracja produkcji minerałów i przemysłowa baza obronności",
+    "m4": "Karty odporności pięcioczynnikowej ze wskaźnikami na poziomie składnika",
+    "m5": "Niestandardowe listy monitorowania kanałów Telegram",
+    "m6": "Logowanie z passkey",
+    "m7": "Agenci AI mogą kierować dashboardem — panele, karty, warstwy map i misje",
+    "m8": "Bogatsze strony odporności krajów"
   }
 }

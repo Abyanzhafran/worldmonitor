@@ -32,7 +32,7 @@
     "proF6": "Repülőjárat-keresés és ár-összehasonlítás",
     "proF7": "Riasztási szabálymotor — egyéni triggerek, csendes órák, AES-256-tal titkosított csatornák",
     "proF8": "Piaci watchlist, makró és jegybanki követés",
-    "proF9": "AI Market Implications és Regional Intelligence (hamarosan: orbitális megfigyelés, prémium térképrétegek, hosszabb előzmények)",
+    "proF9": "AI piaci implikációk és regionális geopolitikai hírszerzés",
     "choosePlan": "Válasszon csomagot",
     "entTitle": "World Monitor Enterprise",
     "entDesc": "Csapatoknak, amelyeknek közös monitoring, API-hozzáférés, telepítési opciók, TV-alkalmazások és közvetlen támogatás kell.",
@@ -48,7 +48,8 @@
     "entF10": "Felhő, on-prem vagy air-gapped telepítés",
     "entF11": "Dedikált bevezetés és támogatás",
     "entCta": "Beszéljen az értékesítéssel",
-    "freeF2": "Válogatott feedek, forrásokkal megjelölt tartalmak és térképrétegek"
+    "freeF2": "Válogatott feedek, forrásokkal megjelölt tartalmak és térképrétegek",
+    "proF10": "Intel memória — historikus keresés, idősorok és hasonló események keresése"
   },
   "whyUpgrade": {
     "title": "Miért érdemes frissíteni a World Monitor Pro-ra?",
@@ -155,13 +156,14 @@
     "economyAnalyticsDesc": "GDP, infláció, kamatlábak és növekedési ciklusok. Makróadatok piaci jelekkel és geopolitikai eseményekkel korrelálva.",
     "riskMonitoring": "Kockázatmonitoring és forgatókönyvek",
     "riskMonitoringDesc": "Globális kockázati pontozás, forgatókönyv-elemzés és geopolitikai kockázatértékelés. Konvergenciadetektálás piaci és politikai jelek között.",
-    "orbitalSurveillance": "Orbitális megfigyelés",
-    "orbitalSurveillanceDesc": "Áthaladási előrejelzések, visszatérési gyakoriság elemzése és képalkotási ablakokra vonatkozó riasztások. Tudja meg, mikor figyelik hírszerző műholdak az érdeklődési területeit.",
     "morningBriefs": "Személyes hírszerzési desk",
     "morningBriefsDesc": "Legfeljebb 30 rangsorolt történet összefoglalónként, forrásokon közösen eltávolítva. Válaszd meg a napi, naponta kétszer vagy heti ütemezést — vagy valós idejű riasztások kritikus eseményekhez. AI Assessment és Signals to watch a Slackre, Discordra, Telegramba, e-mailbe vagy webhookra. Nem hírlevél — egy elemzés.",
     "oneKey": "Élő Szolgáltatások, 1 Kulcs",
     "oneKeyDesc": "Finnhub, FRED, ACLED, UCDP, NASA FIRMS, AISStream, OpenSky és még sok más — mind aktív, külön regisztrációk nélkül.",
-    "deliveryLabel": "Válassza ki, hogyan találjon Önre az intelligencia"
+    "deliveryLabel": "Válassza ki, hogyan találjon Önre az intelligencia",
+    "supplyChainLab": "Supply-Chain Stress Lab",
+    "supplyChainLabDesc": "Költségsokkot szimulálhat országok és szektorok között. Rangsorolhatja az árucikkek sebezhetőségét szűk keresztmetszetek függőségei alapján. Nyomon követheti a bánya-finomítókoncentrációt és az SGE–COMEX fizikai prémium divergenciáját — azt a mutatót, amely a hírek előtt változik meg.",
+    "roadmapNote": "Tervezett funkciók: műholdas megfigyelés, hosszabb történelem, prémium térképrétegek."
   },
   "slackMock": {
     "morningBrief": "Reggeli brief",
@@ -363,14 +365,14 @@
       "pro": {
         "description": "Teljes hírszerzési irányítópult",
         "features": [
-          "Minden az ingyenes csomagban",
-          "AI részvényelemzés és backtesting",
-          "Napi piaci briefek",
-          "Katonai és geopolitikai követés",
-          "Custom widget builder",
-          "10 egyéni irányítópult (vs 3)",
+          "Minden a Free-ben — panelek, források és követett országok korlátlanul",
+          "WM Analyst csevegés + AI részvényelemzés és backtesting",
+          "Költségsokkot modellezés és ellátási lánc stressztesztek",
+          "Intel memória — historikus keresés, idősorok és hasonló események",
+          "Fizikai fémek divergenciája, ásványi anyag koncentrációja és szuverén adósság adat",
+          "Ütemezett AI kivonat + riasztási szabálymotor",
           "MCP + SDK hozzáférés Claude Desktophoz és más AI kliensekhez (50 hívás/nap)",
-          "Prioritásos adatfrissítés"
+          "Egyéni widgetek és 10 dashboard (vs 3)"
         ],
         "highlightFeatures": [
           "Személyes licenc",
@@ -384,7 +386,7 @@
           "Licenc- / API-kulcs mellékelve",
           "Valós idejű adatfolyamok",
           "60 kérés/perc",
-          "1 000 kérés/nap benne foglalt",
+          "1000 kérés/nap (REST + MCP kombinálva; egy élő MCP hívás 2-3-nak számít)",
           "Webhook-értesítések"
         ],
         "highlightFeatures": [
@@ -412,9 +414,9 @@
         "description": "Saját termék indítása WorldMonitor adatokkal",
         "features": [
           "Minden az API Starter csomagból",
-          "Terjesztési jogok — ágyazza be adatainkat az Ön termékeibe",
+          "R1–R3 újraterjesztési jogok ügyfélre nézve nyitott termékekhez",
           "300 kérés/perc",
-          "10 000 kérés/nap foglalva",
+          "10 000 kérés/nap (REST + MCP kombinálva; egy élő MCP hívás 2-3-nak számít)",
           "5 Pro licenc — hívjon meg felhasználókat bármely vállalati e-mail-domainről",
           "Prioritásos támogatás"
         ],
@@ -479,14 +481,18 @@
       "screenshotAlt": "World Monitor élő hírszerzési irányítópult — globális térkép konfliktus, szállítás és piaci rétegekkel",
       "plateNote": "Az élő térképről rögzítve — kattints a megnyitásához",
       "trustBuild": "Építs rá:",
-      "positioningLink": "A WorldMonitor nem nyílt forráskódú Palantir"
+      "positioningLink": "A WorldMonitor nem nyílt forráskódú Palantir",
+      "asOf": "2026. szeptember 8-i állapot szerint",
+      "whatIsTitle": "Mi az a World Monitor?",
+      "whatIsBody": "A World Monitor egy ingyenes, nyílt forráskódú dashboard, amely geopolitikai, piac-, szállítás-, légiközlekedési, infrastrukturális és kibervédelmi jeleket stream-el egy élő világtérképre. Egymástól független adatforrásokat korrelál egyetlen operatív képpé, és a konvergenciákat a hírek előtt flaggeli – minden adat forrásos és minden módszer dokumentált."
     },
     "live": {
       "eyebrow": "Most élő",
       "title": "Milyen élő adatokat mutat ez az oldal éppen most?",
       "subtitle": "A száz feletti jelzések közül négy, amelyet a World Monitor folyamatosan figyel.",
       "liveBadge": "Élő",
-      "sampleBadge": "Minta",
+      "pulseBadge": "Közzétett pulse {{date}}",
+      "refreshNote": "A JavaScript engedélyezésével frissíthet — a fent közzétett pulse JavaScript nélkül is elérhető marad.",
       "cardHeadlines": "Legfontosabb jelzések",
       "cardCii": "Instabilitási index",
       "ciiNote": "12 fúzionált jel országonként",
@@ -584,35 +590,20 @@
       "eyebrow": "A motorháztető alatt",
       "title": "Milyen mély a World Monitor adatmodell?",
       "sub": "Az alábbi minden szám ma élesben van az irányítópulton — nem egy ütemterv.",
-      "s1v": "Megosztott",
-      "s1l": "Térképrétegek",
-      "s2v": "Válogatott",
-      "s2l": "Kurátori források",
-      "s3v": "Megjelölt",
-      "s3l": "Adatszolgáltatók",
-      "s4v": "Élő",
+      "s1l": "Térképréteg-típusok",
+      "s2l": "Hír- és OSINT-adatforrások",
+      "s3l": "Hozzárendelt szolgáltatók",
       "s4l": "Szűk keresztmetszetek · élő AIS",
-      "s5v": "1. szintű",
       "s5l": "Instabilitási index · élő",
-      "s6v": "Nyilvános",
       "s6l": "Reziliencia rangsorok",
-      "s7v": "Feltérképezett",
       "s7l": "Tengeralatti kábelek",
-      "s8v": "Feltérképezett",
       "s8l": "Vezetékek és LNG",
-      "s9v": "Feltérképezett",
       "s9l": "AI adatközpontok térképezve",
-      "s10v": "Pontozott",
       "s10l": "Pontozható hotspotok",
-      "s11v": "Élő",
       "s11l": "Tőzsdék és eszközök",
-      "s12v": "Élő",
       "s12l": "MCP eszközök",
-      "s13v": "Gyors",
-      "s13l": "⌘K parancsok",
-      "s14v": "Lokalizált",
+      "s13l": "⌘K parancsdefiníciók",
       "s14l": "Nyelvek · RTL is",
-      "s15v": "5",
       "s15l": "Független riasztásforrások",
       "n1Title": "Műholdkövetés",
       "n1Desc": "Élő pályapozíciók SGP4-gyel számítva böngészőben — figyeld meg az ISS-t, Starlinkot és katonai műholdakat közvetlenül felül.",
@@ -685,7 +676,7 @@
       "q4": "Valós időben tudom követni a szűk keresztmetszetek, például Hormuz vagy Bab el-Mandeb?",
       "a4": "Igen. A szűk keresztmetszetek nyomon követésre kerülnek élő AIS hajóalakokkal, hét/hét fordulatváltás és zavar pontozásával — és a sűrűségi anomáliák mindegyik szoros alapvonalához képest jelzésre kerülnek.",
       "q5": "Miben különbözik ez egy konfliktustérképtől, mint a Liveuamap?",
-      "a5": "A konfliktus egyetlen térképréteg. A World Monitor összekapcsolja a konfliktusokat a szállítmányozással, katonai repülésekkel, infrastruktúrával, piacokkal és kibertámadásokkal — majd az AI kiértékeli a konvergenciát: instabilitási indexek, forrópontok eszkalációja, megerősített feltörési riasztások és napi tájékoztatók.",
+      "a5": "A konfliktus egyetlen térképréteg. A World Monitor összekapcsolja a konfliktusokat a tengerészeti szállítmányokkal, katonai repülésekkel, infrastruktúrával, piacokkal és kibernetikai tevékenységekkel — majd az AI kiértékeli az átfedéseket: instabilitási indexek, kritikus pontok kialakulása, megerősített hírriasztások és napi helyzetelemzések. Hasonlítsa össze a World Monitort más konfliktustérképekkel: worldmonitor.app/compare/liveuamap-alternatives.",
       "q6": "Miért bízzak egy riasztásban?",
       "a6": "Egy fontos szalagcím csak akkor jelenik meg, ha független forrásfajták megerősítik — hírosztályozás, kulcsszósebesség, kritikus pont eskalációja, katonai ugrások, hivatalos szirénák — deduplikálva és sebességkorláttal. Kevesebb riasztás, valódi riasztások.",
       "q7": "Használhatják azt AI-ügynökök, mint a Claude vagy a GPT?",
@@ -718,5 +709,19 @@
       "countryRiskDesc": "Kövesse nyomon az országváltozás mögött meghúzódó politikai, biztonsági, gazdasági és ellenálló képesség jeleket.",
       "open": "Bizonyítékok megnyitása"
     }
+  },
+  "whatsNew": {
+    "eyebrow": "Szállítási napló",
+    "title": "Újdonságok a WorldMonitorban",
+    "subtitle": "Az elmúlt 30 nap új funkciói — hibajavítások és mérnöki munkák nélkül.",
+    "proTag": "PRO",
+    "m1": "Fizikai prémium divergencia index — SGE vs COMEX, történelemmel",
+    "m2": "Árucikk-ellátási sérülékenységi rangsorok — szűk keresztmetszetek függőségi felbontása",
+    "m3": "Ásványi anyag termeléskoncentrációja és a védelmi ipari bázis",
+    "m4": "Öt faktoros ellenálló képességi scorecardok mutatószintű pontszámokkal",
+    "m5": "Egyéni Telegram csatorna megfigyelési listák",
+    "m6": "Jelkulcs alapú bejelentkezés",
+    "m7": "Az AI ügynökök irányíthatják a dashboardot — panelek, lapok, térképrétegek és missions",
+    "m8": "Gazdagabb ország-ellenálló képességi oldalak"
   }
 }

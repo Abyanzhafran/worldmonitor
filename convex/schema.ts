@@ -27,6 +27,7 @@ import {
   companyMonitoringXDemotionReasonValidator,
   companyMonitoringXStorageStateValidator,
 } from "./companyMonitoring/validators";
+import { SHARED_API_BUDGET } from "./config/productCatalog";
 
 // Subscription status enum — maps Dodo statuses to our internal set
 const subscriptionStatus = v.union(
@@ -140,6 +141,7 @@ export default defineSchema({
         channelType: v.literal("telegram"),
         chatId: v.string(),
         verified: v.boolean(),
+        telegramOwnership: v.optional(v.literal("verified_callback")),
         linkedAt: v.number(),
       }),
       v.object({
@@ -156,6 +158,7 @@ export default defineSchema({
         userId: v.string(),
         channelType: v.literal("email"),
         email: v.string(),
+        emailOwnership: v.optional(v.literal("verified_account")),
         verified: v.boolean(),
         linkedAt: v.number(),
       }),
@@ -458,7 +461,7 @@ export default defineSchema({
   // budget at any wave size.
   //
   // `waveRuns` is the per-run state row. `wavePickedContacts` is the
-  // per-contact tri-state row that the push pipeline drains in batches.
+  // per-contact state row that the push pipeline drains in batches.
   // Together they are the durable source of truth for an in-flight wave;
   // `broadcastRampConfig.lastWave*` is updated atomically by
   // `_finalizeWaveRun` only when the whole pipeline succeeds.
@@ -497,11 +500,15 @@ export default defineSchema({
     requestedCount: v.number(),
     // = picked.length after reservoir sampling. Finalization gates on
     // "zero `pending` rows for this runId", NOT on pushedCount === totalCount —
-    // failed contacts are tolerated up to the 5% threshold.
+    // failed contacts are tolerated up to the 5% threshold after remote
+    // unsubscribe rows are excluded.
     totalCount: v.number(),
     underfilled: v.boolean(),
     pushedCount: v.number(),
     failedCount: v.number(),
+    // Optional so runs created before remote-unsubscribe handling retain a
+    // zero count when they are read or resumed.
+    suppressedCount: v.optional(v.number()),
     batchSize: v.number(),
     // Updated by every successful batch + by lease-revalidating recovery
     // mutations. Used (with createdAt/updatedAt fallback) by `runDailyRamp`'s
@@ -534,8 +541,9 @@ export default defineSchema({
     .index("by_runId", ["runId"])
     .index("by_status", ["status"]),
 
-  // Per-contact tri-state row written by `_persistPickedBatch` during pick
-  // and patched atomically by `_markContactPushed` / `_markContactFailed`
+  // Per-contact state row written by `_persistPickedBatch` during pick
+  // and patched atomically by `_markContactPushed`, `_markContactFailed`,
+  // or `_markContactSuppressed`
   // during push. The CAS guard on those mutations (no-op unless
   // status==='pending') makes them idempotent under overlapping
   // pushBatchAction invocations or operator-resume-while-original-still-running.
@@ -551,10 +559,12 @@ export default defineSchema({
       v.literal("pending"),
       v.literal("pushed"),
       v.literal("failed"),
+      v.literal("suppressed"),
     ),
     pushedAt: v.optional(v.number()),
     failedAt: v.optional(v.number()),
     failedReason: v.optional(v.string()),
+    suppressedAt: v.optional(v.number()),
   })
     .index("by_runId", ["runId"])
     .index("by_runId_status", ["runId", "status"]),
@@ -799,7 +809,12 @@ export default defineSchema({
       planLimits: v.optional(v.object({
         apiRequestsPerDay: v.union(v.number(), v.null()),
         apiBurstRequestsPerMinute: v.union(v.number(), v.null()),
-        mcpCallsPerDay: v.union(v.number(), v.null()),
+        // `SHARED_API_BUDGET` = the plan has no MCP allowance of its own; its
+        // MCP calls charge `apiRequestsPerDay`. Imported rather than retyped:
+        // this validator is what ACCEPTS the marker on every entitlement write,
+        // so a renamed constant that left a stale string literal here would
+        // typecheck and then reject the webhook's write at runtime.
+        mcpCallsPerDay: v.union(v.number(), v.null(), v.literal(SHARED_API_BUDGET)),
         // Optional for entitlement rows written before the dashboard-AI
         // dimension existed; the read-time catalog merge supplies it.
         dashboardAiCallsPerDay: v.optional(v.union(v.number(), v.null())),
@@ -818,6 +833,12 @@ export default defineSchema({
       // validator MUST accept it or the webhook's entitlement write is
       // rejected (v.object is strict on extra keys).
       apiDailyAllowance: v.optional(v.number()),
+      // Optional — partner-embed key issuance. Legacy rows predate it; the
+      // read-time catalog merge supplies it and consumers treat undefined as
+      // false (fail-closed). Catalog-sourced writes always set it, so this
+      // validator MUST accept it or the Dodo webhook's entitlement write is
+      // rejected at runtime (v.object is strict on extra keys).
+      embedAccess: v.optional(v.boolean()),
       // Optional — data-export entitlement (plan 2026-07-25-001). Legacy rows
       // predate it; consumers treat undefined on a tier >= 2 row as entitled
       // (fail-OPEN, permanently — see the PlanFeatures JSDoc). Catalog-sourced
@@ -829,6 +850,9 @@ export default defineSchema({
     // subscription.expired events skip the normal downgrade-to-free so
     // goodwill credits outlive Dodo subscription cancellations.
     compUntil: v.optional(v.number()),
+    // Independent goodwill source; never derive this from a paid effective plan.
+    // Legacy rows without it require an audited source before migration.
+    compPlanKey: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
@@ -887,6 +911,15 @@ export default defineSchema({
     // list) query this instead of scanning all per-(user,state) history and
     // filtering `current` in memory -- bounds the hot path to live rows.
     .index("by_user_dimension_current", ["userId", "dimension", "current"]),
+
+  // Subscription cleanup must not erase customer-wide invoice ownership.
+  // Rows are retained after deletion and move with a verified anonymous claim.
+  deletedSubscriptionCustomers: defineTable({
+    userId: v.string(),
+    dodoCustomerId: v.string(),
+  })
+    .index("by_customer_user", ["dodoCustomerId", "userId"])
+    .index("by_userId", ["userId"]),
 
   customers: defineTable({
     userId: v.string(),
@@ -1196,7 +1229,7 @@ export default defineSchema({
     domicileCountry: v.optional(v.union(v.literal("US"), v.literal("GB"))),
     customerReference: v.optional(v.string()),
     lifecycle: v.union(v.literal("active"), v.literal("paused"), v.literal("removed")),
-    coverageState: v.optional(v.literal("awaiting_first_scan")),
+    coverageState: v.optional(v.union(v.literal("awaiting_first_scan"), v.literal("identity_unresolved"))),
     observationState: v.optional(v.literal("unknown")),
     // Any new deletion tombstone advances this version and makes downstream
     // derived state stale until the later recomputation slice consumes it.
@@ -1612,6 +1645,36 @@ export default defineSchema({
     .index("by_userId_revokedAt", ["userId", "revokedAt"])
     .index("by_keyHash", ["keyHash"]),
 
+  // Partner-embed keys (`wme_…`). A SEPARATE table from `userApiKeys` on
+  // purpose: an embed key is pasted into the partner's public HTML, so it must
+  // be mintable by every paid tier, while `userApiKeys` issuance is
+  // deliberately fenced behind the `API_ACCESS_REQUIRED` throw that keeps
+  // `wm_…` away from Pro. Sharing one table would mean relaxing that throw.
+  embedKeys: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    keyPrefix: v.string(),        // first 9 chars of plaintext key, for display
+    keyHash: v.string(),          // SHA-256 hex digest — never store plaintext
+    createdAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+    // Set when a key is replaced by a rotation rather than revoked outright,
+    // so a partner mid-swap can be told which of two dead keys their page is
+    // still serving. Rotation is a later unit; nothing writes this yet.
+    supersededAt: v.optional(v.number()),
+    // DECLARED, NOT ENFORCED. The origins a partner says they will embed from,
+    // captured at issuance for attribution and to catch honest misconfiguration.
+    // This is NOT an auth boundary and must never be read as one: the key ships
+    // in the partner's public HTML and `Origin` is attacker-controlled off a
+    // browser entirely. A later unit consumes it; nothing reads it yet. The
+    // column lands now so that unit is additive rather than a schema change on
+    // a table with live rows.
+    allowedOrigins: v.optional(v.array(v.string())),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_revokedAt", ["userId", "revokedAt"])
+    .index("by_keyHash", ["keyHash"]),
+
   // Non-key Pro MCP identity rows. One row per OAuth grant for a Pro user.
   // Referenced from OAuth code/token records as `mcpTokenId` — never carries
   // plaintext or `wm_` keys. Revoke deletes the row's revokedAt → next
@@ -1669,7 +1732,14 @@ export default defineSchema({
 
   emailSuppressions: defineTable({
     normalizedEmail: v.string(),
-    reason: v.union(v.literal("bounce"), v.literal("complaint"), v.literal("manual")),
+    // unsubscribe withdraws broadcast and marketing consent. The other
+    // reasons suppress broadcast, marketing, and transactional delivery.
+    reason: v.union(
+      v.literal("bounce"),
+      v.literal("complaint"),
+      v.literal("manual"),
+      v.literal("unsubscribe"),
+    ),
     suppressedAt: v.number(),
     source: v.optional(v.string()),
   }).index("by_normalized_email", ["normalizedEmail"]),

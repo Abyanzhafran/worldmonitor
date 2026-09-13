@@ -36,14 +36,14 @@
       "pro": {
         "description": "Full intelligence dashboard",
         "features": [
-          "Everything in Free",
-          "AI stock analysis & backtesting",
-          "Daily market briefs",
-          "Military & geopolitical tracking",
-          "Custom widget builder",
-          "10 custom dashboards (vs 3)",
+          "Everything in Free — panels, sources & followed countries uncapped",
+          "WM Analyst chat + AI stock analysis & backtesting",
+          "Cost-shock modelling & supply-chain stress tests",
+          "Intel memory — historical search, timelines & similar events",
+          "Physical metals divergence, minerals concentration & sovereign debt data",
+          "Scheduled AI digest + alert rules engine",
           "MCP + SDK access for Claude Desktop & other AI clients (50 calls/day)",
-          "Priority data refresh"
+          "Custom widgets & 10 dashboards (vs 3)"
         ],
         "highlightFeatures": [
           "Personal license",
@@ -72,7 +72,7 @@
           "License / API key included",
           "Real-time data streams",
           "60 requests/minute",
-          "1,000 requests/day included",
+          "1,000 requests/day included (REST + MCP combined; a live MCP call counts as 2-3)",
           "Webhook notifications"
         ],
         "highlightFeatures": [
@@ -83,9 +83,9 @@
         "description": "Launch your own product on WorldMonitor data",
         "features": [
           "Everything in API Starter",
-          "Redistribution rights — embed our data in what you sell",
+          "R1–R3 redistribution rights for customer-facing products",
           "300 requests/minute",
-          "10,000 requests/day included",
+          "10,000 requests/day included (REST + MCP combined; a live MCP call counts as 2-3)",
           "5 Pro licenses — invite users at any corporate email domain",
           "Priority support"
         ],
@@ -151,7 +151,7 @@
     "proF6": "Flight search & price comparison",
     "proF7": "Alert rules engine — custom triggers, quiet hours, AES-256 encrypted channels",
     "proF8": "Market watchlist, macro & central bank tracking",
-    "proF9": "AI Market Implications & Regional Intelligence (Soon: orbital surveillance, premium map layers, longer history)",
+    "proF9": "AI Market Implications & Regional Intelligence",
     "choosePlan": "Choose Your Plan",
     "entTitle": "World Monitor Enterprise",
     "entDesc": "For teams that need shared monitoring, API access, deployment options, TV apps, and direct support.",
@@ -167,7 +167,8 @@
     "entF10": "Cloud, on-prem, or air-gapped deployment",
     "entF11": "Dedicated onboarding & support",
     "entCta": "Talk to Sales",
-    "freeF2": "Curated feeds, attributed sources, and map layers"
+    "freeF2": "Curated feeds, attributed sources, and map layers",
+    "proF10": "Intel memory — historical search, timelines & similar-event lookup"
   },
   "whyUpgrade": {
     "title": "Why upgrade to World Monitor Pro?",
@@ -274,13 +275,14 @@
     "economyAnalyticsDesc": "GDP, inflation, interest rates, and growth cycles. Macro data correlated with market signals and geopolitical events.",
     "riskMonitoring": "Risk Monitoring & Scenarios",
     "riskMonitoringDesc": "Global risk scoring, scenario analysis, and geopolitical risk assessment. Deep-forecast simulations auto-run on the hourly cron — fresh outcomes appear without manual triggers. Convergence detection across market and political signals.",
-    "orbitalSurveillance": "Orbital Surveillance",
-    "orbitalSurveillanceDesc": "(Soon) Overhead pass predictions, revisit frequency analysis, and imaging window alerts. Know when intelligence satellites are watching your areas of interest.",
     "morningBriefs": "Personal Intelligence Desk",
     "morningBriefsDesc": "Up to 30 ranked stories per digest, deduped across sources. Pick daily, twice-daily, or weekly cadence — or real-time alerts for critical events. AI Assessment and Signals to watch delivered to Slack, Discord, Telegram, Email, or webhook. Not a newsletter — an analyst.",
     "oneKey": "Live Services, 1 Key",
     "oneKeyDesc": "Finnhub, FRED, ACLED, UCDP, NASA FIRMS, AISStream, OpenSky, and more — all active, no separate registrations.",
-    "deliveryLabel": "Choose how intelligence finds you"
+    "deliveryLabel": "Choose how intelligence finds you",
+    "supplyChainLab": "Supply-Chain Stress Lab",
+    "supplyChainLabDesc": "Model a cost shock across countries and sectors. Rank commodity vulnerability by chokepoint dependency. Track mine-to-refinery concentration and the SGE–COMEX physical premium divergence — the series that moves before the headline does.",
+    "roadmapNote": "On the roadmap: orbital surveillance, longer history, premium map layers."
   },
   "slackMock": {
     "morningBrief": "Morning Brief",
@@ -471,6 +473,7 @@
       "headline1": "By the time it's news,",
       "headline2": "you already knew.",
       "sub": "Headlines are the lag. World Monitor streams the world's raw signals — ships, jets, sirens, cables, markets — onto one live map, with AI that flags when they converge into something that matters.",
+      "asOf": "As of 8 September 2026",
       "ctaPrimary": "Launch the dashboard",
       "ctaFree": "Free · No signup · Loads in seconds",
       "ctaSecondary": "See how people use it ↓",
@@ -479,7 +482,9 @@
       "screenshotAlt": "World Monitor live intelligence dashboard — global map with conflict, shipping and market layers",
       "plateNote": "Captured from the live map — click to open it",
       "trustBuild": "Build on it:",
-      "positioningLink": "WorldMonitor is not an open-source Palantir"
+      "positioningLink": "WorldMonitor is not an open-source Palantir",
+      "whatIsTitle": "What is World Monitor?",
+      "whatIsBody": "World Monitor is a free, open-source dashboard that streams geopolitics, markets, shipping, aviation, infrastructure, and cyber signals onto one live world map. It correlates separate feeds into a single operating picture and flags convergence before headlines, with every figure sourced and every method documented."
     },
     "tasks": {
       "eyebrow": "Start with the question",
@@ -498,7 +503,8 @@
       "title": "What live data is this page showing right now?",
       "subtitle": "Four of the hundred-plus signals World Monitor watches around the clock.",
       "liveBadge": "Live",
-      "sampleBadge": "Sample",
+      "pulseBadge": "Published pulse {{date}}",
+      "refreshNote": "Enable JavaScript to refresh — the published pulse above remains available without it.",
       "cardHeadlines": "Top signals",
       "cardCii": "Instability index",
       "ciiNote": "12 fused signals per country",
@@ -596,35 +602,20 @@
       "eyebrow": "Under the hood",
       "title": "How deep is the World Monitor data model?",
       "sub": "Every number below is live in the dashboard today — not a roadmap.",
-      "s1v": "Shared",
-      "s1l": "Map layers",
-      "s2v": "Curated",
-      "s2l": "Curated feeds",
-      "s3v": "Attributed",
-      "s3l": "Sources",
-      "s4v": "Live",
+      "s1l": "Map layer types",
+      "s2l": "News & OSINT feeds",
+      "s3l": "Attributed providers",
       "s4l": "Chokepoints · live AIS",
-      "s5v": "Tier-1",
       "s5l": "Instability index · live",
-      "s6v": "Public",
       "s6l": "Resilience rankings",
-      "s7v": "Mapped",
       "s7l": "Subsea cables",
-      "s8v": "Mapped",
       "s8l": "Pipelines & LNG",
-      "s9v": "Mapped",
       "s9l": "AI datacenters mapped",
-      "s10v": "Scored",
       "s10l": "Scored hotspots",
-      "s11v": "Live",
       "s11l": "Exchanges & assets",
-      "s12v": "Live",
       "s12l": "MCP tools",
-      "s13v": "Quick",
-      "s13l": "⌘K commands",
-      "s14v": "Localized",
+      "s13l": "⌘K command definitions",
       "s14l": "Languages · RTL incl.",
-      "s15v": "5",
       "s15l": "Independent alert origins",
       "n1Title": "Satellite tracking",
       "n1Desc": "Live orbital positions computed in-browser with SGP4 — watch ISS, Starlink and military birds overhead.",
@@ -697,7 +688,7 @@
       "q4": "Can I watch chokepoints like Hormuz or Bab el-Mandeb in real time?",
       "a4": "Yes. Chokepoints are tracked with live AIS vessel counts, week-over-week transit change and disruption scoring — and density anomalies are flagged against each strait's rolling baseline.",
       "q5": "How is this different from a conflict map like Liveuamap?",
-      "a5": "Conflict is one map layer. World Monitor fuses conflicts with shipping, military flights, infrastructure, markets and cyber — then AI scores the convergence: instability indices, hotspot escalation, corroborated breaking alerts and daily briefs.",
+      "a5": "Conflict is one map layer. World Monitor fuses conflicts with shipping, military flights, infrastructure, markets and cyber — then AI scores the convergence: instability indices, hotspot escalation, corroborated breaking alerts and daily briefs. Compare World Monitor with Liveuamap and other conflict maps: worldmonitor.app/compare/liveuamap-alternatives.",
       "q6": "Why should I trust an alert?",
       "a6": "A breaking banner fires only when independent origin types corroborate — news classification, keyword velocity, hotspot escalation, military surges, official sirens — deduplicated and rate-limited. Fewer alerts, real ones.",
       "q7": "Can AI agents like Claude or GPT use it?",
@@ -718,5 +709,19 @@
       "note": "Free · No signup · Loads in seconds",
       "secondary": "Or see Pro plans →"
     }
+  },
+  "whatsNew": {
+    "eyebrow": "Shipping log",
+    "title": "What's new in WorldMonitor",
+    "subtitle": "New features from the last 30 days — fixes and plumbing not included.",
+    "proTag": "PRO",
+    "m1": "Physical premium divergence index — SGE vs COMEX, with history",
+    "m2": "Commodity supply-vulnerability rankings — chokepoint dependency fan-out",
+    "m3": "Mineral production concentration & the defense industrial base",
+    "m4": "Five-factor resilience scorecards with indicator-level scores",
+    "m5": "Custom Telegram channel watchlists",
+    "m6": "Passkey sign-in",
+    "m7": "AI agents can drive the dashboard — panels, tabs, map layers & missions",
+    "m8": "Richer country resilience pages"
   }
 }

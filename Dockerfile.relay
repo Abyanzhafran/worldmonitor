@@ -11,13 +11,13 @@
 # Derive inventory metrics from the immutable build context. This stage uses
 # only Node builtins; the relay's production dependency install stays intact.
 # .dockerignore excludes local environment and credential files.
-FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS inventory-builder
+FROM node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 AS inventory-builder
 
 WORKDIR /workspace
 COPY . .
 RUN node scripts/generate-inventory-facts.mjs
 
-FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
+FROM node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81
 
 # curl required by OREF polling (Node.js JA3 fingerprint blocked by Akamai; curl passes)
 RUN apk add --no-cache curl
@@ -36,6 +36,7 @@ RUN npm ci --prefix scripts --omit=dev --omit=optional --ignore-scripts
 
 # Relay script and shared helpers
 COPY scripts/ais-relay.cjs ./scripts/ais-relay.cjs
+COPY scripts/_widget-response-parser.cjs ./scripts/_widget-response-parser.cjs
 COPY scripts/_opensky-account-cooldown.cjs ./scripts/_opensky-account-cooldown.cjs
 # Shared ingestion outcome/cooldown helpers imported by ais-relay.cjs.
 COPY scripts/_ingestion-coverage.cjs ./scripts/_ingestion-coverage.cjs
@@ -55,8 +56,11 @@ COPY scripts/lib/llm-model-policy.cjs ./scripts/lib/llm-model-policy.cjs
 COPY scripts/lib/x-news-accounts.cjs ./scripts/lib/x-news-accounts.cjs
 COPY scripts/lib/poll-generation-guard.cjs ./scripts/lib/poll-generation-guard.cjs
 COPY scripts/lib/x-poll-cycle.cjs ./scripts/lib/x-poll-cycle.cjs
+COPY scripts/lib/x-post-budget.cjs ./scripts/lib/x-post-budget.cjs
 # Stale-digest alert gate required by ais-relay.cjs (#7084).
 COPY scripts/lib/digest-stale-gate.cjs ./scripts/lib/digest-stale-gate.cjs
+# Classify digest URL/auth/transport helper required by ais-relay.cjs (#7437).
+COPY scripts/lib/classify-digest-request.cjs ./scripts/lib/classify-digest-request.cjs
 COPY scripts/shared/country-name-to-iso2.cjs ./scripts/shared/country-name-to-iso2.cjs
 # country-names.json backs the full name→ISO2 map (#5359 uniform country
 # scoping); required by country-name-to-iso2.cjs at startup.
@@ -78,6 +82,9 @@ COPY scripts/shared/market-hours.cjs ./scripts/shared/market-hours.cjs
 # market-quote-refresh.cjs prevents partial upstream success from shrinking the
 # bootstrap basket and bounds Yahoo fallback cadence.
 COPY scripts/shared/market-quote-refresh.cjs ./scripts/shared/market-quote-refresh.cjs
+# market-seed-universe.cjs is the catalog + auxiliary quote basket shared by
+# seed-market-quotes.mjs and the relay market loop. Missing it = startup crash.
+COPY scripts/shared/market-seed-universe.cjs ./scripts/shared/market-seed-universe.cjs
 # closed-market-equity-maintenance.cjs keeps the closed-market TTL refresh
 # logic importable/testable for ais-relay.cjs. Missing it = startup crash.
 COPY scripts/shared/closed-market-equity-maintenance.cjs ./scripts/shared/closed-market-equity-maintenance.cjs
@@ -108,6 +115,9 @@ COPY scripts/_country-stock-index.mjs ./scripts/_country-stock-index.mjs
 # (crash loop taking AIS/market/RSS with it), NOT a degraded weather seed.
 # Guarded by tests/dockerfile-relay-imports.test.mjs.
 COPY scripts/_weather-alert-select.mjs ./scripts/_weather-alert-select.mjs
+# Static import of _weather-alert-select.mjs, so it carries the same crash-loop
+# risk as the file above rather than a degraded weather seed.
+COPY scripts/lib/geo-coord.mjs ./scripts/lib/geo-coord.mjs
 COPY scripts/_country-resolver.mjs ./scripts/_country-resolver.mjs
 COPY scripts/_climate-news-helpers.mjs ./scripts/_climate-news-helpers.mjs
 # Shared single-pass entity decoder imported by seed-climate-news.mjs (and the

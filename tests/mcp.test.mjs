@@ -675,7 +675,7 @@ describe('api/mcp.ts — PRO MCP Server', () => {
       [
         { key: 'seed-meta:climate:anomalies', maxStaleMin: 120 },
         { key: 'seed-meta:climate:co2-monitoring', maxStaleMin: 2880 },
-        { key: 'seed-meta:climate:ocean-ice', maxStaleMin: 1440 },
+        { key: 'seed-meta:climate:ocean-ice', maxStaleMin: 2880 },
         { key: 'seed-meta:weather:alerts', maxStaleMin: 45 },
       ],
       [
@@ -697,7 +697,7 @@ describe('api/mcp.ts — PRO MCP Server', () => {
       [
         { key: 'seed-meta:climate:anomalies', maxStaleMin: 120 },
         { key: 'seed-meta:climate:co2-monitoring', maxStaleMin: 2880 },
-        { key: 'seed-meta:climate:ocean-ice', maxStaleMin: 1440 },
+        { key: 'seed-meta:climate:ocean-ice', maxStaleMin: 2880 },
         { key: 'seed-meta:weather:alerts', maxStaleMin: 45 },
       ],
       [
@@ -1819,7 +1819,8 @@ describe('api/mcp.ts — PRO MCP Server', () => {
     // says "when no countries filter is supplied" — this regression test
     // pins that contract so a future "should limit further-narrow a
     // countries result" rewrite trips the test instead of breaking callers.
-    const payload = { countries: makeCountryMap('C', 60) };
+    const codes = ['US', 'DE', 'CN', 'IQ', 'FR', 'GB'];
+    const payload = { countries: Object.fromEntries(codes.map((code) => [code, { value: 1 }])) };
     const meta = {
       'seed-meta:economic:imf-macro': { fetchedAt: Date.now() - 60_000, recordCount: 60 },
       'seed-meta:economic:imf-growth': { fetchedAt: Date.now() - 60_000, recordCount: 0 },
@@ -1827,7 +1828,7 @@ describe('api/mcp.ts — PRO MCP Server', () => {
       'seed-meta:economic:imf-external': { fetchedAt: Date.now() - 60_000, recordCount: 0 },
     };
     mockCacheKeys({ 'economic:imf:macro:v2': payload }, meta);
-    const out = await callTool('get_country_macro', { countries: ['C0', 'C1', 'C2', 'C3', 'C4'], limit: 1 });
+    const out = await callTool('get_country_macro', { countries: codes.slice(0, 5), limit: 1 });
     assert.equal(Object.keys(out.data.macro.countries).length, 5,
       'countries filter takes precedence; limit is ignored when countries is supplied');
   });
@@ -2569,6 +2570,12 @@ describe('api/mcp.ts — PRO MCP Server', () => {
     const portwatchPortsPayload = { countries: { US: { ports: 23 } } };
     const chokepointBaselinesPayload = { suez: { lat: 30.0, lon: 32.5 } };
     const portwatchChokepointsRefPayload = { count: 13, ids: ['suez', 'hormuz', 'malacca'] };
+    // Deliberately source-LESS, mirroring a blob an older seeder deploy could
+    // still hold. The served expectation below states the narrowed shape
+    // explicitly rather than hiding the synthesis behind an in-taxonomy fixture
+    // value, so this stays a byte-identity check on the served slice: any field
+    // get_chokepoint_status's _postFilter adds or drops in future goes red here,
+    // in a file independent of the taxonomy suite that introduced the behaviour.
     const chokepointFlowsPayload = { suez: { dailyBarrels: 9_200_000 } };
 
     // transit-summaries budget=30min → 5min old (fresh)
@@ -2678,7 +2685,11 @@ describe('api/mcp.ts — PRO MCP Server', () => {
     assert.deepEqual(payload.data['_countries'], portwatchPortsPayload, 'portwatch-ports slice labelled from trailing _countries segment');
     assert.deepEqual(payload.data['chokepoint-baselines'], chokepointBaselinesPayload, 'chokepoint-baselines slice labelled from cache-key suffix');
     assert.deepEqual(payload.data['ref'], portwatchChokepointsRefPayload, 'portwatch:chokepoints:ref slice labelled from trailing ref segment');
-    assert.deepEqual(payload.data['chokepoint-flows'], chokepointFlowsPayload, 'chokepoint-flows slice labelled from cache-key suffix');
+    assert.deepEqual(
+      payload.data['chokepoint-flows'],
+      { suez: { dailyBarrels: 9_200_000, source: 'FLOW_SOURCE_UNSPECIFIED' } },
+      'chokepoint-flows slice labelled from cache-key suffix, with `source` narrowed onto the FlowSource taxonomy (#6113)',
+    );
   });
 
   it('get_chokepoint_status: fast transit-summaries fresh but slow portwatch-ports past budget flips aggregate stale', async () => {

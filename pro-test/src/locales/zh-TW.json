@@ -32,7 +32,7 @@
     "proF6": "航班搜尋與價格比較",
     "proF7": "告警規則引擎 — 自訂觸發器、靜音時段、AES-256 加密通道",
     "proF8": "市場觀察列表、宏觀與央行追蹤",
-    "proF9": "AI Market Implications 與 Regional Intelligence(即將推出:軌道監視、進階地圖圖層、更長歷史)",
+    "proF9": "AI 市場影響與區域情報",
     "choosePlan": "選擇方案",
     "entTitle": "World Monitor Enterprise",
     "entDesc": "面向需要共享監測、API 存取、部署選項、TV 應用和直接支援的團隊。",
@@ -48,7 +48,8 @@
     "entF10": "雲、本地或氣隙部署",
     "entF11": "專屬上手與支援",
     "entCta": "聯絡銷售",
-    "freeF2": "精選資訊源、標註來源和地圖圖層"
+    "freeF2": "精選資訊源、標註來源和地圖圖層",
+    "proF10": "Intel 記憶庫 — 歷史搜尋、時間線和相似事件查詢"
   },
   "whyUpgrade": {
     "title": "為什麼升級到 World Monitor Pro？",
@@ -155,13 +156,14 @@
     "economyAnalyticsDesc": "GDP、通脹、利率與增長週期。將宏觀資料與市場訊號和地緣政治事件相關聯。",
     "riskMonitoring": "風險監測與情景分析",
     "riskMonitoringDesc": "全球風險評分、情景分析與地緣政治風險評估。跨市場與政治訊號的收斂檢測。",
-    "orbitalSurveillance": "軌道監視",
-    "orbitalSurveillanceDesc": "(即將推出)過頂預測、重訪頻率分析與成像視窗告警。得知情報衛星何時正在觀察您關注的區域。",
     "morningBriefs": "個人情報工作臺",
     "morningBriefsDesc": "每份摘要最多30條排序新聞，跨源去重。選擇每日、兩次每日或每週的頻率——或針對重要事件的即時警報。AI評估和監控訊號傳送至Slack、Discord、Telegram、Email或webhook。不是新聞通訊——是分析師。",
     "oneKey": "即時服務，1個金鑰",
     "oneKeyDesc": "Finnhub、FRED、ACLED、UCDP、NASA FIRMS、AISStream、OpenSky 等 — 全部開啟,無需單獨註冊。",
-    "deliveryLabel": "選擇情報如何找到您"
+    "deliveryLabel": "選擇情報如何找到您",
+    "supplyChainLab": "供應鏈壓力實驗室",
+    "supplyChainLabDesc": "對各國和行業進行成本衝擊建模。按瓶頸依賴度對商品脆弱性排名。追蹤礦山到煉油廠的濃度和上期所-COMEX 現貨溢價差異 — 這是在頭條新聞出現前就會變動的資料序列。",
+    "roadmapNote": "路線圖中計劃：衛星監測、更長歷史資料、進階地圖圖層。"
   },
   "slackMock": {
     "morningBrief": "晨間簡報",
@@ -330,7 +332,7 @@
   "soonBadge": "即將推出",
   "meta": {
     "title": "World Monitor Pro | AI 智慧與 MCP",
-    "description": "World Monitor Pro 新增 AI 分析師、定時智慧摘要、自訂小工具、市場研究和 MCP 存取權限，用於存取即時地緣政治和金融資料。",
+    "description": "瞭解 World Monitor Pro 的 AI 分析師、定時智慧摘要、自訂小工具、市場研究與 MCP 存取功能，將地緣政治、金融和其他即時資料用於持續監測與分析。檢視產品功能、訂閱方案和使用範圍，瞭解如何提問、安排摘要、構建自訂檢視，以及在相容的智慧體客戶端存取情報資料，選擇適合個人工作流程的工具。",
     "ogTitle": "World Monitor Pro | 地緣政治 AI",
     "ogDescription": "提問、訂閱、整合。WM Analyst 聊天（按你的節奏提供每日、兩次每日或每週的AI摘要）、自訂widget構建器，以及MCP for Claude/GPT——一個金鑰統一接入所有即時服務。"
   },
@@ -363,14 +365,14 @@
       "pro": {
         "description": "完整的情報儀表板",
         "features": [
-          "免費版的所有功能",
-          "AI 股票分析和回測",
-          "每日市場簡報",
-          "軍事和地緣政治追蹤",
-          "自訂小工具構建器",
-          "10 個自訂儀表板（相比 3 個）",
+          "免費版的所有內容 — 面板、資料來源和關注國家無限制",
+          "WM 分析師聊天 + AI 股票分析和回測",
+          "成本衝擊建模和供應鏈壓力測試",
+          "Intel 記憶庫 — 歷史搜尋、時間線和相似事件",
+          "貴金屬現貨溢價、礦物濃度和主權債務資料",
+          "定時 AI 摘要 + 告警規則引擎",
           "MCP + SDK 存取權限，適用於 Claude Desktop 和其他 AI 客戶端（50 次呼叫/天）",
-          "優先資料重新整理\t"
+          "自訂小工具和 10 個儀表板（相比 3 個）"
         ],
         "highlightFeatures": [
           "個人許可證\t",
@@ -384,7 +386,7 @@
           "包含許可證 / API 金鑰",
           "即時資料流",
           "每分鐘 60 個請求",
-          "包含每天 1,000 個請求",
+          "每天包含 1,000 次請求（REST + MCP 合計；一次即時 MCP 呼叫計為 2-3 次）",
           "Webhook 通知"
         ],
         "highlightFeatures": [
@@ -412,9 +414,9 @@
         "description": "在 WorldMonitor 資料基礎上推出您自己的產品",
         "features": [
           "涵蓋 API Starter 的全部內容",
-          "再分發權限 — 將我們的資料嵌入到您的銷售產品中",
+          "用於面向客戶產品的 R1–R3 再分發權",
           "300 次請求/分鐘",
-          "包含 10,000 次請求/天",
+          "每天包含 10,000 次請求（REST + MCP 合計；一次即時 MCP 呼叫計為 2-3 次）",
           "5 個 Pro 許可證 — 邀請使用任何企業電子郵件域名的使用者",
           "優先支援"
         ],
@@ -479,14 +481,18 @@
       "screenshotAlt": "World Monitor 即時情報儀表板 — 包含衝突、海運和市場圖層的全球地圖\t",
       "plateNote": "從即時地圖捕獲 — 點選開啟\t",
       "trustBuild": "構建應用：\t",
-      "positioningLink": "WorldMonitor 不是開源的 Palantir\t"
+      "positioningLink": "WorldMonitor 不是開源的 Palantir\t",
+      "asOf": "截至2026年9月8日",
+      "whatIsTitle": "World Monitor 是什麼？",
+      "whatIsBody": "World Monitor 是一款免費的開源儀表板，將地緣政治、市場、海運、航空、基礎設施和網路訊號即時流式傳輸到一張世界地圖上。它將獨立資料來源關聯到單一作戰圖景中，在新聞見報前標記匯聚點，所有資料均有來源，所有方法均已記錄。"
     },
     "live": {
       "eyebrow": "即時線上\t",
       "title": "此頁面現在顯示的即時資料是什麼？",
       "subtitle": "World Monitor 全天候監控的百餘個訊號中的四個。\t",
       "liveBadge": "即時\t",
-      "sampleBadge": "示例\t",
+      "pulseBadge": "已釋出脈動 {{date}}",
+      "refreshNote": "啟用 JavaScript 以重新整理 — 上方已釋出的脈動在未啟用時仍可用。",
       "cardHeadlines": "頂部訊號\t",
       "cardCii": "不穩定指數",
       "ciiNote": "每個國家 12 個融合訊號",
@@ -584,35 +590,20 @@
       "eyebrow": "深層次分析",
       "title": "World Monitor 資料模型的深度如何？",
       "sub": "下面的每個數字現在都在儀表板中即時更新——不是路線圖。",
-      "s1v": "共享",
-      "s1l": "地圖圖層",
-      "s2v": "精選",
-      "s2l": "精選資料來源",
-      "s3v": "標註",
-      "s3l": "資料提供商",
-      "s4v": "即時",
+      "s1l": "地圖圖層型別",
+      "s2l": "新聞與情報源",
+      "s3l": "資料提供方",
       "s4l": "關鍵樞紐 · 即時 AIS",
-      "s5v": "一級",
       "s5l": "不穩定指數 · 即時",
-      "s6v": "公開",
       "s6l": "韌性排名",
-      "s7v": "已對映",
       "s7l": "海底光纜",
-      "s8v": "已對映",
       "s8l": "管道和液化天然氣",
-      "s9v": "已對映",
       "s9l": "AI 資料中心對映",
-      "s10v": "已評分",
       "s10l": "得分熱點",
-      "s11v": "即時",
       "s11l": "交易所與資產",
-      "s12v": "即時",
       "s12l": "MCP工具",
-      "s13v": "快速",
-      "s13l": "⌘K命令",
-      "s14v": "本地化",
+      "s13l": "⌘K 命令定義",
       "s14l": "語言·含RTL",
-      "s15v": "5",
       "s15l": "獨立警報源",
       "n1Title": "衛星追蹤",
       "n1Desc": "使用SGP4在瀏覽器內即時計算軌道位置——監控國際空間站、星鏈和軍事衛星的頭頂透過。",
@@ -685,7 +676,7 @@
       "q4": "我可以即時監視霍爾木茲海峽或曼德海峽等樞紐嗎？",
       "a4": "可以。制約點使用即時AIS船舶計數、周環比過境變化和中斷評分進行追蹤——密度異常針對每條海峽的滾動基線進行標記。",
       "q5": "這與 Liveuamap 之類的衝突地圖有何不同？",
-      "a5": "衝突是一個地圖圖層。World Monitor 融合衝突、海運、軍事飛行、基礎設施、市場和網路威脅——然後 AI 計算融合指數：不穩定指數、熱點升級、相互印證的突發警報和每日簡報。",
+      "a5": "衝突是一個地圖圖層。World Monitor 融合衝突、海運、軍事飛行、基礎設施、市場和網路威脅——然後透過 AI 評分評估收斂度：不穩定指數、熱點升級、證實的突發警報和每日簡報。將 World Monitor 與 Liveuamap 和其他衝突地圖對比：worldmonitor.app/compare/liveuamap-alternatives。",
       "q6": "為什麼要相信警報？",
       "a6": "突發橫幅僅在獨立來源型別相互印證時觸發 — 新聞分類、關鍵詞速率、熱點升級、軍事激增、官方警報器 — 去重和速率限制。更少的警報，真實的警報。",
       "q7": "Claude 或 GPT 等 AI 代理可以使用它嗎？",
@@ -718,5 +709,19 @@
       "countryRiskDesc": "追蹤國家變化背後的政治、安全、經濟和韌性訊號。",
       "open": "開啟證據"
     }
+  },
+  "whatsNew": {
+    "eyebrow": "航運日誌",
+    "title": "World Monitor 有什麼新內容",
+    "subtitle": "過去 30 天的新功能 — 不包括修復和底層最佳化。",
+    "proTag": "PRO",
+    "m1": "現貨溢價差異指數 — 上期所 vs COMEX，含歷史資料",
+    "m2": "商品供應脆弱性排名 — 瓶頸依賴度展開圖",
+    "m3": "礦物生產濃度與國防工業基礎",
+    "m4": "五因子韌性記分卡及指標級得分",
+    "m5": "自訂 Telegram 頻道監測列表",
+    "m6": "通行金鑰登入",
+    "m7": "AI 智慧體可驅動儀表板 — 面板、標籤頁、地圖圖層和任務",
+    "m8": "更豐富的國家韌性頁面"
   }
 }

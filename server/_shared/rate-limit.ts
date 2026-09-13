@@ -236,12 +236,34 @@ export interface RateLimitOptions {
    * so user IDs cannot collide with anonymous IP buckets.
    */
   principalUserId?: string;
+  /**
+   * Which credential the caller presented. A user's API key and their browser
+   * session resolve to the SAME Clerk user id, so without this they share one
+   * per-minute bucket and programmatic traffic starves the interactive session
+   * behind the same account (WORLDMONITOR-12A: a scraper on an api_starter key
+   * spent 598 of 600, leaving that customer's own dashboard 2 successes and 22
+   * × 429). Defaults to `session`, which keeps the established `user:` key so
+   * in-flight buckets are not reset.
+   *
+   * This separates namespaces; it does not exempt anyone. Each scope is still
+   * capped at the same per-minute limit, so the aggregate a single account can
+   * spend across both credentials doubles by design — programmatic use is
+   * metered by the plan's own `apiRateLimit` + daily allowance, which is the
+   * meter that should bound it.
+   */
+  principalScope?: PrincipalRateLimitScope;
 }
+
+export type PrincipalRateLimitScope = 'session' | 'api_key';
 
 export type EndpointRateLimitOptions = RateLimitOptions;
 
-function getPrincipalRateLimitIdentifier(principalUserId?: string): string | null {
-  return principalUserId ? `user:${principalUserId}` : null;
+function getPrincipalRateLimitIdentifier(
+  principalUserId?: string,
+  scope: PrincipalRateLimitScope = 'session',
+): string | null {
+  if (!principalUserId) return null;
+  return scope === 'api_key' ? `apikey-user:${principalUserId}` : `user:${principalUserId}`;
 }
 
 export async function checkRateLimit(request: Request, corsHeaders: Record<string, string>, opts: RateLimitOptions = {}): Promise<Response | null> {
@@ -258,7 +280,7 @@ export async function checkRateLimit(request: Request, corsHeaders: Record<strin
   // in-flight 60-second bucket does not reset during rollout. Trusted
   // principals use a separate namespace.
   const identifier =
-    getPrincipalRateLimitIdentifier(opts.principalUserId) ??
+    getPrincipalRateLimitIdentifier(opts.principalUserId, opts.principalScope) ??
     getClientIp(request);
 
   try {
@@ -294,12 +316,24 @@ interface EndpointRatePolicy {
 // using checkEndpointRateLimit / hasEndpointRatePolicy below — the export is
 // for tooling, not new runtime callers.
 export const ENDPOINT_RATE_POLICIES: Record<string, EndpointRatePolicy> = {
+  '/api/aviation/v1/search-google-flights': { limit: 30, window: '60 s' },
+  '/api/aviation/v1/list-aviation-news': { limit: 30, window: '60 s' },
+  // Public relay/HTML discovery has the same scrape fan-out as the legacy
+  // YouTube live endpoint and needs its own fail-closed gateway budget.
+  '/api/aviation/v1/get-youtube-live-stream-info': { limit: 30, window: '60 s' },
+  // Interactive fare searches use one provider request on a cache miss.
+  // 30/min leaves headroom under the provider's 300-600/min shared quota.
+  '/api/aviation/v1/search-flight-prices': { limit: 30, window: '60 s' },
   // LLM article summarization is Pro-gated, but still needs a scoped,
   // fail-closed budget so Redis degradation cannot silently lift the
   // per-endpoint spend control.
   '/api/news/v1/summarize-article': { limit: 30, window: '60 s' },
   '/api/news/v1/summarize-article-cache': { limit: 3000, window: '60 s' },
   '/api/intelligence/v1/classify-event': { limit: 600, window: '60 s' },
+  // Full Telegram bodies match the first-party feed's 60/min ceiling. Anonymous
+  // sessions remain IP-scoped; verified paid principals retain user identity.
+  // The endpoint registry fails closed so outages cannot lift this cap.
+  '/api/intelligence/v1/list-telegram-feed': { limit: 60, window: '60 s' },
   // LLM-backed situational deduction (imports callLlmReasoning) can drive
   // provider spend on cache misses, so it must fail closed on Redis outage
   // rather than inherit the global fail-open fallback. Mirror the sibling
@@ -347,6 +381,12 @@ export const ENDPOINT_RATE_POLICIES: Record<string, EndpointRatePolicy> = {
   // paid-provider probe under anonymous or rotating callers.
   '/api/military/v1/get-aircraft-details': { limit: 30, window: '60 s' },
   '/api/military/v1/get-aircraft-details-batch': { limit: 30, window: '60 s' },
+  // Webcam image resolution proxies Windy on a caller-controlled cache miss.
+  // Keep it at the standard provider-proxy budget instead of the global fallback.
+  '/api/webcam/v1/get-webcam-image': { limit: 30, window: '60 s' },
+  // Live lookups can fan out to position, schedule and photo providers.
+  '/api/military/v1/get-wingbits-live-flight': { limit: 30, window: '60 s' },
+  '/api/imagery/v1/search-imagery': { limit: 30, window: '60 s' },
   // Generic batch fan-out: one request re-dispatches up to 20 gateway GETs, so
   // cap the multiplier at the same 30/min budget as the other batch routes.
   '/api/batch/v1/execute': { limit: 30, window: '60 s' },
@@ -358,6 +398,12 @@ export const ENDPOINT_RATE_POLICIES: Record<string, EndpointRatePolicy> = {
   // unbounded (any ticker/name/domain), so these cannot inherit the fail-open
   // global fallback. Same 30/min provider-proxy budget as the sanctions lookup
   // and batch fan-out routes above.
+  // Country coverage (#7526) fans out per cache miss to two Google News RSS
+  // feeds plus a live military-flights path and an ACLED window whose cache key
+  // moves with the clock, so the miss rate is high. Same shape as the sibling
+  // provider-proxy routes above; it must not inherit the global fail-open
+  // budget on a Redis outage.
+  '/api/intelligence/v1/get-country-coverage': { limit: 30, window: '60 s' },
   '/api/intelligence/v1/get-company-enrichment': { limit: 30, window: '60 s' },
   '/api/intelligence/v1/list-company-signals': { limit: 30, window: '60 s' },
   '/api/intelligence/v1/search-sec-filings': { limit: 30, window: '60 s' },
@@ -394,6 +440,7 @@ export const ENDPOINT_RATE_POLICIES: Record<string, EndpointRatePolicy> = {
   // when that read fails, so the fail-closed 503 is a second line, not the
   // only thing standing between a Redis outage and a CoinGecko fan-out. (#6308)
   '/api/market/v1/list-stablecoin-markets': { limit: 60, window: '60 s' },
+  '/api/market/v1/list-crypto-quotes': { limit: 60, window: '60 s' },
   '/api/economic/v1/list-world-bank-indicators': { limit: 30, window: '60 s' },
   // #6305: list-market-quotes stopped being a pure seed read. The fixed seed
   // still answers the default universe with no upstream call, but a symbol the
@@ -514,6 +561,14 @@ export const ENDPOINT_RATE_POLICIES: Record<string, EndpointRatePolicy> = {
   // Partner embed entitlement (#6599): keyed panels look up wm_ keys in Convex.
   // Cap per-IP so a stolen snippet cannot amplify validation traffic.
   '/api/embed/entitlement': { limit: 60, window: '60 s' },
+  // Grant exchange: validates a wme_ key in Convex, so it amplifies the same
+  // way the entitlement lookup does. A frame mints once per 30-minute grant,
+  // which leaves this budget almost entirely as headroom for shared egress IPs.
+  '/api/embed/session': { limit: 60, window: '60 s' },
+  // Partner map frame. Public traffic uses the client IP; a verified grant uses
+  // its account owner so every display for one partner shares the same budget.
+  // The CDN absorbs most canonical public requests before this policy runs.
+  '/api/embed/map-frame': { limit: 120, window: '60 s' },
 };
 
 interface RateLimitPolicyDecision {
@@ -524,11 +579,24 @@ interface RateLimitPolicyDecision {
 // defence. scripts/enforce-rate-limit-policies.mjs fails if any route listed
 // here can drift back to the gateway's availability-first global fallback.
 export const FAIL_CLOSED_ENDPOINT_RATE_POLICY_REQUIRED: Record<string, RateLimitPolicyDecision> = {
+  '/api/aviation/v1/search-google-flights': { reason: 'Public flight searches perform a live Google shopping request on each cache miss.' },
+  '/api/aviation/v1/list-aviation-news': {
+    reason: 'Public aviation news can fan out to nine RSS feeds when the shared snapshot is unavailable.',
+  },
+  '/api/aviation/v1/get-youtube-live-stream-info': {
+    reason: 'Public live-stream discovery can fan out to relay and YouTube HTML scrapes on cache misses.',
+  },
+  '/api/aviation/v1/search-flight-prices': {
+    reason: 'Caller-selected fare searches consume Travelpayouts request quota on cache misses.',
+  },
   '/api/news/v1/summarize-article': {
     reason: 'LLM-backed summarization can drive provider spend on cache misses.',
   },
   '/api/intelligence/v1/classify-event': {
     reason: 'AI classification performs expensive provider-backed analysis.',
+  },
+  '/api/intelligence/v1/list-telegram-feed': {
+    reason: 'Full Telegram message extraction must retain the endpoint cap during Redis outages.',
   },
   '/api/intelligence/v1/deduct-situation': {
     reason: 'LLM-backed situational deduction can drive provider spend on cache misses.',
@@ -541,6 +609,9 @@ export const FAIL_CLOSED_ENDPOINT_RATE_POLICY_REQUIRED: Record<string, RateLimit
   },
   '/api/conflict/v1/get-humanitarian-summary-batch': {
     reason: 'Batch summary fans out to the external HAPI (humdata) provider on cache miss.',
+  },
+  '/api/intelligence/v1/get-country-coverage': {
+    reason: 'Country coverage fans out to two Google News feeds and the live military-flights path on cache miss.',
   },
   '/api/intelligence/v1/get-company-enrichment': {
     reason: 'Per-company composite fans out to SEC EDGAR and Finnhub on cache miss.',
@@ -562,6 +633,9 @@ export const FAIL_CLOSED_ENDPOINT_RATE_POLICY_REQUIRED: Record<string, RateLimit
   },
   '/api/market/v1/get-country-stock-index': {
     reason: 'Per-country stock-index lookups proxy Yahoo Finance on cache miss.',
+  },
+  '/api/market/v1/list-crypto-quotes': {
+    reason: 'Caller-named coin IDs absent from the seed snapshot fan out to CoinGecko on cache miss.',
   },
   '/api/market/v1/list-stablecoin-markets': {
     reason: 'Caller-named coin IDs absent from the seed snapshot fan out to CoinGecko on cache miss with unbounded ID cardinality.',
@@ -589,6 +663,15 @@ export const FAIL_CLOSED_ENDPOINT_RATE_POLICY_REQUIRED: Record<string, RateLimit
   },
   '/api/military/v1/get-aircraft-details': {
     reason: 'Single aircraft enrichment proxies the external Wingbits provider on cache miss.',
+  },
+  '/api/webcam/v1/get-webcam-image': {
+    reason: 'Webcam image resolution proxies the Windy provider on cache miss.',
+  },
+  '/api/military/v1/get-wingbits-live-flight': {
+    reason: 'Live aircraft lookups fan out to external providers on short-lived cache misses.',
+  },
+  '/api/imagery/v1/search-imagery': {
+    reason: 'Imagery searches proxy the external STAC catalog on cache misses.',
   },
   '/api/batch/v1/execute': {
     reason: 'Generic batch fan-out multiplies one request into up to 20 gateway sub-requests.',
@@ -623,6 +706,12 @@ export const FAIL_CLOSED_ENDPOINT_RATE_POLICY_REQUIRED: Record<string, RateLimit
   '/api/embed/entitlement': {
     reason: 'Keyed-panel entitlement lookups amplify into Convex user-key validation; fail closed so a Redis outage cannot lift the per-IP budget.',
   },
+  '/api/embed/session': {
+    reason: 'Grant minting amplifies into Convex embed-key validation and hands back a bearer credential; fail closed so a Redis outage cannot lift the per-IP budget on a credential-issuing path.',
+  },
+  '/api/embed/map-frame': {
+    reason: 'The keyless map frame is fully anonymous and fans out across four seed reads. Fail closed rather than inherit the availability-first global fallback: those reads come from the same Redis that would be degraded, so a fail-open origin would serve empty layers at unbounded volume while the CDN copy keeps real data on screen for the stale-while-revalidate window.',
+  },
 };
 
 // Explicit examples of read-only gateway routes where the global per-IP
@@ -654,7 +743,7 @@ export const RATE_LIMIT_MUTATION_FALLBACK_EXEMPT: Record<string, RateLimitPolicy
   },
   '/api/infrastructure/v1/record-baseline-snapshot': {
     reason:
-      'Redis-only write (setCachedJson) with no external provider or LLM call; if Redis is degraded the write itself cannot land, so the fail-open fallback carries no spend/abuse risk.',
+      'Deprecated compatibility route that rejects client-supplied baseline writes before Redis; the fail-open fallback cannot admit a mutation.',
   },
   '/api/v2/shipping/webhooks': {
     reason:
@@ -695,8 +784,37 @@ export function hasEndpointRatePolicy(pathname: string): boolean {
   return pathname in ENDPOINT_RATE_POLICIES;
 }
 
+let nativeGoogleFlightsAdmissions: number[] = [];
+let nativeAviationNewsAdmissions: number[] = [];
+
 export async function checkEndpointRateLimit(request: Request, pathname: string, corsHeaders: Record<string, string>, opts: EndpointRateLimitOptions = {}): Promise<Response | null> {
   if (!hasEndpointRatePolicy(pathname)) return null;
+  // Native transport authentication happens before this gateway. Use one
+  // bounded local budget with the in-process cache; cloud and Docker use Redis.
+  if (pathname === '/api/aviation/v1/search-google-flights'
+    && process.env.LOCAL_API_MODE === 'tauri-sidecar') {
+    const policy = ENDPOINT_RATE_POLICIES[pathname]!;
+    const windowSeconds = durationToSeconds(policy.window);
+    const now = Date.now();
+    nativeGoogleFlightsAdmissions = nativeGoogleFlightsAdmissions.filter(time => time > now - windowSeconds * 1000);
+    if (nativeGoogleFlightsAdmissions.length >= policy.limit) {
+      return tooManyRequestsResponse(policy.limit, nativeGoogleFlightsAdmissions[0]! + windowSeconds * 1000, corsHeaders, windowSeconds);
+    }
+    nativeGoogleFlightsAdmissions.push(now);
+    return null;
+  }
+  if (pathname === '/api/aviation/v1/list-aviation-news'
+    && process.env.LOCAL_API_MODE === 'tauri-sidecar') {
+    const policy = ENDPOINT_RATE_POLICIES[pathname]!;
+    const windowSeconds = durationToSeconds(policy.window);
+    const now = Date.now();
+    nativeAviationNewsAdmissions = nativeAviationNewsAdmissions.filter(time => time > now - windowSeconds * 1000);
+    if (nativeAviationNewsAdmissions.length >= policy.limit) {
+      return tooManyRequestsResponse(policy.limit, nativeAviationNewsAdmissions[0]! + windowSeconds * 1000, corsHeaders, windowSeconds);
+    }
+    nativeAviationNewsAdmissions.push(now);
+    return null;
+  }
 
   const rl = getEndpointRatelimit(pathname);
   if (!rl) {
@@ -709,7 +827,7 @@ export async function checkEndpointRateLimit(request: Request, pathname: string,
   }
 
   const identifier =
-    getPrincipalRateLimitIdentifier(opts.principalUserId) ??
+    getPrincipalRateLimitIdentifier(opts.principalUserId, opts.principalScope) ??
     `ip:${getClientIp(request)}`;
   const policy = ENDPOINT_RATE_POLICIES[pathname];
   // hasEndpointRatePolicy(pathname) above already guarantees this — the
@@ -865,6 +983,8 @@ export async function checkFailClosedScopedIpRateLimit(
 }
 
 export function __resetRateLimitForTest(): void {
+  nativeGoogleFlightsAdmissions = [];
+  nativeAviationNewsAdmissions = [];
   ratelimit = null;
   endpointLimiters.clear();
   scopedLimiters.clear();

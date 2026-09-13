@@ -29,6 +29,7 @@ import {
 import {
   beginDigestAttempt,
   completeDigestAttempt,
+  deferDigestAttempt,
   publishAcceptedSnapshot,
   publishFailedAttempt,
   readAcceptedSnapshot,
@@ -158,6 +159,19 @@ async function settleBeforeDeadline<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+function finishSuccessfulDigestAttempt(
+  variant: string,
+  lang: string,
+  slot: ReturnType<typeof beginDigestAttempt>,
+): null {
+  completeDigestAttempt(variant, lang, slot);
+  // Publication remains inside the shared in-flight promise. Clear the build
+  // identity before that phase starts so an outer response timeout cannot
+  // relabel a completed build as `build-error` and overwrite its canonical
+  // publication with a negative sentinel.
+  return null;
 }
 
 type DigestFeedEntry = { attemptId: string; category: string; feed: ServerFeed };
@@ -462,7 +476,7 @@ const ENTITY_CORROBORATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DIPLOMACY_SEVERITY_PROMOTION_MIN_TIER12_SOURCES = 3;
 
 
-interface ParsedItem {
+export interface ParsedItem {
   source: string;
   // Originating publisher from the RSS <source> element ('' when absent).
   // Google News feeds — which back 154 of the 366 server digest labels —
@@ -791,7 +805,7 @@ async function fetchRssText(
  * an unrecognized date dialect — see U2 in
  * docs/plans/2026-04-26-001-fix-brief-static-page-contamination-plan.md).
  */
-interface ParseResult {
+export interface ParseResult {
   items: ParsedItem[];
   parsedTotal: number;     // count of <item>/<entry> blocks attempted
   droppedUndated: number;  // count dropped because every recognized date tag was empty/unparseable/future
@@ -810,7 +824,18 @@ interface ParseResult {
 const CACHE_TTL_HEALTHY_S = 3600;
 const CACHE_TTL_EMPTY_S = 300;
 
-async function fetchAndParseRss(
+/**
+ * Fetch one feed and parse it: direct, then the relay when direct is blocked,
+ * with a Cloudflare-challenge body sniff and a strict date gate.
+ *
+ * Exported since #7526 so the country-coverage RPC uses this transport instead
+ * of standing up a second RSS fetcher. Its cache key already carries the whole
+ * feed URL, so a per-country query is keyed per country for free. Note that
+ * `item.level` / `item.category` are stamped by the DIGEST classifier
+ * (`./_classifier`); a caller that must agree with the browser re-labels the
+ * title with shared/threat-keyword-classifier instead of reading those fields.
+ */
+export async function fetchAndParseRss(
   feed: ServerFeed,
   variant: string,
   signal: AbortSignal,
@@ -2041,7 +2066,7 @@ export async function listFeedDigest(
             const result = await buildDigest(variant, lang, (await revokedPromise).urls);
             const totalItems = Object.values(result.categories).reduce((sum, b) => sum + b.items.length, 0);
             if (totalItems > 0) {
-              completeDigestAttempt(variant, lang, leaderSlot);
+              leaderSlot = finishSuccessfulDigestAttempt(variant, lang, leaderSlot);
               return result;
             }
             leaderFailure = publishFailedAttempt(
@@ -2055,15 +2080,17 @@ export async function listFeedDigest(
             completeDigestAttempt(variant, lang, leaderSlot);
             return null;
           } catch (err) {
-            leaderFailure = publishFailedAttempt(
-              variant,
-              lang,
-              digestCacheKey,
-              leaderSlot,
-              'build-error',
-              30,
-            );
-            completeDigestAttempt(variant, lang, leaderSlot);
+            if (leaderSlot) {
+              leaderFailure = publishFailedAttempt(
+                variant,
+                lang,
+                digestCacheKey,
+                leaderSlot,
+                'build-error',
+                30,
+              );
+              completeDigestAttempt(variant, lang, leaderSlot);
+            }
             throw err;
           }
         },
@@ -2073,13 +2100,30 @@ export async function listFeedDigest(
           // The fetcher publishes attempt + sentinel atomically. Letting the
           // generic wrapper write its own sentinel first would detach identity.
           cacheFailures: false,
+          cachePositiveResult: false,
+          onPositiveResult: async (result) => {
+            if (Date.now() - requestStart <= PUBLISH_DEADLINE_CUTOFF_MS) {
+              const publication = await settleBeforeDeadline(
+                publishAcceptedSnapshot(variant, lang, result, digestCacheKey),
+                responseDeadlineAt,
+                'unavailable',
+              );
+              if (publication === 'unavailable') deferDigestAttempt(digestCacheKey, 30);
+            } else {
+              deferDigestAttempt(digestCacheKey, 30);
+              console.warn(
+                `[digest-lastgood] publish skipped (over deadline budget) variant=${variant} lang=${lang} ` +
+                  `elapsed_ms=${Date.now() - requestStart}`,
+              );
+            }
+          },
           shouldFetch: () => shouldStartDigestAttempt(digestCacheKey),
         },
       ),
       responseDeadlineAt,
       { data: null, source: 'skipped', leader: false },
     );
-    const { data: fresh, source, leader } = cachedResult;
+    const { data: fresh, source } = cachedResult;
 
     if (fresh === null) {
       markNoCacheResponse(ctx.request);
@@ -2126,28 +2170,6 @@ export async function listFeedDigest(
       });
       markNoCacheResponse(ctx.request);
       return empty(fresh.coverage?.attemptedAt || attemptedAt, '');
-    }
-    // Only the coalescing LEADER of a real build publishes: followers resolve
-    // with source 'fresh' too, and each would repeat the full ~126KB guarded
-    // write for a body identical to the one the leader just published. The
-    // deadline gate keeps the worst case inside the 25s Edge ceiling: a
-    // maximally slow build (~19s with its own cache writes) plus this
-    // publish's worst case (~6.5s of Redis timeouts) would exceed it, and
-    // the publish is best-effort by contract — skipping it under pressure
-    // loses nothing the next uncontended build will not restore.
-    if (source === 'fresh' && leader) {
-      if (Date.now() - requestStart <= PUBLISH_DEADLINE_CUTOFF_MS) {
-        await settleBeforeDeadline(
-          publishAcceptedSnapshot(variant, lang, fresh),
-          responseDeadlineAt,
-          undefined,
-        );
-      } else {
-        console.warn(
-          `[digest-lastgood] publish skipped (over deadline budget) variant=${variant} lang=${lang} ` +
-            `elapsed_ms=${Date.now() - requestStart}`,
-        );
-      }
     }
     // #7084: while ANY revocation is live, stop feeding shared caches. This
     // endpoint is the gateway's `slow` tier (s-maxage=1800, CDN-Cache-Control
@@ -3174,6 +3196,7 @@ export const __testing__ = {
   fallbackDigestCache,
   markFallbackCoverageStale,
   settleBeforeDeadline,
+  finishSuccessfulDigestAttempt,
   lastGoodStoreTesting,
   beginDigestAttempt,
   completeDigestAttempt,

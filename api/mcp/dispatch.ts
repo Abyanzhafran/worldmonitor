@@ -1,4 +1,6 @@
+import { buildAttributionRider, mergeAttributionRider } from '../../shared/attribution-rider';
 import { readExistsFlags, readJsonFromUpstash, redisPipeline } from '../_upstash-json.js';
+import { isAppOwnedRedisKey } from '../_redis-key-ownership.js';
 // @ts-expect-error — JS module, no declaration file
 import { captureSilentError } from '../_sentry-edge.js';
 import { secondsUntilUtcMidnight } from '../../server/_shared/pro-mcp-token';
@@ -13,10 +15,10 @@ import { mcpErrorFingerprint } from './error-fingerprint';
 import { argBool, summarizeData } from './filters';
 import { evaluateFreshness } from './freshness';
 import { applyJmespath } from './jmespath';
-import { reserveQuota } from './quota';
+import { isSharedRestCounter, reserveQuota, type McpBudget } from './quota';
 import { reserveFreeAccountAllowance } from './free-account-allowance';
-import { buildMcpStructuredDenial, type McpDenialReason } from './upgrade';
-import { isQuotaExemptMetadataTool, TOOL_REGISTRY } from './registry/index';
+import { buildMcpStructuredDenial, type McpDenial } from './upgrade';
+import { isQuotaExemptMetadataTool, toolWeight, TOOL_REGISTRY } from './registry/index';
 import { rpcError, rpcOk, withMcpNoStore } from './rpc';
 import { McpSourceUnavailableError } from './source-unavailable';
 import {
@@ -40,17 +42,8 @@ import { isPhysicalDivergenceContractError as isMcpStoredContractError } from '.
 // ---------------------------------------------------------------------------
 // Exported as a test seam (like `evaluateFreshness`) so the `_postFilter`
 // throw/fall-back path can be exercised directly — it can't be triggered
-// through the public handler because every registry `_postFilter` is
-// defensively written and won't throw on JSON-RPC input.
-// Tools whose payloads carry attribution-bound provider evidence. A JMESPath
-// projection could detach the values from the source/licence/retrieval fields
-// that make their redistribution permissible, so projection is refused outright.
-const ATTRIBUTION_BOUND_TOOLS: ReadonlySet<string> = new Set([
-  'get_resilience_indicators',
-  'get_supply_vulnerabilities',
-  'get_chokepoint_dependencies',
-]);
-
+// through the public handler for unexpected programming errors. Country
+// validation errors are tested through dispatch and must propagate.
 export async function executeTool(
   tool: CacheToolDef,
   params: Record<string, unknown> = {},
@@ -62,9 +55,14 @@ export async function executeTool(
   contentFreshnessPendingUntil?: string;
   data: Record<string, unknown>;
 }> {
-  const reads = tool._cacheKeys.map(k => readJsonFromUpstash(k));
+  // Per-key namespace decision (#7674): most _cacheKeys / freshness keys are
+  // written by the Railway seeder fleet and are read raw; the route-owned
+  // exceptions (temporal anomalies snapshot + its stamp) ride the deployment
+  // prefix so a preview deployment classifies its own producer instead of the
+  // production rows.
+  const reads = tool._cacheKeys.map((k) => readJsonFromUpstash(k, 3_000, !isAppOwnedRedisKey(k)));
   const freshnessChecks = tool._freshnessChecks;
-  const metaReads = freshnessChecks.map((check) => readJsonFromUpstash(check.key));
+  const metaReads = freshnessChecks.map((check) => readJsonFromUpstash(check.key, 3_000, !isAppOwnedRedisKey(check.key)));
   // #6080 deployment-order grace. Only checks declaring a content contract pay
   // for this read, so it is one extra command on get_chokepoint_status and
   // none at all on every other tool.
@@ -80,8 +78,10 @@ export async function executeTool(
   // divergence #6080 exists to close.
   // redisPipeline never rejects — it returns null on any failure — so this
   // cannot turn a freshness hint into a hard tool-execution failure.
+  // Activation markers are seeder-written (`seed-activated:*`) and are read
+  // raw in every environment (#7674).
   const activationRead = activationKeys.length > 0
-    ? redisPipeline(activationKeys.map((key) => ['EXISTS', key]))
+    ? redisPipeline(activationKeys.map((key) => ['EXISTS', key]), 5_000, true)
     : Promise.resolve([]);
   const [results, metas, activationResults] = await Promise.all([
     Promise.all(reads),
@@ -169,11 +169,12 @@ export async function executeTool(
     try {
       result = tool._postFilter(structuredClone(data), params);
     } catch (err) {
+      // Input validation must reach the caller instead of serving unfiltered data.
       // A stored-contract violation must NOT fall through to `data`: that path serves the
       // raw, unvalidated blob the filter just refused, which is the opposite of failing
       // closed (#6448 — an unknown state "must surface as an error, never silently map to
       // normal"). Let it out so the tool call errors instead.
-      if (isMcpStoredContractError(err)) throw err;
+      if (isMcpStoredContractError(err) || err instanceof RpcValidationError) throw err;
       // Same minified-frame over-grouping guard as the tool-execution catch
       // below — key on step + tool + error type so a post-filter bug in one
       // tool doesn't merge into the shared api/mcp catch-all (WORLDMONITOR-T8).
@@ -212,14 +213,14 @@ export async function executeTool(
  *   -32029 / 429 — quota/allowance spent; pass `retryAfter`.
  */
 function mcpDenialResponse(
-  reason: McpDenialReason,
+  denial: McpDenial,
   code: number,
   status: number,
   id: unknown,
   corsHeaders: Record<string, string>,
   opts?: { retryAfter?: string; wwwAuthenticate?: string },
 ): Response {
-  const { message, data } = buildMcpStructuredDenial(reason);
+  const { message, data } = buildMcpStructuredDenial(denial);
   return new Response(
     JSON.stringify({ jsonrpc: '2.0', id, error: { code, message, data } }),
     {
@@ -258,11 +259,11 @@ export async function dispatchToolsCall(
   body: { id?: unknown; params?: unknown },
   corsHeaders: Record<string, string>,
   ctx?: { waitUntil: (p: Promise<unknown>) => void },
-  // Daily allowance resolved by the context pre-check (api/mcp/auth.ts) from
-  // the entitlement it already fetched. Omitted → `PRO_DAILY_QUOTA_LIMIT`;
-  // null → unlimited. Only the `pro` context ever supplies one (KTD6), so a
-  // caller that skips the pre-check simply inherits the plan default.
-  mcpDailyLimit?: number | null,
+  // Budget resolved by the context pre-check (api/mcp/auth.ts) from the
+  // entitlement it already fetched: which counter to charge and its ceiling.
+  // Omitted → the dedicated Pro counter at `PRO_DAILY_QUOTA_LIMIT`, so a caller
+  // that skips the pre-check inherits the plan default rather than a wider cap.
+  budget?: McpBudget,
   // Free-account paid-funnel path (#6716). When set, meters via the idle-gap
   // + call counters instead of reserveQuota.
   freeAccountAllowance?: boolean,
@@ -283,25 +284,6 @@ export async function dispatchToolsCall(
     return rpcError(id, -32602, `Unknown tool: ${p.name.slice(0, 100)}`, corsHeaders);
   }
 
-  // Raw resilience values are redistribution-safe only when they remain
-  // attached to their source, licence, retrieval time, and provenance fields.
-  // Reject projection before quota reservation and execution so a caller
-  // cannot use the universal JMESPath facility to separate those fields.
-  // The supply-vulnerability tools carry BGS mineral evidence under the same
-  // "attribution required; redistribution restricted" licence.
-  if (
-    ATTRIBUTION_BOUND_TOOLS.has(tool.name)
-    && typeof p.arguments?.jmespath === 'string'
-    && p.arguments.jmespath.length > 0
-  ) {
-    return rpcError(
-      id,
-      -32602,
-      'JMESPath projection is not available for this attribution-bound response',
-      corsHeaders,
-    );
-  }
-
   // U7 fail-closed guard (defence in depth). A `free` principal is minted in
   // exactly one place — the handler's free-tier branch, after matching this
   // same `_freeTier` flag — but a free context reaching any other tool would be
@@ -310,7 +292,7 @@ export async function dispatchToolsCall(
   // future edit to the handler's matching cannot silently widen what a free
   // caller can reach.
   if (context.kind === 'free' && tool._freeTier !== true) {
-    return mcpDenialResponse('no-account', -32001, 401, id, corsHeaders, {
+    return mcpDenialResponse({ reason: 'no-account' }, -32001, 401, id, corsHeaders, {
       // Every 401 on this surface carries WWW-Authenticate — docs/mcp-error-catalog.mdx
       // states it as an invariant, and RFC-9728 clients discover the OAuth resource
       // metadata through it. `resourceMetadataUrl` is optional only because the
@@ -344,15 +326,15 @@ export async function dispatchToolsCall(
   // local registry read that never reaches the gateway, and it is the tool an
   // agent needs most while deciding what it may call.
   if (freeAccountAllowance && tool._execute && !isMetadataTool && tool._freeTier !== true) {
-    return mcpDenialResponse('upgrade-required', -32002, 403, id, corsHeaders);
+    return mcpDenialResponse({ reason: 'upgrade-required' }, -32002, 403, id, corsHeaders);
   }
 
-  // user_key (#4859) consumes the same per-user daily quota as pro: cache
+  // user_key (#4859) consumes the same per-user daily budget as pro: cache
   // tools read Upstash directly (no downstream gateway metering), so an
   // unquota'd user_key would be an unmetered data loophole bounded only by
-  // the 60/min limiter. Raising API-plan MCP allowances above the Pro cap is
-  // a deliberate follow-up, not a default — which is why `mcpDailyLimit`
-  // arrives unset for that kind (api/mcp/auth.ts::runUserKeyPreChecks).
+  // the 60/min limiter. Both credential classes resolve their budget through
+  // the same `resolveMcpBudget`, so an API-tier caller charges its REST budget
+  // whichever door it arrives through.
   if (
     (context.kind === 'pro' || context.kind === 'user_key')
     && tool._freeTier !== true
@@ -370,7 +352,7 @@ export async function dispatchToolsCall(
           // It must never be -32001/401: docs/mcp-error-catalog.mdx documents that
           // pair as "re-authenticate via OAuth", so an RFC-9728 client would loop
           // (OAuth succeeds, retry, 401 again) on a condition re-auth cannot fix.
-          return mcpDenialResponse('allowance-exhausted', -32029, 429, id, corsHeaders, {
+          return mcpDenialResponse({ reason: 'allowance-exhausted' }, -32029, 429, id, corsHeaders, {
             retryAfter: String(secondsUntilUtcMidnight()),
           });
         }
@@ -379,14 +361,32 @@ export async function dispatchToolsCall(
       // Slot charged for good once dispatch begins (same GHSA-hcq5 posture as
       // reserveQuota). No caller-side rollback after this point.
     } else {
-      const reservation = await reserveQuota(context.userId, deps.redisPipeline, mcpDailyLimit);
+      const reservation = await reserveQuota(
+        context.userId,
+        deps.redisPipeline,
+        budget,
+        toolWeight(tool),
+      );
       if (!reservation.ok) {
         if (reservation.reason === 'cap-exceeded') {
           // `floor` is the limit the reservation actually enforced, so the copy
           // can never quote a different number from the one that rejected.
-          return new Response(
-            JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32029, message: `Daily MCP quota exceeded (${reservation.floor}/day). Resets at next UTC midnight.` } }),
-            { status: 429, headers: withMcpNoStore({ 'Content-Type': 'application/json', 'Retry-After': String(secondsUntilUtcMidnight()), ...corsHeaders }) },
+          // `sharedWithRestApi` is the fact the message alone cannot carry:
+          // once REST enforcement is on, an API-tier budget IS the REST meter,
+          // so this exhaustion may be traffic the agent never made. It rides
+          // `data` like every other denial rather than leaving the agent to
+          // string-match, and matches the field the allowance resource reports.
+          return mcpDenialResponse(
+            {
+              reason: 'quota-exceeded',
+              limit: reservation.floor,
+              sharedWithRestApi: isSharedRestCounter(budget),
+            },
+            -32029,
+            429,
+            id,
+            corsHeaders,
+            { retryAfter: String(secondsUntilUtcMidnight()) },
           );
         }
         // Hard-cap correctness: NEVER dispatch on reservation failure.
@@ -432,11 +432,35 @@ export async function dispatchToolsCall(
     // telemetry is off; one extra stringify when MCP_TELEMETRY is enabled
     // so we can report `bytes_pre_jmespath` separately from the projected
     // size.
-    const { text, failed } = applyJmespath(result, jmespathArg);
+    const { text: projectedText, failed } = applyJmespath(result, jmespathArg);
+    // Attribution accompaniment. A projection can detach a redistribution-
+    // permitted value from the licence fields sitting beside it in the
+    // unprojected payload, so a licence-bearing tool declares an extraction
+    // (`_attribution`) and the sources it names are re-attached here.
+    //
+    // Two properties carry the whole safety argument:
+    //   1. the rider is built from `result` — the payload BEFORE
+    //      `jmespath.search` — so an expression cannot narrow what it sees;
+    //   2. it is merged AFTER the search, by concatenating bytes around the
+    //      projected document, so no expression can name, reach, or displace
+    //      it (`mergeAttributionRider`).
+    // It rides on the `{_jmespath_error, original_keys}` soft-fail envelope
+    // too: that envelope is the response for a projected call, so it carries
+    // the same obligation.
+    //
+    // No `jmespath` argument → no rider and byte-identical output, because the
+    // unprojected payload already carries its attribution inline.
+    const rider = jmespathUsed && tool._attribution !== undefined
+      ? buildAttributionRider(result, tool._attribution)
+      : null;
+    const text = rider === null ? projectedText : mergeAttributionRider(projectedText, rider);
     const latencyMs = Date.now() - tStart;
     // Budget gate: always compute byte length for the budget check. This
     // replaces the previous telemetry-only perf gate for the post-JMESPath
     // measurement — budget enforcement requires the walk unconditionally.
+    // Measured on the merged text, so the rider counts toward the budget: it
+    // is bytes on the wire, and a projection that only fits by shedding its
+    // attribution is not a projection we can serve.
     const textBytes = utf8ByteLength(text);
     const budget = tool._outputBudgetBytes;
     const budgetExceeded = textBytes > budget;

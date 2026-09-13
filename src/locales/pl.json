@@ -196,7 +196,7 @@
       "decisionSignalsUnavailable": "Migawka sygnałów decyzyjnych Chin jest obecnie niedostępna."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -298,6 +298,9 @@
         "defense_industrialBalance": "Bilans przemysłu obronnego",
         "defense_supplierDiversity": "Dywersyfikacja dostawców broni"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Uaktualnij do PRO, aby zobaczyć zależność od dostawców broni i potencjał militarny"
     }
   },
   "header": {
@@ -1996,7 +1999,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Uaktualnij do PRO, aby zobaczyć udziały krajów w wydobyciu i rafinacji z koncentracją (HHI) według etapu"
     },
     "positiveNewsFeed": {
       "noStories": "Brak artykułów w tej kategorii"
@@ -2244,7 +2248,8 @@
       "dependentCommodities": "Surowce zależne",
       "stateOk": "Aktualne",
       "stateStale": "Nieaktualne dane wejściowe",
-      "stateInsufficient": "Niewystarczające dane"
+      "stateInsufficient": "Niewystarczające dane",
+      "proLocked": "Uaktualnij do PRO, aby zobaczyć ocenę podatności surowców"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Tracker handlu w Hormuzie</strong> Śledzenie statków AIS w czasie rzeczywistym przez Cieśninę Ormuz, najważniejszy punkt zagrożenia naftowego na świecie. Monitoruje liczbę tankowców, zdarzenia zakłóceń i tygodniowe zmiany przepływów. Około 20% światowych dostaw ropy przechodzi tędy codziennie.",
@@ -2822,6 +2827,27 @@
       "succeeded": "Klucz dostępu zapisany. Możesz go użyć przy następnym logowaniu.",
       "retryable": "To się nie powiodło. Możesz spróbować ponownie.",
       "failed": "Nie udało się zapisać klucza dostępu na tym urządzeniu."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Raport decyzyjny dotyczący surowców",
+      "commodity": "Surowiec / produkt",
+      "blockedChokepoint": "Przejście uznane za zablokowane",
+      "commodityCapture": "Zapisz porównanie surowców",
+      "title": "Raport decyzyjny",
+      "fuel": "Paliwo",
+      "chokepoint": "Wąskie gardło",
+      "baseline": "Zakłócenie bazowe",
+      "comparison": "Zakłócenie porównawcze",
+      "capture": "Pobierz / odśwież oba",
+      "downloadHtml": "Pobierz raport w HTML",
+      "downloadJson": "Pobierz raport w JSON",
+      "back": "← Powrót do raportu kraju",
+      "select": "Wybierz zakłócenie dostaw energii, a następnie pobierz oba scenariusze.",
+      "changed": "Wybór zmieniony. Pobierz oba scenariusze przed eksportem.",
+      "loading": "Pobieranie obu scenariuszy…",
+      "captured": "Pobrano. Przed pobraniem pliku sprawdź daty obserwacji i ograniczenia.",
+      "failed": "Nie udało się pobrać scenariuszy. Sprawdź dostęp i spróbuj ponownie. Brak wyniku do eksportu.",
+      "locked": "Raport decyzyjny jest dostępny w Pro."
     }
   },
   "popups": {
@@ -2864,9 +2890,9 @@
     },
     "gpsJamming": {
       "title": "Zakłócenia GPS/GNSS",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Statki powietrzne dotknięte zakłóceniami",
+      "samples": "Liczba statków powietrznych dotkniętych zakłóceniami",
+      "aircraft": "Łączna liczba zaobserwowanych statków powietrznych",
       "h3Hex": "H3 Hex"
     },
     "flight": {

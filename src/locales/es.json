@@ -194,7 +194,7 @@
       "decisionSignalsUnavailable": "El resumen de señales de decisión de China no está disponible actualmente."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -296,6 +296,9 @@
         "defense_industrialBalance": "Balanza industrial de defensa",
         "defense_supplierDiversity": "Diversidad de proveedores de armamento"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Actualiza a PRO para ver dependencias de proveedores de armamento y capacidad militar"
     }
   },
   "header": {
@@ -970,7 +973,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Actualiza a PRO para ver participación de países en minas y refinerías con concentración (HHI) por etapa."
     },
     "tradePolicy": {
       "tariffs": "Aranceles",
@@ -2235,7 +2239,8 @@
       "dependentCommodities": "Materias primas dependientes",
       "stateOk": "Actual",
       "stateStale": "Entrada obsoleta",
-      "stateInsufficient": "Datos insuficientes"
+      "stateInsufficient": "Datos insuficientes",
+      "proLocked": "Actualiza a PRO para ver puntuaciones de vulnerabilidad de materias primas"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Rastreador comercial de Ormuz</strong> Seguimiento AIS de buques en tiempo real a través del estrecho de Ormuz, el punto de estrangulamiento petrolero más crítico del mundo. Monitorea recuentos de petroleros, eventos de interrupción y cambios semanales de flujo. Aproximadamente el 20% del suministro mundial de petróleo transita aquí diariamente.",
@@ -2803,6 +2808,27 @@
       "succeeded": "Llave de acceso guardada. Puedes usarla la próxima vez que inicies sesión.",
       "retryable": "No se completó. Puedes intentar de nuevo.",
       "failed": "No pudimos guardar una llave de acceso en este dispositivo."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Informe de decisión sobre materias primas",
+      "commodity": "Materia prima / producto",
+      "blockedChokepoint": "Paso supuesto bloqueado",
+      "commodityCapture": "Capturar comparación de materias primas",
+      "title": "Informe de decisión",
+      "fuel": "Combustible",
+      "chokepoint": "Punto de paso crítico",
+      "baseline": "Interrupción de referencia",
+      "comparison": "Interrupción comparada",
+      "capture": "Capturar / actualizar ambos",
+      "downloadHtml": "Descargar informe en HTML",
+      "downloadJson": "Descargar informe en JSON",
+      "back": "← Volver al informe del país",
+      "select": "Seleccione una interrupción energética y capture ambos escenarios.",
+      "changed": "Selección modificada. Capture ambos escenarios antes de exportar.",
+      "loading": "Capturando ambos escenarios…",
+      "captured": "Captura completa. Revise las fechas de observación y las restricciones antes de descargar.",
+      "failed": "No se pudieron capturar los escenarios. Compruebe su acceso e inténtelo de nuevo. No hay resultados para exportar.",
+      "locked": "El informe de decisión está disponible con Pro."
     }
   },
   "popups": {
@@ -2845,9 +2871,9 @@
     },
     "gpsJamming": {
       "title": "Interferencia GPS/GNSS",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Aeronaves afectadas",
+      "samples": "Número de aeronaves afectadas",
+      "aircraft": "Aeronaves observadas",
       "h3Hex": "H3 Hex"
     },
     "flight": {

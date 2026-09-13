@@ -32,7 +32,7 @@
     "proF6": "Vyhledávání letů a porovnání cen",
     "proF7": "Engine pravidel alertů — vlastní spouštěče, tiché hodiny, kanály šifrované AES-256",
     "proF8": "Tržní watchlist, sledování makro a centrálních bank",
-    "proF9": "AI Market Implications a Regional Intelligence (Brzy: orbitální dohled, prémiové vrstvy map, delší historie)",
+    "proF9": "Důsledky na trhu AI a regionální zpravodajství",
     "choosePlan": "Vyberte plán",
     "entTitle": "World Monitor Enterprise",
     "entDesc": "Pro týmy, které potřebují sdílený monitoring, API přístup, možnosti nasazení, TV aplikace a přímou podporu.",
@@ -48,7 +48,8 @@
     "entF10": "Cloud, on-premises nebo air-gapped nasazení",
     "entF11": "Dedikovaný onboarding a podpora",
     "entCta": "Kontaktujte prodej",
-    "freeF2": "Kurované kanály, atribuované zdroje a mapové vrstvy"
+    "freeF2": "Kurované kanály, atribuované zdroje a mapové vrstvy",
+    "proF10": "Historické vyhledávání v paměti, časové osy a hledání podobných událostí"
   },
   "whyUpgrade": {
     "title": "Proč upgradovat na World Monitor Pro?",
@@ -155,13 +156,14 @@
     "economyAnalyticsDesc": "HDP, inflace, úrokové sazby a růstové cykly. Makro data korelovaná s tržními signály a geopolitickými událostmi.",
     "riskMonitoring": "Monitoring rizik a scénáře",
     "riskMonitoringDesc": "Globální hodnocení rizika, analýza scénářů a posouzení geopolitického rizika. Detekce konvergence napříč tržními a politickými signály.",
-    "orbitalSurveillance": "Orbitální dohled",
-    "orbitalSurveillanceDesc": "(Brzy) Předpovědi přeletů satelitů, analýza frekvence návratů a alerty oken pořizování snímků. Vězte, kdy zpravodajské satelity pozorují vaše oblasti zájmu.",
     "morningBriefs": "Osobní zpravodajské pracoviště",
     "morningBriefsDesc": "Až 30 řazených příspěvků na souhrn, deduplikovány napříč zdroji. Zvolte si denní, dvakrát denní nebo týdenní rytmus — nebo upozornění v reálném čase na kritické události. AI vyhodnocení a signály k monitorování doručované na Slack, Discord, Telegram, Email nebo webhook. Není to bulletin — je to analytik.",
     "oneKey": "Živé služby, 1 klíč",
     "oneKeyDesc": "Finnhub, FRED, ACLED, UCDP, NASA FIRMS, AISStream, OpenSky a další — všechny aktivní, bez samostatných registrací.",
-    "deliveryLabel": "Zvolte, jak vás zpravodajství najde"
+    "deliveryLabel": "Zvolte, jak vás zpravodajství najde",
+    "supplyChainLab": "Supply-Chain Stress Lab",
+    "supplyChainLabDesc": "Modelujte nákladový šok napříč zeměmi a sektory. Řaďte zranitelnost komodit podle závislosti na kritických místech. Sledujte koncentraci od těžby až po rafinerii a divergenci fyzické prémie SGE–COMEX — řadu, která se pohybuje dříve než titulky.",
+    "roadmapNote": "Na plánech: orbitální sledování, delší historie, prémiové vrstvy map."
   },
   "slackMock": {
     "morningBrief": "Ranní brief",
@@ -363,14 +365,14 @@
       "pro": {
         "description": "Kompletní dashboard pro zpravodajství",
         "features": [
-          "Vše ze zdarma verze",
-          "AI analýza akcií a backtesting",
-          "Denní tržní přehledy",
-          "Sledování vojenských a geopolitických situací",
-          "Tvůrce vlastních widgetů",
-          "10 vlastních dashboardů (vs 3)",
+          "Vše z bezplatné verze — panely, zdroje a sledované země bez omezení",
+          "WM Analyst chat + AI analýza akcií a backtesting",
+          "Modelování nákladových šoků a testy zátěže supply chain",
+          "Historické vyhledávání v paměti, časové osy a podobné události",
+          "Divergence fyzických kovů, koncentrace minerálů a data o státního dluhu",
+          "Plánovaný AI přehled + stroj s pravidly upozornění",
           "Přístup k MCP + SDK pro Claude Desktop a další AI klienty (50 volání/den)",
-          "Prioritní aktualizace dat"
+          "Vlastní widgety a 10 dashboardů (vs 3)"
         ],
         "highlightFeatures": [
           "Osobní licence",
@@ -384,7 +386,7 @@
           "Licenční / API klíč v ceně",
           "Datové toky v reálném čase",
           "60 požadavků/minutu",
-          "1 000 požadavků denně v ceně",
+          "1 000 požadavků za den (REST + MCP dohromady; živý MCP hovor se počítá jako 2–3)",
           "Webhook oznámení"
         ],
         "highlightFeatures": [
@@ -412,9 +414,9 @@
         "description": "Spusťte vlastní produkt na datech WorldMonitoru",
         "features": [
           "Vše z API Starter",
-          "Práva na redistribuci — vložte naše data do toho, co prodáváte",
+          "Práva na redistribuci R1–R3 pro produkty určené zákazníkům",
           "300 požadavků/minutu",
-          "10 000 požadavků/den zahrnuto",
+          "10 000 požadavků za den (REST + MCP dohromady; živý MCP hovor se počítá jako 2–3)",
           "5 licencí Pro — pozvěte uživatele z libovolné firemní e-mailové domény",
           "Prioritní podpora"
         ],
@@ -479,14 +481,18 @@
       "screenshotAlt": "World Monitor live zpravodajský dashboard — globální mapa s vrstvami konfliktů, lodní dopravy a trhů",
       "plateNote": "Zachyceno z živé mapy — kliknutím ji otevřete",
       "trustBuild": "Postavte na tom:",
-      "positioningLink": "WorldMonitor není open-source Palantir"
+      "positioningLink": "WorldMonitor není open-source Palantir",
+      "asOf": "K 8. září 2026",
+      "whatIsTitle": "Co je World Monitor?",
+      "whatIsBody": "World Monitor je bezplatný open-source dashboard, který streamuje geopolitické, tržní, námořní, letecké, infrastrukturní a kybernetické signály na jednu živou mapu světa. Koreluje samostatné kanály v jediný operační obraz a upozorňuje na konvergenci před titulky, přičemž každá číslice je zdrojována a každá metodika zdokumentována."
     },
     "live": {
       "eyebrow": "Live právě teď",
       "title": "Jaká živá data tato stránka právě nyní zobrazuje?",
       "subtitle": "Čtyři z více než sto signálů, které World Monitor neustále sleduje.",
       "liveBadge": "Live",
-      "sampleBadge": "Vzorek",
+      "pulseBadge": "Publikovaný pulse {{date}}",
+      "refreshNote": "Povolte JavaScript pro obnovení — publikovaný pulse výše zůstane dostupný i bez něj.",
       "cardHeadlines": "Hlavní signály",
       "cardCii": "Index nestability",
       "ciiNote": "12 sloučených signálů na zemi",
@@ -584,35 +590,20 @@
       "eyebrow": "Pod kapotou",
       "title": "Jak hluboký je datový model World Monitor?",
       "sub": "Každé číslo níže je dnes živé na řídicím panelu — ne na roadmapě.",
-      "s1v": "Sdílený",
-      "s1l": "Mapové vrstvy",
-      "s2v": "Kurovaný",
-      "s2l": "Kurátorované zdroje",
-      "s3v": "Atribuovaný",
-      "s3l": "Poskytovatelé dat",
-      "s4v": "Živý",
+      "s1l": "Typy vrstev mapy",
+      "s2l": "Kanály zpráv a OSINT",
+      "s3l": "Přiřazení poskytovatelé",
       "s4l": "Kritické body · živý AIS",
-      "s5v": "Tier-1",
       "s5l": "Index nestability · živý",
-      "s6v": "Veřejný",
       "s6l": "Žebříčky odolnosti",
-      "s7v": "Mapovaný",
       "s7l": "Podmořské kabely",
-      "s8v": "Mapovaný",
       "s8l": "Potrubí a LNG",
-      "s9v": "Mapovaný",
       "s9l": "Mapovaná AI datacentra",
-      "s10v": "Vyhodnocený",
       "s10l": "Skórované hotspoty",
-      "s11v": "Živý",
       "s11l": "Burzy a aktiva",
-      "s12v": "Živý",
       "s12l": "MCP nástroje",
-      "s13v": "Rychlý",
-      "s13l": "⌘K příkazy",
-      "s14v": "Lokalizovaný",
+      "s13l": "Definice příkazů ⌘K",
       "s14l": "Jazyky · včetně RTL",
-      "s15v": "5",
       "s15l": "Nezávislé zdroje výstrah",
       "n1Title": "Sledování satelitů",
       "n1Desc": "Živé orbitální pozice počítané v prohlížeči pomocí SGP4 — sledujte ISS, Starlink a vojenské družice nad vámi.",
@@ -685,7 +676,7 @@
       "q4": "Mohu sledovat kritická místa jako Hormuz nebo Bab el-Mandeb v reálném čase?",
       "a4": "Ano. Úzká místa jsou sledována s počty živých AIS plavidel, změnami tranziturů týden na týden a skóre narušení — a anomálie hustoty jsou označeny proti základní linii každého průlivu.",
       "q5": "Jak se liší od mapy konfliktů jako Liveuamap?",
-      "a5": "Konflikt je jednou z vrstev mapy. World Monitor spojuje konflikty se mořskou přepravou, vojenskými lety, infrastrukturou, trhy a kybernetiku — pak AI vyhodnotí konvergenci: indexy nestability, eskalaci hotspotů, potvrzená breaking upozornění a denní briefy.",
+      "a5": "Konflikt je jednou mapovou vrstvou. World Monitor kombinuje konflikty s lodní dopravou, vojenským letectvem, infrastrukturou, trhy a kybernetiku — následně AI vyhodnocuje konvergenci: indexy nestability, eskalaci hotspotů, ověřené breaking upozornění a denní briefy. Porovnejte World Monitor s Liveuamap a dalšími konflikty mapami: worldmonitor.app/compare/liveuamap-alternatives.",
       "a6": "Přerušující banner se aktivuje pouze pokud si nezávislé typy zdrojů potvrdí — klasifikace zpráv, rychlost klíčových slov, eskalace hotspotů, vojenské nárůsty, oficiální sirény — deduplikovány a omezeny podle frekvence. Méně alertů, skutečné.",
       "q7": "Mohou jej používat AI agenti jako Claude nebo GPT?",
       "a7": "Ano. World Monitor dodává MCP server se živým registrem nástrojů, takže Claude, GPT nebo jakýkoliv MCP-kompatibilní agent může dotazovat živé skóre rizik, stav průsmyků, konflikty, trhy a briefy — s JMESPath projekcí, takže agenti získají přesně to, co potřebují.",
@@ -718,5 +709,19 @@
       "countryRiskDesc": "Sledujte politické, bezpečnostní, ekonomické a resilienční signály za změnou v zemi.",
       "open": "Otevřít důkazy"
     }
+  },
+  "whatsNew": {
+    "eyebrow": "Lodní deník",
+    "title": "Co je nového ve World Monitor",
+    "subtitle": "Nové funkce z posledních 30 dní — opravy a údržba nejsou součástí seznamu.",
+    "proTag": "PRO",
+    "m1": "Index divergence fyzické prémie — SGE vs COMEX, s historií",
+    "m2": "Hodnocení zranitelnosti nabídky komodit — rozprostření závislosti na kritických místech",
+    "m3": "Koncentrace těžby minerálů a obranná průmyslová báze",
+    "m4": "Pětifaktorové karty odolnosti s skóre na úrovni jednotlivých indikátorů",
+    "m5": "Vlastní seznamy sledování Telegram kanálů",
+    "m6": "Přihlášení pomocí hesla",
+    "m7": "AI agenti mohou ovládat dashboard — panely, záložky, vrstvy map a mise",
+    "m8": "Bohatší stránky odolnosti zemí"
   }
 }

@@ -130,6 +130,9 @@ export interface CountryEnergyProfileData {
   solarShare: number;
   hydroShare: number;
   importShare: number;
+  importShareAvailable: boolean;
+  importShareYear: number;
+  importShareSource: string;
   gasStorageAvailable: boolean;
   gasStorageFillPct: number;
   gasStorageChange1d: number;
@@ -206,8 +209,6 @@ export interface CountryBriefPanel {
   getTimelineMount(): HTMLElement | null;
   readonly signal: AbortSignal;
   onClose(cb: () => void): void;
-  setShareStoryHandler(handler: (code: string, name: string) => void): void;
-  setExportImageHandler(handler: (code: string, name: string) => void): void;
   updateBrief(data: CountryIntelData): void;
   updateNews(headlines: NewsItem[]): void;
   updateMarkets(markets: PredictionMarket[]): void;
@@ -218,6 +219,7 @@ export interface CountryBriefPanel {
   updateSignalDetails?(details: CountryDeepDiveSignalDetails): void;
   updateMilitaryActivity?(summary: CountryDeepDiveMilitarySummary): void;
   updateDefenseIndustrialBase?(data: GetDefenseIndustrialBaseResponse | null): void;
+  syncCountryPremiumSectionsAccess?(hasAccess: boolean): void;
   updateEconomicIndicators?(indicators: CountryDeepDiveEconomicIndicator[]): void;
   updateChinaCountrySummary?(data: ChinaCountrySummaryData): void;
   updateCountryFacts?(data: CountryFactsData): void;

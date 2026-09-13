@@ -261,7 +261,7 @@
       "unavailable": "Haipatikani"
     },
     "foodStocks": "Hifadhi za chakula",
-    "foodStocksHelp": "Uwiano wa hifadhi na matumizi wa bidhaa za USDA PSD kwa mwaka wa masoko, ukiwa na uwiano wa dunia kwa muktadha. FAOSTAT hujaza uzalishaji pale ambapo PSD haina data ya nchi.",
+    "foodStocksHelp": "Uwiano wa hifadhi na matumizi wa bidhaa za USDA PSD kwa mwaka wa masoko, ukiwa na uwiano wa dunia kwa muktadha. Mizania ya Chakula ya FAOSTAT hutoa uzalishaji na ugavi wa ndani wakati PSD haina mizania kamili ya nchi.",
     "loadingFoodStocks": "Inapakia hifadhi za chakula…",
     "foodStocksUnavailable": "Hifadhi za chakula hazipatikani.",
     "foodStocksProLocked": "Panda hadi PRO kwa uwiano wa hifadhi na matumizi ya bidhaa",
@@ -363,6 +363,9 @@
         "defense_industrialBalance": "Mizani ya viwanda vya ulinzi",
         "defense_supplierDiversity": "Utengeneaji wa watoa huduma za silaha"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Boreshaji hadi PRO kwa utegemezi wa wauzaji wa silaha na uwezo wa kijeshi"
     }
   },
   "header": {
@@ -1080,7 +1083,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Boreshaji hadi PRO kwa sehemu za nchi za mgodi na rafinery na mkusanyiko (HHI) kwa awamu."
     },
     "tradePolicy": {
       "overview": "Muhtasari",
@@ -2436,7 +2440,8 @@
       "dependentCommodities": "Bidhaa tegemezi",
       "stateOk": "Ya sasa",
       "stateStale": "Ingizo la zamani",
-      "stateInsufficient": "Data haitoshi"
+      "stateInsufficient": "Data haitoshi",
+      "proLocked": "Boreshaji hadi PRO kwa alama ya kufa kwa kilicho haraka cha bidhaa"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Hormuz Trade Tracker</strong> Inafuatilia moja kwa moja meli ya AIS kupitia Mlango-Bahari wa Hormuz, sehemu muhimu zaidi ya kusambaza mafuta duniani. Hufuatilia hesabu za meli, matukio ya usumbufu na mabadiliko ya mtiririko wa kila wiki. Takriban 20% ya usambazaji wa mafuta duniani kote husafirishwa hapa kila siku.",
@@ -2853,6 +2858,27 @@
       "succeeded": "Passkey imehifadhiwa. Unaweza kuitumia wakati wa kuingia inayofuata.",
       "retryable": "Hiyo haikumalizia. Unaweza kujaribu tena.",
       "failed": "Hatuwezi kuhifadhi passkey kwenye kifaa hiki."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Muhtasari wa uamuzi wa bidhaa",
+      "commodity": "Bidhaa / zao",
+      "blockedChokepoint": "Njia inayodhaniwa kuzuiwa",
+      "commodityCapture": "Hifadhi ulinganisho wa bidhaa",
+      "title": "Muhtasari wa uamuzi",
+      "fuel": "Nishati ya mafuta",
+      "chokepoint": "Njia nyembamba",
+      "baseline": "Usumbufu wa msingi",
+      "comparison": "Usumbufu wa kulinganisha",
+      "capture": "Pata / sasisha zote mbili",
+      "downloadHtml": "Pakua muhtasari wa HTML",
+      "downloadJson": "Pakua muhtasari wa JSON",
+      "back": "← Rudi kwenye muhtasari wa nchi",
+      "select": "Chagua usumbufu wa usambazaji wa nishati, kisha upate hali zote mbili.",
+      "changed": "Chaguo limebadilika. Pata hali zote mbili kabla ya kuhamisha matokeo.",
+      "loading": "Inapata hali zote mbili…",
+      "captured": "Imepatikana. Kagua tarehe za uchunguzi na vikwazo kabla ya kupakua.",
+      "failed": "Imeshindwa kupata hali hizo. Kagua ruhusa yako ya kufikia na ujaribu tena. Hakuna matokeo ya kuhamisha.",
+      "locked": "Muhtasari wa uamuzi unapatikana kwa Pro."
     }
   },
   "popups": {

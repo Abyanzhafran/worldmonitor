@@ -190,7 +190,7 @@
       "decisionSignalsUnavailable": "中国决策信号快照当前不可用。"
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -292,6 +292,9 @@
         "defense_industrialBalance": "国防工业平衡",
         "defense_supplierDiversity": "武器供应商多样性"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "升级至PRO以查看武器供应商依赖关系和军事能力"
     }
   },
   "header": {
@@ -976,7 +979,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "升级至PRO以查看矿山和炼油厂按阶段分布的国家份额和浓度(HHI)"
     },
     "tradePolicy": {
       "tariffs": "关税",
@@ -2217,7 +2221,8 @@
       "dependentCommodities": "依赖商品",
       "stateOk": "当前",
       "stateStale": "输入已过期",
-      "stateInsufficient": "数据不足"
+      "stateInsufficient": "数据不足",
+      "proLocked": "升级至PRO以查看商品脆弱性评分"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>霍尔木兹贸易追踪器</strong> 通过全球最关键的石油咽喉要道霍尔木兹海峡的AIS船舶实时追踪。监控油轮数量、中断事件和每周流量变化。全球约20%的石油供应每天经此通过。",
@@ -2765,6 +2770,27 @@
       "succeeded": "通行密钥已保存。下次登录时可以使用。",
       "retryable": "操作未完成。您可以重试。",
       "failed": "无法在此设备上保存通行密钥。"
+    },
+    "decisionBrief": {
+      "commodityTitle": "大宗商品决策简报",
+      "commodity": "大宗商品 / 产品",
+      "blockedChokepoint": "假定被封锁的咽喉要道",
+      "commodityCapture": "记录大宗商品比较",
+      "title": "决策简报",
+      "fuel": "燃料",
+      "chokepoint": "咽喉要道",
+      "baseline": "基准中断程度",
+      "comparison": "对比中断程度",
+      "capture": "获取 / 刷新两者",
+      "downloadHtml": "下载 HTML 简报",
+      "downloadJson": "下载 JSON 简报",
+      "back": "← 返回国家简报",
+      "select": "选择能源供应中断情况，然后获取两个情景。",
+      "changed": "选择已更改。导出前请获取两个情景。",
+      "loading": "正在获取两个情景…",
+      "captured": "已获取。下载前请核查观测日期和限制条件。",
+      "failed": "无法获取情景。请检查访问权限并重试。没有可导出的结果。",
+      "locked": "决策简报面向 Pro 用户提供。"
     }
   },
   "popups": {
@@ -2808,9 +2834,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS干扰",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "受影响航空器",
+      "samples": "受影响航空器数量",
+      "aircraft": "观测到的航空器总数",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -3455,7 +3481,7 @@
   },
   "shell": {
     "documentTitle": "World Monitor — 实时全球情报仪表板",
-    "metaDescription": "实时全球情报平台。刊登于 WIRED。全球 190 个国家 200 万+ 用户使用。冲突、市场、军事、OSINT 信息一览无遗。",
+    "metaDescription": "使用 World Monitor 实时仪表盘浏览全球态势，结合交互式地图与数据面板查看新闻、地缘政治、军事、金融、能源和基础设施信息。按所选产品视图探索相关图层、地区与事件，比较数据来源、观测时间和可用信号，跟踪变化并打开详情核查背景，为日常监测与研究提供可追溯的信息入口，同时关注来源覆盖及更新状态。",
     "offlineTitle": "您已离线",
     "offlineMessage": "World Monitor 需要互联网连接来获取实时情报数据。",
     "offlineRetry": "重试"

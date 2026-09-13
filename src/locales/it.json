@@ -194,7 +194,7 @@
       "decisionSignalsUnavailable": "Lo snapshot dei segnali decisionali della Cina non è attualmente disponibile."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -296,6 +296,9 @@
         "defense_industrialBalance": "Bilanciamento industriale della difesa",
         "defense_supplierDiversity": "Diversità dei fornitori di armamenti"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Esegui l'upgrade a PRO per le dipendenze dai fornitori di armi e la capacità militare"
     }
   },
   "header": {
@@ -970,7 +973,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Esegui l'upgrade a PRO per le quote di paese delle miniere e delle raffinerie con concentrazione (HHI) per fase"
     },
     "tradePolicy": {
       "tariffs": "Dazi",
@@ -2235,7 +2239,8 @@
       "dependentCommodities": "Materie prime dipendenti",
       "stateOk": "Attuale",
       "stateStale": "Input obsoleto",
-      "stateInsufficient": "Dati insufficienti"
+      "stateInsufficient": "Dati insufficienti",
+      "proLocked": "Esegui l'upgrade a PRO per la valutazione della vulnerabilità delle materie prime"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Tracker commerciale di Hormuz</strong> Tracciamento AIS di navi in tempo reale attraverso lo Stretto di Hormuz, il collo di bottiglia petrolifero più critico al mondo. Monitora il conteggio delle petroliere, eventi di interruzione e variazioni settimanali dei flussi. Circa il 20% della fornitura globale di petrolio transita qui quotidianamente.",
@@ -2803,6 +2808,27 @@
       "succeeded": "Passkey salvata. Puoi usarla la prossima volta che accedi.",
       "retryable": "Non è andato a buon fine. Puoi provare di nuovo.",
       "failed": "Non siamo riusciti a salvare una passkey su questo dispositivo."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Scheda decisionale sulle materie prime",
+      "commodity": "Materia prima / prodotto",
+      "blockedChokepoint": "Passaggio ipotizzato bloccato",
+      "commodityCapture": "Acquisisci confronto delle materie prime",
+      "title": "Scheda decisionale",
+      "fuel": "Combustibile",
+      "chokepoint": "Punto di passaggio critico",
+      "baseline": "Interruzione di riferimento",
+      "comparison": "Interruzione di confronto",
+      "capture": "Acquisisci / aggiorna entrambi",
+      "downloadHtml": "Scarica la scheda in HTML",
+      "downloadJson": "Scarica la scheda in JSON",
+      "back": "← Torna alla scheda paese",
+      "select": "Seleziona un'interruzione energetica, poi acquisisci entrambi gli scenari.",
+      "changed": "Selezione modificata. Acquisisci entrambi gli scenari prima di esportare.",
+      "loading": "Acquisizione dei due scenari…",
+      "captured": "Acquisizione completata. Controlla le date delle osservazioni e i vincoli prima del download.",
+      "failed": "Impossibile acquisire gli scenari. Controlla il tuo accesso e riprova. Nessun risultato da esportare.",
+      "locked": "La scheda decisionale è disponibile con Pro."
     }
   },
   "popups": {

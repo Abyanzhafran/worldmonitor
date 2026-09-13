@@ -65,7 +65,9 @@ describe('published resilience snapshot freshness', () => {
       assert.equal(dataset?.dateModified, data.resilience.capturedAt);
       assert.equal(dataset?.temporalCoverage, data.resilience.capturedAt);
       assert.ok(data.resilience.snapshotNote, 'canonical snapshots must explain their publication state');
+      assert.doesNotMatch(data.resilience.snapshotNote, /Post-P1-1/);
       assert.ok(norway.includes(data.resilience.snapshotNote), 'country page must surface snapshotNote verbatim');
+      assert.match(norway, /href="\/docs\/corrections"/);
       assert.match(
         norway,
         new RegExp(`<meta name="lastmod" content="${data.lastmod.countries}">`),
@@ -73,6 +75,19 @@ describe('published resilience snapshot freshness', () => {
       assert.ok(
         norway.includes(`Source: ${data.sources.resilienceSnapshot}.`),
         'country page must identify the selected dated snapshot',
+      );
+      // Coverage-story pages (Tuvalu, Macau, San Marino) swap the shared snapshot
+      // note for a country-specific reading guide (#7527) but keep the corrections
+      // link and the dated snapshot source line.
+      const tuvalu = readFileSync(join(outDir, 'countries', 'tuvalu', 'index.html'), 'utf8');
+      assert.ok(
+        !tuvalu.includes(data.resilience.snapshotNote),
+        'coverage-story pages omit the shared snapshot note by design',
+      );
+      assert.match(tuvalu, /href="\/docs\/corrections"/);
+      assert.ok(
+        tuvalu.includes(`Source: ${data.sources.resilienceSnapshot}.`),
+        'coverage-story pages must still identify the selected dated snapshot',
       );
     } finally {
       rmSync(outDir, { recursive: true, force: true });
@@ -92,6 +107,23 @@ describe('published resilience snapshot freshness', () => {
     assert.match(revisions, /2026-06-01/);
     assert.match(revisions, /P1-1/);
     assert.match(revisions, /coverage-only member aggregation/);
+    assert.match(revisions, /first day of each month/);
+    assert.match(revisions, /resilience-ranking-2026-08-29/);
+    assert.match(revisions, /[Oo]ff-cycle/);
+
+    // The log held one revision while three derived chokepoint fields were
+    // withdrawn across all 13 pages on 2026-09-01 and source availability was
+    // separated on 2026-09-02 — both material, neither logged (#7530). Pin the
+    // rows and their PR references so a withdrawal cannot ship unlogged again.
+    for (const source of [
+      revisions,
+      readFileSync(join(repoRoot, 'docs', 'zh', 'corrections.mdx'), 'utf8'),
+    ]) {
+      assert.match(source, /2026-09-01/);
+      assert.match(source, /2026-09-02/);
+      assert.match(source, /pull\/7515/);
+      assert.match(source, /pull\/7535/);
+    }
   });
 
   it('runs a credentialed monthly capture and opens an idempotent review PR', () => {
@@ -105,9 +137,12 @@ describe('published resilience snapshot freshness', () => {
     assert.match(workflow, /node scripts\/freeze-resilience-ranking\.mjs/);
     assert.match(workflow, /npm run build:crawlable-corpus/);
     assert.match(workflow, /npm run build:sitemap/);
+    assert.match(workflow, /npm run build:llms-full/);
+    assert.match(workflow, /git add "\$snapshot_path" public\/sitemap\.xml public\/sitemap-main\.xml public\/llms-full\.txt/);
     assert.match(workflow, /gh pr list --state all/);
     assert.match(workflow, /gh pr create/);
     assert.doesNotMatch(workflow, /push --force/);
+    assert.match(workflow, /tests\/seo-geo-residue\.test\.mjs/);
 
     const parsed = YAML.parse(workflow);
     const checkout = parsed.jobs.refresh.steps.find((step) => step.uses?.startsWith('actions/checkout@'));

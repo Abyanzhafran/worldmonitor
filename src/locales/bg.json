@@ -192,7 +192,7 @@
       "decisionSignalsUnavailable": "Снимката на сигналите за решения на Китай в момента не е налична."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -294,6 +294,9 @@
         "defense_industrialBalance": "Баланс на отбранителната индустрия",
         "defense_supplierDiversity": "Разнообразие на доставчиците на оръжия"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Надградете на PRO за зависимост на доставчиците на оръжия и военен капацитет"
     }
   },
   "header": {
@@ -979,7 +982,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Надградете на PRO за дялове на страната в мини и рафинерии с концентрация (HHI) по етап"
     },
     "tradePolicy": {
       "tariffs": "Митнически такси",
@@ -2226,7 +2230,8 @@
       "dependentCommodities": "Зависими суровини",
       "stateOk": "Актуално",
       "stateStale": "Остарели входни данни",
-      "stateInsufficient": "Недостатъчни данни"
+      "stateInsufficient": "Недостатъчни данни",
+      "proLocked": "Надградете на PRO за оценяване на уязвимостта на стоките"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Тракер на търговията в Хормуз</strong> Проследяване на AIS плавателни съдове в реално време през Ормузкия проток, най-критичната петролна точка на задръстване в света. Следи броя на танкери, събития на прекъсване и седмични промени в потоците. Приблизително 20% от световните доставки на петрол преминават тук ежедневно.",
@@ -2784,6 +2789,27 @@
       "succeeded": "Ключът за достъп е запазен. Можете да го използвате следващия път, когато влезете.",
       "retryable": "Това не се завърши. Можете да опитате отново.",
       "failed": "Не можахме да запазим ключ за достъп на това устройство."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Справка за решения за суровини",
+      "commodity": "Суровина / продукт",
+      "blockedChokepoint": "Предполагаемо блокиран проход",
+      "commodityCapture": "Запис на сравнението на суровини",
+      "title": "Справка за решение",
+      "fuel": "Гориво",
+      "chokepoint": "Тясно място",
+      "baseline": "Базово прекъсване",
+      "comparison": "Сравнително прекъсване",
+      "capture": "Зареди / обнови двата",
+      "downloadHtml": "Изтегли справката в HTML",
+      "downloadJson": "Изтегли справката в JSON",
+      "back": "← Назад към справката за страната",
+      "select": "Изберете прекъсване на енергийните доставки, след което заредете двата сценария.",
+      "changed": "Изборът е променен. Заредете двата сценария преди експортиране.",
+      "loading": "Зареждане на двата сценария…",
+      "captured": "Заредено. Проверете датите на наблюденията и ограниченията преди изтегляне.",
+      "failed": "Сценариите не могат да бъдат заредени. Проверете достъпа си и опитайте отново. Няма резултат за експортиране.",
+      "locked": "Справката за решение е достъпна с Pro."
     }
   },
   "popups": {
@@ -2827,9 +2853,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS интерференция",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Засегнати летателни средства",
+      "samples": "Брой засегнати летателни средства",
+      "aircraft": "Наблюдавани летателни средства",
       "h3Hex": "H3 Hex"
     },
     "flight": {

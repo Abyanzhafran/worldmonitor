@@ -42,7 +42,7 @@ import {
   postCreateCheckout,
 } from './checkout-transport';
 import { runNoUserPath } from './checkout-no-user-policy';
-import { shouldSkipSentryForAction } from './checkout-sentry-policy';
+import { buildCheckoutReportTags, shouldSkipSentryForAction } from './checkout-sentry-policy';
 import { isEntitled, onEntitlementChange } from './entitlements';
 import {
   CLASSIC_AUTO_DISMISS_MS,
@@ -54,7 +54,17 @@ import {
 } from './checkout-banner-state';
 import { startEntitlementWait } from './checkout-entitlement-wait';
 import { isAffiliateCode, loadActiveReferral } from './referral-capture';
-import { trackCheckoutStart, type CheckoutAttribution, type CheckoutSurface } from './analytics';
+import {
+  trackCheckoutStart,
+  type CheckoutAttribution,
+  type CheckoutContext,
+  type CheckoutSurface,
+} from './analytics';
+import {
+  buildAttributedProUrl,
+  parseCheckoutContext,
+  resolveCheckoutContext,
+} from '../../shared/checkout-attribution';
 import { showDuplicateSubscriptionDialog } from './checkout-duplicate-dialog';
 import { showCheckoutPendingDialog } from './checkout-pending-dialog';
 import { resolvePlanDisplayName } from './checkout-plan-names';
@@ -168,8 +178,8 @@ interface PendingCheckoutIntent {
   productId: string;
   referralCode?: string;
   discountCode?: string;
-  /** Mission/panel attribution from the originating surface; re-bucketed on emit. */
-  analyticsAttribution?: CheckoutAttribution;
+  /** Validated checkout origin that survives sign-in without losing preview attribution. */
+  checkoutContext?: CheckoutContext;
   /**
    * User id who saved this intent, or null if saved anonymously (the
    * common "click Buy, get sign-in modal" path). On resume, we only
@@ -562,7 +572,10 @@ function loadPendingCheckoutIntent(): PendingCheckoutIntent | null {
       clearPendingCheckoutIntent();
       return null;
     }
-    return parsed;
+    return {
+      ...parsed,
+      checkoutContext: parseCheckoutContext(parsed.checkoutContext) ?? undefined,
+    };
   } catch {
     return null;
   }
@@ -691,10 +704,12 @@ export function capturePendingCheckoutIntentFromUrl(): PendingCheckoutIntent | n
   // /pro-origin intent captured here also populates the failure-retry
   // record so a decline on this session's checkout can retry cross-origin.
   saveCheckoutAttempt({
+    version: 2,
     productId,
     referralCode: intent.referralCode,
     discountCode: intent.discountCode,
     startedAt: Date.now(),
+    context: resolveCheckoutContext({ surface: 'dashboard' }),
   });
 
   url.searchParams.delete(CHECKOUT_PRODUCT_PARAM);
@@ -745,7 +760,7 @@ export async function resumePendingCheckout(options?: {
     {
       fallbackToPricingPage: false,
       analyticsSurface: 'dashboard-resume',
-      analyticsAttribution: intent.analyticsAttribution,
+      checkoutContext: intent.checkoutContext,
     },
   );
   if (success) clearPendingCheckoutIntent();
@@ -802,6 +817,14 @@ export async function openCheckout(checkoutUrl: string): Promise<void> {
 
 let _checkoutInFlight = false;
 let _checkoutRateLimitedUntilMs = 0;
+/**
+ * Why the cooldown above is running. The pre-flight gate replays a synthesized
+ * error to explain the wait, so it has to know which one: a 429 and the edge's
+ * idempotency conflict both name a wait, and telling a buyer mid-conflict that
+ * they are "rate limited" is the same false message the conflict branch in
+ * `checkout-errors.ts` exists to avoid.
+ */
+let _checkoutCooldownCause: 'rate_limited' | 'idempotency_conflict' = 'rate_limited';
 
 function checkoutRateLimitRemainingSeconds(): number {
   return Math.max(0, Math.ceil((_checkoutRateLimitedUntilMs - Date.now()) / 1000));
@@ -850,10 +873,12 @@ export async function startCheckout(
     fallbackToPricingPage?: boolean;
     analyticsSurface?: CheckoutSurface;
     analyticsAttribution?: CheckoutAttribution;
+    checkoutContext?: CheckoutContext;
   },
 ): Promise<boolean> {
   if (_checkoutInFlight) return false;
   const fallbackToPricingPage = behavior?.fallbackToPricingPage ?? true;
+  const desktopRuntime = isDesktopRuntime();
 
   const user = getCurrentClerkUser();
   // Funnel (#4931): every dashboard upgrade CTA routes through here, so one
@@ -861,7 +886,13 @@ export async function startCheckout(
   // intent clicks are counted (flagged authed:false). The post-sign-in
   // auto-resume passes 'dashboard-resume' so a signed-out conversion isn't
   // read as two independent attempts.
-  trackCheckoutStart(productId, Boolean(user), behavior?.analyticsSurface ?? 'dashboard', behavior?.analyticsAttribution);
+  const checkoutContext = trackCheckoutStart(
+    productId,
+    Boolean(user),
+    behavior?.analyticsSurface ?? behavior?.checkoutContext?.eventSurface ?? 'dashboard',
+    behavior?.analyticsAttribution,
+    behavior?.checkoutContext,
+  );
   if (!user) {
     const intent = {
       productId,
@@ -870,7 +901,7 @@ export async function startCheckout(
       // Kept so the post-sign-in auto-resume re-emits checkout-start with the
       // originating mission/panel; trackCheckoutStart re-buckets on emit, so a
       // tampered stored value still collapses to 'unknown'.
-      analyticsAttribution: behavior?.analyticsAttribution,
+      checkoutContext,
     };
     reportCheckoutError(
       classifySyntheticCheckoutError('unauthorized'),
@@ -891,9 +922,18 @@ export async function startCheckout(
       // the branch a signed-out desktop user takes — the most reachable one
       // in the app's first session — so leaving it on `assign` would keep the
       // reported bug alive under the fix.
-      navigate: (url) => navigateToWebSurface(url),
+      navigate: (url) => navigateToWebSurface(buildAttributedProUrl(
+        url,
+        checkoutContext.origin.kind === 'mission-preview' ? checkoutContext.origin : undefined,
+        { desktopHandoff: desktopRuntime },
+      )),
       persistIntent: () => savePendingCheckoutIntent(intent),
-      persistAttempt: () => saveCheckoutAttempt({ ...intent, startedAt: Date.now() }),
+      persistAttempt: () => saveCheckoutAttempt({
+        version: 2,
+        ...intent,
+        startedAt: Date.now(),
+        context: checkoutContext,
+      }),
       openSignIn: () => openSignIn(),
     });
     return false;
@@ -901,14 +941,25 @@ export async function startCheckout(
 
   const cooldownSeconds = checkoutRateLimitRemainingSeconds();
   if (cooldownSeconds > 0) {
-    // A prior 429 already told this browser when it may try again. Keep
+    // A prior response already told this browser when it may try again. Keep
     // repeated CTA clicks local during that window instead of recreating the
     // provider request amplification this rate-limit path is meant to stop.
-    const error = classifyHttpCheckoutError(
-      429,
-      { error: 'CHECKOUT_RATE_LIMITED' },
-      String(cooldownSeconds),
-    );
+    //
+    // Replay the error the cooldown actually came from. Synthesizing a 429
+    // unconditionally was correct while only a 429 could set the cooldown; now
+    // that the idempotency conflict does too, it would tell a buyer whose own
+    // checkout is still being created that they are rate limited.
+    const error = _checkoutCooldownCause === 'rate_limited'
+      ? classifyHttpCheckoutError(
+          429,
+          { error: 'CHECKOUT_RATE_LIMITED' },
+          String(cooldownSeconds),
+        )
+      : classifyHttpCheckoutError(
+          409,
+          { error: 'idempotency_conflict' },
+          String(cooldownSeconds),
+        );
     showCheckoutErrorToast(error.userMessage);
     return false;
   }
@@ -940,12 +991,13 @@ export async function startCheckout(
   // banner has context even if every subsequent step fails (timeout,
   // user closes tab before Dodo redirects, SDK crashes, etc.).
   saveCheckoutAttempt({
+    version: 2,
     productId,
     referralCode: effectiveReferral,
     discountCode: options?.discountCode,
     startedAt: Date.now(),
+    context: checkoutContext,
   });
-  const desktopRuntime = isDesktopRuntime();
   try {
     let token = await getClerkToken();
     if (!token) {
@@ -955,12 +1007,13 @@ export async function startCheckout(
     if (!token) {
       const error = classifySyntheticCheckoutError('session_expired');
       reportCheckoutError(error, { productId, action: 'no-token' });
-      renderCheckoutErrorSurface(error, fallbackToPricingPage);
+      renderCheckoutErrorSurface(error, fallbackToPricingPage, checkoutContext);
       return false;
     }
 
-    // Transient CF/origin 502s on this POST are retried once with an
-    // Idempotency-Key (server dedupes replays — api/_idempotency.ts).
+    // Transient origin failures on this POST — the 502/503/504 gateway trio
+    // and Cloudflare 520-525 — are retried once with an Idempotency-Key
+    // (server dedupes replays — api/_idempotency.ts).
     // WORLDMONITOR-Q4: without this, every transient was a lost checkout.
     const resp = await postCreateCheckout(createDefaultCheckoutTransportDeps(), {
       url: '/api/create-checkout',
@@ -1003,8 +1056,16 @@ export async function startCheckout(
         body,
         resp.headers.get('Retry-After'),
       );
-      if (error.code === 'rate_limited' && error.retryAfterSeconds !== undefined) {
+      // Keyed on the server-specified wait, not on one code. A 429 is no longer
+      // the only response that names how long to hold off: the edge's
+      // idempotency conflict says 2 seconds because that is how long the first
+      // attempt may still own the lock, and honouring it is what stops a
+      // re-click landing back in the same conflict.
+      if (error.retryAfterSeconds !== undefined) {
         _checkoutRateLimitedUntilMs = Date.now() + error.retryAfterSeconds * 1000;
+        _checkoutCooldownCause = error.code === 'rate_limited'
+          ? 'rate_limited'
+          : 'idempotency_conflict';
       }
       reportCheckoutError(error, { productId, action: 'http-error' }, undefined, upstream);
       // 409 duplicate-subscription — confirm with the user BEFORE
@@ -1079,12 +1140,12 @@ export async function startCheckout(
           productId,
           referralCode: options?.referralCode,
           discountCode: options?.discountCode,
-          analyticsAttribution: behavior?.analyticsAttribution,
+          checkoutContext,
         });
         openSignIn();
         return false;
       }
-      renderCheckoutErrorSurface(error, fallbackToPricingPage);
+      renderCheckoutErrorSurface(error, fallbackToPricingPage, checkoutContext);
       return false;
     }
 
@@ -1121,7 +1182,7 @@ export async function startCheckout(
         undefined,
         snapshotUpstreamResponse(resp, rawSuccessText),
       );
-      renderCheckoutErrorSurface(unparsableBodyError, fallbackToPricingPage);
+      renderCheckoutErrorSurface(unparsableBodyError, fallbackToPricingPage, checkoutContext);
       return false;
     }
     const result = parsedSuccess.body;
@@ -1167,7 +1228,7 @@ export async function startCheckout(
             retryable: true,
           };
           reportCheckoutError(handoffError, { productId, action: 'desktop-handoff-failed' });
-          renderCheckoutErrorSurface(handoffError, fallbackToPricingPage);
+          renderCheckoutErrorSurface(handoffError, fallbackToPricingPage, checkoutContext);
           return false;
         }
         // Only `native` actually reached the OS browser. `popup` means the
@@ -1211,12 +1272,12 @@ export async function startCheckout(
       // redaction deny-list would silently outrun any schema change.
       snapshotUpstreamBodyKeys(resp, result),
     );
-    renderCheckoutErrorSurface(missingUrlError, fallbackToPricingPage);
+    renderCheckoutErrorSurface(missingUrlError, fallbackToPricingPage, checkoutContext);
     return false;
   } catch (err) {
     const error = classifyThrownCheckoutError(err);
     reportCheckoutError(error, { productId, action: 'exception' }, err);
-    renderCheckoutErrorSurface(error, fallbackToPricingPage);
+    renderCheckoutErrorSurface(error, fallbackToPricingPage, checkoutContext);
     return false;
   } finally {
     _checkoutInFlight = false;
@@ -1256,16 +1317,12 @@ function reportCheckoutError(
   const level = checkoutErrorTelemetryLevel(error);
   const payload = {
     level,
-    tags: {
-      component: 'dodo-checkout',
+    tags: buildCheckoutReportTags({
       action: context.action,
       code: error.code,
-      // Promote cf-ray and server to tags so they're filterable in the
-      // Sentry UI without opening the event. cf-ray presence alone is
-      // definitive for Cloudflare emission. WORLDMONITOR-RN.
-      ...(upstream?.cfRay ? { cfRay: upstream.cfRay } : {}),
-      ...(upstream?.server ? { upstreamServer: upstream.server } : {}),
-    },
+      cfRay: upstream?.cfRay,
+      upstreamServer: upstream?.server,
+    }),
     extra: {
       productId: context.productId,
       httpStatus: error.httpStatus,
@@ -1304,25 +1361,35 @@ function reportCheckoutError(
 function renderCheckoutErrorSurface(
   error: CheckoutError,
   fallbackToPricingPage: boolean,
+  checkoutContext?: CheckoutContext,
 ): void {
-  // A 429 already carries a safe local recovery path. Keep the user on the
-  // current surface so the message and in-memory cooldown remain active
-  // instead of redirecting them to /pro and discarding the wait contract.
-  if (error.code === 'rate_limited') {
+  // A response that names its own wait already carries a safe local recovery
+  // path. Keep the user on the current surface so the message and in-memory
+  // cooldown remain active instead of redirecting them to /pro and discarding
+  // the wait contract. Originally written for the 429; the idempotency
+  // conflict has exactly the same shape, and redirecting to the pricing page
+  // while the buyer's own checkout session is still being created is the
+  // worst available answer.
+  if (error.retryAfterSeconds !== undefined) {
     showCheckoutErrorToast(error.userMessage);
     return;
   }
   if (fallbackToPricingPage) {
+    const proUrl = buildAttributedProUrl(
+      `${WEB_APP_ORIGIN}/pro`,
+      checkoutContext?.origin.kind === 'mission-preview' ? checkoutContext.origin : undefined,
+      { desktopHandoff: isDesktopRuntime() },
+    );
     // Same desktop rule as every other exit from this file (#5911): the
     // pricing page is a web surface, so it leaves for the OS browser instead
     // of replacing the app. The toast stays on desktop because, unlike the
     // web redirect, the app is still on screen to show it.
     if (isDesktopRuntime()) {
-      void openExternalUrl(`${WEB_APP_ORIGIN}/pro`);
+      void openExternalUrl(proUrl);
       showCheckoutErrorToast(error.userMessage);
       return;
     }
-    window.location.assign(`${WEB_APP_ORIGIN}/pro`);
+    window.location.assign(proUrl);
     return;
   }
   showCheckoutErrorToast(error.userMessage);

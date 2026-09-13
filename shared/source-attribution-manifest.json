@@ -11,6 +11,12 @@
       "status": "excluded",
       "references": [
         {
+          "path": "scripts/measure-trade-animation-rebuild.mjs"
+        },
+        {
+          "path": "scripts/profile-news-hybrid-clustering-7782-dashboard.mjs"
+        },
+        {
           "path": "src/components/LiveNewsPanel.ts"
         },
         {
@@ -444,9 +450,6 @@
         },
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -594,6 +597,9 @@
           "path": "scripts/_r2-storage.mjs"
         },
         {
+          "path": "scripts/cloudflare-cache-rule.mjs"
+        },
+        {
           "path": "scripts/seed-internet-outages.mjs"
         },
         {
@@ -632,6 +638,20 @@
         },
         {
           "path": "server/worldmonitor/market/v1/_shared.ts"
+        }
+      ]
+    },
+    {
+      "host": "api.data.apps.fao.org",
+      "provider": "FAOSTAT",
+      "kind": "structured",
+      "observed": true,
+      "license": "FAOSTAT CC-BY; attribution to FAO required",
+      "attribution": "FAO. FAOSTAT. https://www.fao.org/faostat/",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/seed-food-stocks.mjs"
         }
       ]
     },
@@ -811,6 +831,9 @@
         },
         {
           "path": "scripts/dispatch-stale-railway-reconcile.mjs"
+        },
+        {
+          "path": "scripts/freeze-github-stars.mjs"
         },
         {
           "path": "scripts/resolve-railway-reconcile-control.mjs"
@@ -1182,9 +1205,6 @@
       "references": [
         {
           "path": "scripts/seed-displacement-summary.mjs"
-        },
-        {
-          "path": "server/worldmonitor/displacement/v1/get-displacement-summary.ts"
         }
       ]
     },
@@ -1365,6 +1385,9 @@
           "path": "scripts/audit-resilience-cohorts.mjs"
         },
         {
+          "path": "scripts/capture-seed-recovery.mjs"
+        },
+        {
           "path": "scripts/check-seed-freshness.mjs"
         },
         {
@@ -1448,6 +1471,9 @@
         },
         {
           "path": "scripts/lib/x-news-accounts.cjs"
+        },
+        {
+          "path": "scripts/lib/x-post-budget.cjs"
         },
         {
           "path": "scripts/verify-x-accounts.mjs"
@@ -2301,6 +2327,20 @@
       ]
     },
     {
+      "host": "ckan0.cf.opendata.inter.prod-toronto.ca",
+      "provider": "City of Toronto Open Data",
+      "kind": "structured",
+      "observed": true,
+      "license": "CKAN package_show for police-annual-statistical-report-calls-for-service-attended (package id bfffadee-e6e5-4404-8455-e67e9ea11ba7) returned license_id=notspecified, license_title=\"License not specified\", and isopen=false on 2026-09-03. The portal dataset page displays Open Government Licence - Toronto, but that claim is not data-bound to the CKAN package metadata.",
+      "attribution": "Toronto Police Service, Calls for Service Attended, via City of Toronto Open Data. https://open.toronto.ca/dataset/police-annual-statistical-report-calls-for-service-attended/",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/lib/tps-open-data.mjs"
+        }
+      ]
+    },
+    {
       "host": "climate.copernicus.eu",
       "provider": "climate.copernicus.eu",
       "kind": "structured",
@@ -2760,6 +2800,20 @@
       ]
     },
     {
+      "host": "data.apps.fao.org",
+      "provider": "FAOSTAT",
+      "kind": "structured",
+      "observed": true,
+      "license": "FAOSTAT CC-BY; attribution to FAO required",
+      "attribution": "FAO. FAOSTAT. https://www.fao.org/faostat/",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/seed-food-stocks.mjs"
+        }
+      ]
+    },
+    {
       "host": "data.ecb.europa.eu",
       "provider": "data.ecb.europa.eu",
       "kind": "structured",
@@ -2812,7 +2866,7 @@
       "provider": "Toronto Police Service Open Data",
       "kind": "structured",
       "observed": true,
-      "license": "Custom licence based on the Open Government Licence - Ontario. The Major Crime Indicators FeatureServer (serviceItemId 0a239a5563a344a3bbf8452504ed8d68) and Calls for Service Attended table (serviceItemId 46c7581a136445c78831acb657a4fb0d) require: \"Contains information licensed under the Open Government Licence - Ontario.\" Credit Toronto Police Service without crests, logos, flags, or official marks. No TPS endorsement. Locations are deliberately offset; do not present them as precise addresses. Do not merge or link the data with other databases for the purpose of identifying a person, business, or organization. Do not fill privacy exclusions from GTA Update, news, radio, or another source. Evidence: https://www.tps.ca/data-maps/open-data/ and the item-level FeatureServer descriptions on https://data.tps.ca/.",
+      "license": "Custom licence based on the Open Government Licence - Ontario. The Major Crime Indicators FeatureServer (serviceItemId 0a239a5563a344a3bbf8452504ed8d68) requires: \"Contains information licensed under the Open Government Licence - Ontario.\" Credit Toronto Police Service without crests, logos, flags, or official marks. No TPS endorsement. Locations are deliberately offset; do not present them as precise addresses. Do not merge or link the data with other databases for the purpose of identifying a person, business, or organization. Do not fill privacy exclusions from GTA Update, news, radio, or another source. Evidence: https://www.tps.ca/data-maps/open-data/ and the item-level FeatureServer description on https://data.tps.ca/.",
       "attribution": "Contains information licensed under the Open Government Licence - Ontario. Toronto Police Service Open Data (https://www.tps.ca/data-maps/open-data/, https://data.tps.ca/). Coordinates are approximate offset intersection nodes. No TPS endorsement.",
       "status": "reviewed",
       "references": [
@@ -3289,6 +3343,9 @@
           "path": "scripts/seed-resilience-static.mjs"
         },
         {
+          "path": "server/worldmonitor/resilience/v1/_indicator-source-policy.ts"
+        },
+        {
           "path": "src/config/feeds.ts"
         }
       ]
@@ -3751,6 +3808,9 @@
       "status": "excluded",
       "references": [
         {
+          "path": "scripts/mcp-live-smoke.mjs"
+        },
+        {
           "path": "scripts/openapi-inject-examples.mjs"
         },
         {
@@ -4111,15 +4171,10 @@
       "host": "fenixservices.fao.org",
       "provider": "FAOSTAT",
       "kind": "structured",
-      "observed": true,
+      "observed": false,
       "license": "FAOSTAT CC-BY; attribution to FAO required",
       "attribution": "FAO. FAOSTAT. https://www.fao.org/faostat/",
-      "status": "reviewed",
-      "references": [
-        {
-          "path": "scripts/seed-food-stocks.mjs"
-        }
-      ]
+      "status": "excluded"
     },
     {
       "host": "feodotracker.abuse.ch",
@@ -4132,9 +4187,6 @@
       "references": [
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -4226,26 +4278,32 @@
           "path": "server/worldmonitor/market/v1/_quote-provider.ts"
         },
         {
-          "path": "server/worldmonitor/market/v1/_shared.ts"
-        },
-        {
           "path": "server/worldmonitor/market/v1/get-insider-transactions.ts"
         }
       ]
     },
     {
       "host": "firms.modaps.eosdis.nasa.gov",
-      "provider": "firms.modaps.eosdis.nasa.gov",
+      "provider": "NASA FIRMS",
       "kind": "structured",
       "observed": true,
-      "license": "Provider terms for this upstream API/dataset; verify before redistribution",
-      "attribution": "Credit firms.modaps.eosdis.nasa.gov and link to the original upstream API/dataset.",
+      "license": "NASA FIRMS provider terms apply; redistribution terms require review",
+      "attribution": "Credit NASA FIRMS and link to the original upstream API or dataset.",
       "status": "terms-review",
       "references": [
         {
-          "path": "scripts/seed-fire-detections.mjs"
+          "path": "scripts/wildfire/firms-area.mjs"
         }
       ]
+    },
+    {
+      "host": "firms2.modaps.eosdis.nasa.gov",
+      "provider": "NASA FIRMS",
+      "kind": "structured",
+      "observed": false,
+      "license": "NASA FIRMS provider terms apply; redistribution terms require review",
+      "attribution": "Credit NASA FIRMS and link to the original upstream API or dataset.",
+      "status": "excluded"
     },
     {
       "host": "focustaiwan.tw",
@@ -4334,9 +4392,6 @@
       "references": [
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -4506,6 +4561,12 @@
       "references": [
         {
           "path": "api/download.js"
+        },
+        {
+          "path": "scripts/build-accuracy-page.mjs"
+        },
+        {
+          "path": "scripts/build-crawlable-corpus.mjs"
         },
         {
           "path": "scripts/generate-airline-codes.mjs"
@@ -5109,9 +5170,6 @@
       "references": [
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -5988,6 +6046,9 @@
       "status": "terms-review",
       "references": [
         {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
           "path": "src/config/feeds.ts"
         }
       ]
@@ -6319,6 +6380,9 @@
           "path": "scripts/validate-rss-feeds.mjs"
         },
         {
+          "path": "server/worldmonitor/intelligence/v1/_country-coverage-feeds.ts"
+        },
+        {
           "path": "server/worldmonitor/market/v1/stock-news-search.ts"
         },
         {
@@ -6332,6 +6396,9 @@
         },
         {
           "path": "src/config/variants/tech.ts"
+        },
+        {
+          "path": "src/services/country-coverage.ts"
         }
       ],
       "role": "transport"
@@ -6710,6 +6777,20 @@
       "status": "excluded"
     },
     {
+      "host": "open.toronto.ca",
+      "provider": "City of Toronto Open Data",
+      "kind": "structured",
+      "observed": true,
+      "license": "CKAN package_show for police-annual-statistical-report-calls-for-service-attended (package id bfffadee-e6e5-4404-8455-e67e9ea11ba7) returned license_id=notspecified, license_title=\"License not specified\", and isopen=false on 2026-09-03. The portal dataset page displays Open Government Licence - Toronto, but that claim is not data-bound to the CKAN package metadata.",
+      "attribution": "Toronto Police Service, Calls for Service Attended, via City of Toronto Open Data. https://open.toronto.ca/dataset/police-annual-statistical-report-calls-for-service-attended/",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/lib/tps-open-data.mjs"
+        }
+      ]
+    },
+    {
       "host": "opendata.adsb.fi",
       "provider": "adsb.fi Open Data",
       "kind": "structured",
@@ -6839,9 +6920,6 @@
       "references": [
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -7107,9 +7185,6 @@
       "references": [
         {
           "path": "scripts/build-chokepoint-transit-snapshot.mjs"
-        },
-        {
-          "path": "scripts/build-research-reports.mjs"
         }
       ]
     },
@@ -7387,9 +7462,6 @@
           "path": "scripts/seed-market-quotes.mjs"
         },
         {
-          "path": "server/worldmonitor/market/v1/_shared.ts"
-        },
-        {
           "path": "server/worldmonitor/market/v1/analyze-stock.ts"
         },
         {
@@ -7493,9 +7565,6 @@
         },
         {
           "path": "scripts/seed-disease-outbreaks.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -7593,15 +7662,10 @@
       "host": "restcountries.com",
       "provider": "restcountries.com",
       "kind": "structured",
-      "observed": true,
+      "observed": false,
       "license": "Provider terms for this upstream API/dataset; verify before redistribution",
       "attribution": "Credit restcountries.com and link to the original upstream API/dataset.",
-      "status": "terms-review",
-      "references": [
-        {
-          "path": "server/worldmonitor/intelligence/v1/get-country-facts.ts"
-        }
-      ]
+      "status": "excluded"
     },
     {
       "host": "reuters-reutersnow-1-eu.rakuten.wurl.tv",
@@ -7911,6 +7975,20 @@
       ]
     },
     {
+      "host": "scanner.tradingview.com",
+      "provider": "TradingView",
+      "kind": "structured",
+      "observed": true,
+      "license": "TradingView terms; the screener scan endpoint is undocumented and redistribution requires review",
+      "attribution": "TradingView; link to the S&P 500 stock screener.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/_sp500-breadth.mjs"
+        }
+      ]
+    },
+    {
       "host": "schema.org",
       "provider": "schema.org",
       "kind": "structured",
@@ -7923,7 +8001,16 @@
           "path": "api/ask.ts"
         },
         {
+          "path": "scripts/build-accuracy-page.mjs"
+        },
+        {
           "path": "scripts/build-crawlable-corpus.mjs"
+        },
+        {
+          "path": "scripts/build-use-cases.mjs"
+        },
+        {
+          "path": "scripts/crawlable-sources-page.mjs"
         }
       ]
     },
@@ -9678,9 +9765,20 @@
         },
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
+        }
+      ]
+    },
+    {
+      "host": "us.sentry.io",
+      "provider": "Sentry error tracking",
+      "kind": "structured",
+      "observed": true,
+      "license": "Excluded: World Monitor operational telemetry, not an external data provider",
+      "attribution": "Excluded from the provider count: internal error-tracking request.",
+      "status": "excluded",
+      "references": [
         {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
+          "path": "scripts/audit-sentry-resolve-pins.mjs"
         }
       ]
     },
@@ -10037,9 +10135,6 @@
           "path": "api/mcp/skill-extension/generated.ts"
         },
         {
-          "path": "api/not-found.ts"
-        },
-        {
           "path": "api/oauth/authorize.js"
         },
         {
@@ -10056,6 +10151,9 @@
         },
         {
           "path": "api/story.js"
+        },
+        {
+          "path": "api/telegram-feed.js"
         },
         {
           "path": "scripts/_upstash-rest.mjs"
@@ -10076,9 +10174,6 @@
           "path": "scripts/cross-strait-activity/adapters.mjs"
         },
         {
-          "path": "scripts/generate-sandbox-fixtures.mjs"
-        },
-        {
           "path": "scripts/lib/brief-embedding.mjs"
         },
         {
@@ -10088,7 +10183,7 @@
           "path": "scripts/lib/x-news-accounts.cjs"
         },
         {
-          "path": "scripts/mcp-live-smoke.mjs"
+          "path": "scripts/mcp-proxy-live-smoke.mjs"
         },
         {
           "path": "scripts/measure-mobile-mainthread.mjs"
@@ -10140,9 +10235,6 @@
         },
         {
           "path": "server/worldmonitor/infrastructure/v1/reverse-geocode.ts"
-        },
-        {
-          "path": "src/app/panel-layout.ts"
         },
         {
           "path": "src/bootstrap/web-vitals-utils.ts"
@@ -10449,9 +10541,6 @@
         },
         {
           "path": "server/worldmonitor/market/v1/_quote-provider.ts"
-        },
-        {
-          "path": "server/worldmonitor/market/v1/_shared.ts"
         }
       ]
     },
@@ -10633,9 +10722,6 @@
       "references": [
         {
           "path": "scripts/seed-fear-greed.mjs"
-        },
-        {
-          "path": "scripts/seed-market-breadth.mjs"
         }
       ]
     },
@@ -13497,6 +13583,9 @@
       "status": "terms-review",
       "references": [
         {
+          "path": "scripts/china-corporate-disclosures/adapters.mjs"
+        },
+        {
           "path": "scripts/china-stock-connect/adapters.mjs"
         }
       ]
@@ -13858,7 +13947,7 @@
       "provider": "Toronto Police Service Open Data",
       "kind": "structured",
       "observed": true,
-      "license": "Custom licence based on the Open Government Licence - Ontario. The Major Crime Indicators FeatureServer (serviceItemId 0a239a5563a344a3bbf8452504ed8d68) and Calls for Service Attended table (serviceItemId 46c7581a136445c78831acb657a4fb0d) require: \"Contains information licensed under the Open Government Licence - Ontario.\" Credit Toronto Police Service without crests, logos, flags, or official marks. No TPS endorsement. Locations are deliberately offset; do not present them as precise addresses. Do not merge or link the data with other databases for the purpose of identifying a person, business, or organization. Do not fill privacy exclusions from GTA Update, news, radio, or another source. Evidence: https://www.tps.ca/data-maps/open-data/ and the item-level FeatureServer descriptions on https://data.tps.ca/.",
+      "license": "Custom licence based on the Open Government Licence - Ontario. The Major Crime Indicators FeatureServer (serviceItemId 0a239a5563a344a3bbf8452504ed8d68) requires: \"Contains information licensed under the Open Government Licence - Ontario.\" Credit Toronto Police Service without crests, logos, flags, or official marks. No TPS endorsement. Locations are deliberately offset; do not present them as precise addresses. Do not merge or link the data with other databases for the purpose of identifying a person, business, or organization. Do not fill privacy exclusions from GTA Update, news, radio, or another source. Evidence: https://www.tps.ca/data-maps/open-data/ and the item-level FeatureServer description on https://data.tps.ca/.",
       "attribution": "Contains information licensed under the Open Government Licence - Ontario. Toronto Police Service Open Data (https://www.tps.ca/data-maps/open-data/, https://data.tps.ca/). Coordinates are approximate offset intersection nodes. No TPS endorsement.",
       "status": "reviewed",
       "references": [
@@ -14172,6 +14261,15 @@
           "path": "api/not-found.ts"
         },
         {
+          "path": "scripts/build-accuracy-page.mjs"
+        },
+        {
+          "path": "scripts/build-agent-skills-index.mjs"
+        },
+        {
+          "path": "scripts/build-ai-search.mjs"
+        },
+        {
           "path": "scripts/build-crawlable-corpus.mjs"
         },
         {
@@ -14202,7 +14300,10 @@
           "path": "scripts/generate-sandbox-fixtures.mjs"
         },
         {
-          "path": "scripts/mcp-live-smoke.mjs"
+          "path": "scripts/github-stars-snapshot.mjs"
+        },
+        {
+          "path": "scripts/mcp-proxy-live-smoke.mjs"
         },
         {
           "path": "scripts/measure-composited-layers.mjs"
@@ -14217,16 +14318,25 @@
           "path": "scripts/seo-indexnow-submit.mjs"
         },
         {
+          "path": "scripts/verify-agent-readiness.mjs"
+        },
+        {
           "path": "scripts/verify-sitemaps.mjs"
         },
         {
           "path": "server/_shared/deprecation-policy.ts"
         },
         {
+          "path": "src/app/panel-layout.ts"
+        },
+        {
           "path": "src/components/RuntimeConfigPanel.ts"
         },
         {
           "path": "src/config/docs-locale-seo.ts"
+        },
+        {
+          "path": "src/config/schema-graph-ids.ts"
         },
         {
           "path": "src/config/variant-meta.ts"

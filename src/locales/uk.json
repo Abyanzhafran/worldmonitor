@@ -265,7 +265,7 @@
       "area": "Area"
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -367,6 +367,9 @@
         "defense_industrialBalance": "Баланс оборонної промисловості",
         "defense_supplierDiversity": "Різноманітність постачальників озброєнь"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Перейдіть на PRO для залежності від постачальників озброєння та військової потужності"
     }
   },
   "header": {
@@ -1086,7 +1089,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Перейдіть на PRO для доступу до часток країн у видобутку та переробці з концентрацією (HHI) за етапом"
     },
     "tradePolicy": {
       "overview": "Overview",
@@ -2456,7 +2460,8 @@
       "dependentCommodities": "Залежні товари",
       "stateOk": "Актуально",
       "stateStale": "Застарілі вхідні дані",
-      "stateInsufficient": "Недостатньо даних"
+      "stateInsufficient": "Недостатньо даних",
+      "proLocked": "Перейдіть на PRO для оцінки вразливості сировини"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Hormuz Trade Tracker</strong> Live AIS vessel tracking through the Strait of Hormuz, the world's most critical oil chokepoint. Monitors tanker counts, disruption events, and weekly flow changes. Approximately 20% of global oil supply transits here daily.",
@@ -2891,6 +2896,27 @@
       "succeeded": "Пропуск збережено. Ви можете використовувати його при наступному вході.",
       "retryable": "Це не завершилось. Ви можете спробувати ще раз.",
       "failed": "Нам не вдалося зберегти пропуск на цьому пристрої."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Довідка для рішень щодо сировини",
+      "commodity": "Сировина / продукт",
+      "blockedChokepoint": "Імовірно заблокований прохід",
+      "commodityCapture": "Зафіксувати порівняння сировини",
+      "title": "Зведення для ухвалення рішення",
+      "fuel": "Паливо",
+      "chokepoint": "Вузьке місце",
+      "baseline": "Базове порушення постачання",
+      "comparison": "Порівнюване порушення постачання",
+      "capture": "Завантажити / оновити обидва",
+      "downloadHtml": "Завантажити зведення в HTML",
+      "downloadJson": "Завантажити зведення в JSON",
+      "back": "← Назад до зведення про країну",
+      "select": "Виберіть порушення енергопостачання, потім завантажте обидва сценарії.",
+      "changed": "Вибір змінено. Завантажте обидва сценарії перед експортом.",
+      "loading": "Завантаження обох сценаріїв…",
+      "captured": "Завантажено. Перед збереженням перевірте дати спостережень та обмеження.",
+      "failed": "Не вдалося завантажити сценарії. Перевірте доступ і повторіть спробу. Немає результату для експорту.",
+      "locked": "Зведення для ухвалення рішення доступне в Pro."
     }
   },
   "popups": {

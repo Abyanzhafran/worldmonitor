@@ -36,14 +36,14 @@
       "pro": {
         "description": "Full intelligence dashboard",
         "features": [
-          "Everything in Free",
-          "AI stock analysis & backtesting",
-          "Daily market briefs",
-          "Military & geopolitical tracking",
-          "Custom widget builder",
-          "10 custom dashboards (vs 3)",
+          "Все з Free версії — панелі, джерела й відслідковувані країни без обмежень",
+          "WM Analyst chat + аналіз акцій та бектестування на базі AI",
+          "Змоделювання впливу цінових шоків та тести стресу ланцюга поставок",
+          "Розвідувальна пам'ять — історичний пошук, часові шкали й схожі події",
+          "Дані про розбіжність фізичних металів, концентрацію мінералів і суверенний борг",
+          "Запланований AI-дайджест + механізм правил сповіщень",
           "MCP + SDK access for Claude Desktop & other AI clients (50 calls/day)",
-          "Priority data refresh"
+          "Користувацькі віджети й 10 інформаційних панелей (проти 3)"
         ],
         "highlightFeatures": [
           "Personal license",
@@ -72,7 +72,7 @@
           "License / API key included",
           "Real-time data streams",
           "60 requests/minute",
-          "1,000 requests/day included",
+          "1,000 запитів/день включено (REST + MCP разом; один живий виклик MCP вважається як 2-3)",
           "Webhook notifications"
         ],
         "highlightFeatures": [
@@ -83,9 +83,9 @@
         "description": "Launch your own product on WorldMonitor data",
         "features": [
           "Everything in API Starter",
-          "Redistribution rights — embed our data in what you sell",
+          "Права на перепродаж R1–R3 для продуктів, орієнтованих на клієнтів",
           "300 requests/minute",
-          "10,000 requests/day included",
+          "10,000 запитів/день включено (REST + MCP разом; один живий виклик MCP вважається як 2-3)",
           "5 ліцензій Pro — запрошуйте користувачів із будь-яким корпоративним доменом електронної пошти",
           "Priority support"
         ],
@@ -151,7 +151,7 @@
     "proF6": "Flight search & price comparison",
     "proF7": "Alert rules engine — custom triggers, quiet hours, AES-256 encrypted channels",
     "proF8": "Market watchlist, macro & central bank tracking",
-    "proF9": "AI Market Implications & Regional Intelligence (Soon: orbital surveillance, premium map layers, longer history)",
+    "proF9": "Наслідки для ринків AI та регіональна розвідка",
     "choosePlan": "Choose Your Plan",
     "entTitle": "World Monitor Enterprise",
     "entDesc": "For teams that need shared monitoring, API access, deployment options, TV apps, and direct support.",
@@ -167,7 +167,8 @@
     "entF10": "Cloud, on-prem, or air-gapped deployment",
     "entF11": "Dedicated onboarding & support",
     "entCta": "Talk to Sales",
-    "freeF2": "Курировані стрічки, атрибутовані джерела та шари карт"
+    "freeF2": "Курировані стрічки, атрибутовані джерела та шари карт",
+    "proF10": "Розвідувальна пам'ять — історичний пошук, часові шкали й пошук схожих подій"
   },
   "whyUpgrade": {
     "title": "Чому варто перейти на World Monitor Pro?",
@@ -274,13 +275,14 @@
     "economyAnalyticsDesc": "GDP, inflation, interest rates, and growth cycles. Macro data correlated with market signals and geopolitical events.",
     "riskMonitoring": "Risk Monitoring & Scenarios",
     "riskMonitoringDesc": "Global risk scoring, scenario analysis, and geopolitical risk assessment. Convergence detection across market and political signals.",
-    "orbitalSurveillance": "Orbital Surveillance",
-    "orbitalSurveillanceDesc": "(Soon) Overhead pass predictions, revisit frequency analysis, and imaging window alerts. Know when intelligence satellites are watching your areas of interest.",
     "morningBriefs": "Personal Intelligence Desk",
     "morningBriefsDesc": "До 30 ранжованих новин на дайджест, дедубльовано по джерелам. Обирай щоденну, двічі денну чи щотижневу частоту — або оповіщення в реальному часі для критичних подій. AI Assessment та Signals to watch, доставлені на Slack, Discord, Telegram, Email чи webhook. Це не розсилка — це аналітик.",
     "oneKey": "Живі сервіси, 1 ключ",
     "oneKeyDesc": "Finnhub, FRED, ACLED, UCDP, NASA FIRMS, AISStream, OpenSky, and more — all active, no separate registrations.",
-    "deliveryLabel": "Choose how intelligence finds you"
+    "deliveryLabel": "Choose how intelligence finds you",
+    "supplyChainLab": "Supply-Chain Stress Lab",
+    "supplyChainLabDesc": "Змоделюйте вплив цінового шоку на країни й сектори. Визначте вразливість товарів за залежністю від вузьких місць. Відстежуйте концентрацію від шахти до рафінування та розбіжність премії SGE–COMEX на фізичному ринку — показник, що змінюється перед заголовками новин.",
+    "roadmapNote": "На плані розроблення: супутникове спостереження, довша історія, преміальні шари карт."
   },
   "slackMock": {
     "morningBrief": "Morning Brief",
@@ -479,14 +481,18 @@
       "screenshotAlt": "Жива панель World Monitor — глобальна мапа з шарами конфліктів, судноплавства та ринків",
       "plateNote": "Captured from the live map — click to open it",
       "trustBuild": "Build on it:",
-      "positioningLink": "WorldMonitor is not an open-source Palantir"
+      "positioningLink": "WorldMonitor is not an open-source Palantir",
+      "asOf": "Станом на 8 вересня 2026",
+      "whatIsTitle": "Що таке World Monitor?",
+      "whatIsBody": "World Monitor — це безплатна, відкрита панель управління, яка передає сигнали геополітики, ринків, судноплавства, авіації, інфраструктури та кіберпростору на єдину живу карту світу. Вона корелює окремі потоки в єдину операційну картину й виявляє конвергенцію до новинних заголовків, з усіма цифрами, підтвердженими джерелами, та кожним методом, задокументованим."
     },
     "live": {
       "eyebrow": "Live right now",
       "title": "Які живі дані показує ця сторінка прямо зараз?",
       "subtitle": "Four of the hundred-plus signals World Monitor watches around the clock.",
       "liveBadge": "Live",
-      "sampleBadge": "Sample",
+      "pulseBadge": "Опублікований пульс {{date}}",
+      "refreshNote": "Увімкніть JavaScript для оновлення — опублікований пульс вище залишається доступним без нього.",
       "cardHeadlines": "Top signals",
       "cardCii": "Instability index",
       "ciiNote": "12 fused signals per country",
@@ -584,35 +590,20 @@
       "eyebrow": "Under the hood",
       "title": "Наскільки глибока модель даних World Monitor?",
       "sub": "Every number below is live in the dashboard today — not a roadmap.",
-      "s1v": "Спільне",
-      "s1l": "Map layers",
-      "s2v": "Куровано",
-      "s2l": "Curated feeds",
-      "s3v": "Атрибутовано",
-      "s3l": "Data providers",
-      "s4v": "Живе",
+      "s1l": "Типи шарів карти",
+      "s2l": "Стрічки новин та розвідданих",
+      "s3l": "Атрибутовані джерела",
       "s4l": "Chokepoints · live AIS",
-      "s5v": "Tier-1",
       "s5l": "Instability index · live",
-      "s6v": "Публічне",
       "s6l": "Resilience rankings",
-      "s7v": "Картовано",
       "s7l": "Subsea cables",
-      "s8v": "Картовано",
       "s8l": "Pipelines & LNG",
-      "s9v": "Картовано",
       "s9l": "AI datacenters mapped",
-      "s10v": "Оцінено",
       "s10l": "Scored hotspots",
-      "s11v": "Живе",
       "s11l": "Exchanges & assets",
-      "s12v": "Живе",
       "s12l": "MCP tools",
-      "s13v": "Швидко",
-      "s13l": "⌘K commands",
-      "s14v": "Локалізовано",
+      "s13l": "Визначення команд ⌘K",
       "s14l": "Languages · RTL incl.",
-      "s15v": "5",
       "s15l": "Independent alert origins",
       "n1Title": "Satellite tracking",
       "n1Desc": "Live orbital positions computed in-browser with SGP4 — watch ISS, Starlink and military birds overhead.",
@@ -685,7 +676,7 @@
       "q4": "Can I watch chokepoints like Hormuz or Bab el-Mandeb in real time?",
       "a4": "Так. Вузькі місця відслідковуються з живими AIS-підрахунками суден, змінами транзиту тиждень від тижня та оцінюванням збоїв — а аномалії щільності позначаються порівняно з базовою лінією проливу.",
       "q5": "How is this different from a conflict map like Liveuamap?",
-      "a5": "Конфлікт — це один шар карти. World Monitor об'єднує конфлікти з морськими перевезеннями, військовими польотами, інфраструктурою, ринками та кіберпростором — потім AI оцінює їхню збіжність: індекси нестабільності, посилення у гарячих точках, підтверджені екстрені повідомлення та щоденні брифінги.",
+      "a5": "Конфлікт — це один шар карти. World Monitor об'єднує конфлікти з морським транспортом, військовими польотами, інфраструктурою, ринками та кібербезпекою — потім AI оцінює збіги: індекси нестабільності, швидкість ескалації гарячих точок, підтверджені повідомлення про екстрені новини та щоденні брифінги. Порівняйте World Monitor з Liveuamap та іншими картами конфліктів: worldmonitor.app/compare/liveuamap-alternatives.",
       "q6": "Why should I trust an alert?",
       "a6": "A breaking banner fires only when independent origin types corroborate — news classification, keyword velocity, hotspot escalation, military surges, official sirens — deduplicated and rate-limited. Fewer alerts, real ones.",
       "q7": "Can AI agents like Claude or GPT use it?",
@@ -718,5 +709,19 @@
       "countryRiskDesc": "Відстежте політичні, безпекові, економічні та стійкісні сигнали, що стоять за змінами в країні.",
       "open": "Відкрити докази"
     }
+  },
+  "whatsNew": {
+    "eyebrow": "Журнал доставок",
+    "title": "Що нового в WorldMonitor",
+    "subtitle": "Нові функції за останні 30 днів — виправлення й організаційні роботи не включені.",
+    "proTag": "PRO",
+    "m1": "Індекс розбіжності фізичної премії — SGE проти COMEX з історією",
+    "m2": "Рейтинги вразливості товарних поставок — розгортання залежності від вузьких місць",
+    "m3": "Концентрація мінеральної продукції та оборонна промисловість",
+    "m4": "П'ятифакторні карткові оцінки стійкості з оцінками на рівні показників",
+    "m5": "Користувацькі списки спостереження в Telegram",
+    "m6": "Вхід за допомогою passkey",
+    "m7": "AI-агенти можуть керувати інформаційною панеллю — панелі, вкладки, шари карт і завдання",
+    "m8": "Розширені сторінки стійкості країн"
   }
 }

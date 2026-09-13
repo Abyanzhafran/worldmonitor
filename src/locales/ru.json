@@ -196,7 +196,7 @@
       "decisionSignalsUnavailable": "Снимок сигналов принятия решений Китая в настоящее время недоступен."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -298,6 +298,9 @@
         "defense_industrialBalance": "Баланс оборонной промышленности",
         "defense_supplierDiversity": "Разнообразие поставщиков вооружений"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Обновитесь на PRO для анализа зависимости от поставщиков вооружений и военного потенциала"
     }
   },
   "header": {
@@ -985,7 +988,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Обновитесь на PRO для просмотра доли стран в добыче и переработке с показателем концентрации (HHI) по этапам"
     },
     "tradePolicy": {
       "tariffs": "Тарифы",
@@ -2244,7 +2248,8 @@
       "dependentCommodities": "Зависимые товары",
       "stateOk": "Актуально",
       "stateStale": "Устаревшие входные данные",
-      "stateInsufficient": "Недостаточно данных"
+      "stateInsufficient": "Недостаточно данных",
+      "proLocked": "Обновитесь на PRO для оценки уязвимости сырьевых ресурсов"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Трекер торговли в Ормузе</strong> Отслеживание судов AIS в реальном времени через Ормузский пролив — самую критическую точку нефтяного узкого места в мире. Отслеживает количество танкеров, события нарушений и еженедельные изменения потоков. Примерно 20% мировых поставок нефти проходит здесь ежедневно.",
@@ -2822,6 +2827,27 @@
       "succeeded": "Пароль сохранён. Вы можете использовать его при следующем входе.",
       "retryable": "Операция не завершена. Можете попробовать снова.",
       "failed": "Не удалось сохранить пароль на этом устройстве."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Справка для решений по сырью",
+      "commodity": "Сырьё / продукт",
+      "blockedChokepoint": "Предполагаемый заблокированный проход",
+      "commodityCapture": "Зафиксировать сравнение сырья",
+      "title": "Сводка для принятия решения",
+      "fuel": "Топливо",
+      "chokepoint": "Узкое место",
+      "baseline": "Базовое нарушение поставок",
+      "comparison": "Сравниваемое нарушение поставок",
+      "capture": "Загрузить / обновить оба",
+      "downloadHtml": "Скачать сводку в HTML",
+      "downloadJson": "Скачать сводку в JSON",
+      "back": "← Назад к сводке по стране",
+      "select": "Выберите нарушение энергоснабжения, затем загрузите оба сценария.",
+      "changed": "Выбор изменён. Загрузите оба сценария перед экспортом.",
+      "loading": "Загрузка обоих сценариев…",
+      "captured": "Загружено. Перед скачиванием проверьте даты наблюдений и ограничения.",
+      "failed": "Не удалось загрузить сценарии. Проверьте доступ и повторите попытку. Нет результата для экспорта.",
+      "locked": "Сводка для принятия решения доступна в Pro."
     }
   },
   "popups": {
@@ -2865,9 +2891,9 @@
     },
     "gpsJamming": {
       "title": "Помехи GPS/GNSS",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Воздушные суда, затронутые помехами",
+      "samples": "Количество воздушных судов, затронутых помехами",
+      "aircraft": "Общее количество наблюдаемых воздушных судов",
       "h3Hex": "H3 Hex"
     },
     "flight": {

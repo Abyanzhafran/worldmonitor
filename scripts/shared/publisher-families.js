@@ -89,7 +89,7 @@ const PUBLISHER_FAMILY_DATA = {
   'eia': { publisher: "US Energy Information Administration", labels: ["EIA Press Room", "EIA Reports"] },
   'fao': { publisher: "UN Food and Agriculture Organization", labels: ["FAO GIEWS", "FAO News"] },
   'financial-times': { publisher: "Financial Times", labels: ["FT Energy", "Financial Times"] },
-  'france-24': { publisher: "France 24", labels: ["France 24", "France 24 LatAm"] },
+  'france-24': { publisher: "France 24", labels: ["France 24", "France 24 Africa", "France 24 Asia Pacific", "France 24 LatAm"] },
   'good-news-network': {
     publisher: "Good News Network",
     labels: [
@@ -105,9 +105,12 @@ const PUBLISHER_FAMILY_DATA = {
   'guardian': {
     publisher: "The Guardian",
     labels: [
+      "Guardian Africa",
       "Guardian Americas",
       "Guardian Australia",
+      "Guardian Caribbean",
       "Guardian ME",
+      "Guardian Pacific",
       "Guardian World",
     ],
   },
@@ -140,6 +143,7 @@ const PUBLISHER_FAMILY_DATA = {
       "Reuters India",
       "Reuters LatAm",
       "Reuters Markets",
+      "Reuters Nasdaq Futures",
       "Reuters US",
       "Reuters World",
     ],
@@ -180,6 +184,80 @@ const PUBLISHER_FAMILY_DATA = {
 };
 
 export const PUBLISHER_FAMILIES = Object.freeze(PUBLISHER_FAMILY_DATA);
+
+/**
+ * Curated family -> the registrable domains that newsroom publishes on.
+ *
+ * Feed labels identify a publisher on the digest path; an article that
+ * arrives by URL alone (the per-country GDELT index, #7748) carries only its
+ * domain, so "BBC World" and bbc.co.uk would otherwise count as two
+ * newsrooms for any "N independent publishers" rule. Exact registrable
+ * domains only, no fuzzy matching (same fail-closed direction as labels): an
+ * unlisted domain stays its own singleton family. Multi-tenant hosts
+ * (yahoo.com, ycombinator.com) are deliberately absent because a domain
+ * that several publishers share cannot name one.
+ */
+const PUBLISHER_FAMILY_DOMAINS = Object.freeze({
+  'a16z': ['a16z.com'],
+  'ap-news': ['apnews.com'],
+  'arxiv': ['arxiv.org'],
+  'bbc': ['bbc.com', 'bbc.co.uk'],
+  'bloomberg': ['bloomberg.com'],
+  'brookings': ['brookings.edu'],
+  'cb-insights': ['cbinsights.com'],
+  'chatham-house': ['chathamhouse.org'],
+  'cnbc': ['cnbc.com'],
+  'csis': ['csis.org'],
+  'dw': ['dw.com'],
+  'eia': ['eia.gov'],
+  'fao': ['fao.org'],
+  'financial-times': ['ft.com'],
+  'france-24': ['france24.com'],
+  'good-news-network': ['goodnewsnetwork.org'],
+  'guardian': ['theguardian.com'],
+  'hromadske': ['hromadske.ua'],
+  'iea': ['iea.org'],
+  'interfax': ['interfax.com', 'interfax.ru'],
+  'kitco': ['kitco.com'],
+  'marketwatch': ['marketwatch.com'],
+  'mit-technology-review': ['technologyreview.com'],
+  'ndtv': ['ndtv.com'],
+  'nikkei': ['nikkei.com'],
+  'politico': ['politico.com', 'politico.eu'],
+  'reuters': ['reuters.com'],
+  'rt': ['rt.com'],
+  'seeking-alpha': ['seekingalpha.com'],
+  'sp-global': ['spglobal.com'],
+  'techcrunch': ['techcrunch.com'],
+  'the-verge': ['theverge.com'],
+  'venturebeat': ['venturebeat.com'],
+  'white-house': ['whitehouse.gov'],
+});
+export const PUBLISHER_FAMILY_DOMAIN_TABLE = PUBLISHER_FAMILY_DOMAINS;
+
+const familyByDomain = new Map();
+for (const [familyId, domains] of Object.entries(PUBLISHER_FAMILY_DOMAINS)) {
+  for (const domain of domains) familyByDomain.set(domain, familyId);
+}
+
+/**
+ * Curated family id for an article host, or '' when no family lists it.
+ * Matches the host itself and every parent domain with at least two labels
+ * ("www.bbc.co.uk" -> "bbc.co.uk"), so a subdomain edition folds into its
+ * newsroom without a public-suffix list.
+ *
+ * @param {unknown} hostname
+ * @returns {string}
+ */
+export function publisherFamilyForDomain(hostname) {
+  if (typeof hostname !== 'string') return '';
+  const labels = hostname.trim().toLowerCase().replace(/\.+$/, '').split('.').filter(Boolean);
+  for (let start = 0; start <= labels.length - 2; start += 1) {
+    const family = familyByDomain.get(labels.slice(start).join('.'));
+    if (family) return family;
+  }
+  return '';
+}
 
 /**
  * How many distinct publishers make a story corroborated.

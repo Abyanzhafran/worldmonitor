@@ -261,7 +261,7 @@
       "decisionSignalsUnavailable": "चीन का निर्णय-संकेत स्नैपशॉट वर्तमान में अनुपलब्ध है।"
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -363,6 +363,9 @@
         "defense_industrialBalance": "रक्षा औद्योगिक संतुलन",
         "defense_supplierDiversity": "हथियार आपूर्तिकर्ता विविधता"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "हथियार आपूर्तिकर्ता निर्भरता और सैन्य क्षमता के लिए PRO में अपग्रेड करें"
     }
   },
   "header": {
@@ -1080,7 +1083,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "खान और रिफाइनरी देश शेयर के लिए PRO में अपग्रेड करें, चरण के अनुसार सांद्रता (HHI) के साथ।"
     },
     "tradePolicy": {
       "overview": "ओवरव्यू",
@@ -2433,7 +2437,8 @@
       "dependentCommodities": "निर्भर वस्तुएँ",
       "stateOk": "वर्तमान",
       "stateStale": "पुराना इनपुट",
-      "stateInsufficient": "अपर्याप्त डेटा"
+      "stateInsufficient": "अपर्याप्त डेटा",
+      "proLocked": "वस्तु कमजोरी स्कोरिंग के लिए PRO में अपग्रेड करें"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>हर्मुज व्यापार ट्रैकर</strong> हर्मुज स्ट्रेट के माध्यम से लाइव AIS जहाज ट्रैकिंग, विश्व का सबसे महत्वपूर्ण तेल चोकपॉइंट। टैंकर गिनती, व्यवधान घटनाएं, और साप्ताहिक प्रवाह परिवर्तन मॉनिटर करता है। लगभग 20% वैश्विक तेल दैनिक यहां से गुजरता है।",
@@ -2853,6 +2858,27 @@
       "succeeded": "पासकी सेव हो गई। आप इसे अगली बार साइन इन करते समय उपयोग कर सकते हैं।",
       "retryable": "वह पूरी नहीं हुई। आप फिर से कोशिश कर सकते हैं।",
       "failed": "हम इस डिवाइस पर एक पासकी सेव नहीं कर सके।"
+    },
+    "decisionBrief": {
+      "commodityTitle": "वस्तु निर्णय सारांश",
+      "commodity": "वस्तु / उत्पाद",
+      "blockedChokepoint": "अवरुद्ध माना गया मार्ग",
+      "commodityCapture": "वस्तु तुलना दर्ज करें",
+      "title": "निर्णय सारांश",
+      "fuel": "ईंधन",
+      "chokepoint": "अवरोध बिंदु",
+      "baseline": "आधारभूत व्यवधान",
+      "comparison": "तुलनात्मक व्यवधान",
+      "capture": "दोनों प्राप्त / रीफ़्रेश करें",
+      "downloadHtml": "सारांश HTML में डाउनलोड करें",
+      "downloadJson": "सारांश JSON में डाउनलोड करें",
+      "back": "← देश सारांश पर वापस जाएँ",
+      "select": "ऊर्जा आपूर्ति में व्यवधान चुनें, फिर दोनों परिदृश्य प्राप्त करें।",
+      "changed": "चयन बदल गया है। निर्यात से पहले दोनों परिदृश्य प्राप्त करें।",
+      "loading": "दोनों परिदृश्य प्राप्त किए जा रहे हैं…",
+      "captured": "प्राप्त हो गया। डाउनलोड करने से पहले अवलोकन की तारीखें और सीमाएँ जाँचें।",
+      "failed": "परिदृश्य प्राप्त नहीं हो सके। अपनी पहुँच जाँचें और फिर कोशिश करें। निर्यात के लिए कोई परिणाम उपलब्ध नहीं है।",
+      "locked": "निर्णय सारांश Pro में उपलब्ध है।"
     }
   },
   "popups": {
@@ -2896,9 +2922,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS व्यवधान",
-      "navPerformance": "नेविगेशन प्रदर्शन",
-      "samples": "ADS-B नमूने",
-      "aircraft": "विमान",
+      "navPerformance": "प्रभावित विमान",
+      "samples": "प्रभावित विमानों की संख्या",
+      "aircraft": "देखे गए विमान",
       "h3Hex": "H3 हेक्स"
     },
     "flight": {

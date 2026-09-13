@@ -184,7 +184,7 @@ function mountWidgetHtml(html) {
 //   - Upstash REST sliding-window ratelimit (pipeline / EVALSHA against the
 //     same host) → return null shape so the @upstash/ratelimit limiter
 //     degrades gracefully and doesn't add latency to every test.
-function installMockFetch({ riskPayload = null } = {}) {
+function installMockFetch({ riskPayload = null, keyOverrides = {} } = {}) {
   const NOW = Date.now();
   const META = { fetchedAt: NOW, recordCount: 1 };
 
@@ -223,6 +223,7 @@ function installMockFetch({ riskPayload = null } = {}) {
     // get_country_risk freshness wrap (resource-layer read, distinct from
     // the RPC's own fetch path)
     'seed-meta:intelligence:risk-scores': META,
+    ...keyOverrides,
   };
 
   globalThis.fetch = async (url, init) => {
@@ -1133,6 +1134,57 @@ describe('api/mcp.ts — resources capability + stability + auth-symmetry', () =
     assert.equal(payload.sanctionsActive, false);
     assert.equal(payload.upstreamUnavailable, false);
   });
+
+  it('country-risk freshness uses the preview namespace that owns the risk data', async () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.VERCEL_GIT_COMMIT_SHA = 'deadbeefcafebabe';
+
+    const productionFetchedAt = Date.now();
+    const previewFetchedAt = productionFetchedAt - 31 * 60_000;
+    installMockFetch({
+      keyOverrides: {
+        'seed-meta:intelligence:risk-scores': { fetchedAt: productionFetchedAt, recordCount: 1 },
+        'preview:deadbeef:seed-meta:intelligence:risk-scores': { fetchedAt: previewFetchedAt, recordCount: 1 },
+      },
+    });
+
+    const res = await handler(envKeyReq(readBody('worldmonitor://countries/de/risk')));
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.error, undefined, `unexpected error: ${JSON.stringify(body.error)}`);
+    const payload = JSON.parse(body.result.contents[0].text);
+    assert.equal(payload.cached_at, new Date(previewFetchedAt).toISOString());
+    assert.equal(payload.stale, true, 'preview risk data must use the preview freshness verdict');
+  });
+
+  for (const method of ['tools/call', 'resources/read']) {
+    it(`withholds cached corridor prose with a null baseline row through ${method}`, async () => {
+      const capture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/chokepoints-routing-advice-2026-09-10.json'), 'utf8'));
+      const captured = capture.body.chokepoints.find(cp => cp.id === 'hormuz_strait').transitSummary;
+      const baseline = { id: 'hormuz_strait', name: 'Strait of Hormuz' };
+      for (const advice of [captured.riskReportAction, undefined, null, { route: 'Suez', cost: '$50-80K' }]) {
+        const summary = { ...captured, todayTotal: null, riskSummary: advice, riskReportAction: advice };
+        installMockFetch({ keyOverrides: {
+          'supply_chain:transit-summaries:v1': { summaries: { hormuz_strait: summary }, fetchedAt: capture.retrievedAt },
+          'energy:chokepoint-baselines:v1': { chokepoints: [null, baseline, { id: 'suez' }] },
+        } });
+        const request = method === 'tools/call'
+          ? callBody('get_chokepoint_status', { chokepoint: 'hormuz' })
+          : readBody('worldmonitor://chokepoints/strait-of-hormuz/status');
+        const response = await handler(envKeyReq(request));
+        assert.equal(response.status, 200);
+        const body = await response.json();
+        assert.equal(body.error, undefined);
+        const text = body.result.contents?.[0]?.text ?? body.result.content?.[0]?.text;
+        const payload = JSON.parse(text);
+        const served = payload.data['transit-summaries'].summaries.hormuz_strait;
+        assert.deepEqual(served, { ...summary, riskSummary: '', riskReportAction: '' });
+        assert.equal(payload.data['transit-summaries'].fetchedAt, capture.retrievedAt);
+        assert.deepEqual(payload.data['chokepoint-baselines'].chokepoints, [baseline]);
+        assert.doesNotMatch(text, /REROUTE|50-80K|Salalah/);
+      }
+    });
+  }
 
   it('resources/read worldmonitor://chokepoints/suez/status returns the transit-summary envelope with cached_at + stale', async () => {
     const res = await handler(envKeyReq(readBody('worldmonitor://chokepoints/suez/status')));

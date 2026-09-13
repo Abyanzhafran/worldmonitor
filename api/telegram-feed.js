@@ -1,7 +1,10 @@
 // @ts-check
 import { getRelayBaseUrl, getRelayHeaders, fetchWithTimeout, buildRelayResponse } from './_relay.js';
 import { getCorsHeaders, isDisallowedOrigin } from './_cors.js';
-import { validateApiKey } from './_api-key.js';
+import { getHeaderApiKey, USER_API_KEY_GATEWAY_VALIDATION_ERROR, validateApiKey } from './_api-key.js';
+import { isCanonicalUserApiKey, validateBootstrapUserApiKey, validateBootstrapUserApiAccess } from './_user-api-key.js';
+import { checkBurst, reserveDailyMeter, rateLimitHeaders } from './_api-key-rate-limit.js';
+import { redisPipeline } from './_upstash-json.js';
 import { checkRateLimit } from './_rate-limit.js';
 import { jsonResponse } from './_json-response.js';
 import { captureSilentError } from './_sentry-edge.js';
@@ -241,9 +244,30 @@ export default async function handler(req) {
   // anonymous, so the HMAC-signed wms_ session the browser mints at boot is
   // the intended credential; forceKey would demand user-bound Pro auth and
   // lock the dashboard out of its own panel.
+  let userAccount;
   const keyCheck = await validateApiKey(req);
   if (keyCheck.required && !keyCheck.valid) {
-    return jsonResponse({ error: keyCheck.error }, 401, { 'Cache-Control': 'no-store', ...corsHeaders });
+    const key = getHeaderApiKey(req);
+    if (keyCheck.error !== USER_API_KEY_GATEWAY_VALIDATION_ERROR || !isCanonicalUserApiKey(key)) {
+      return jsonResponse({ error: keyCheck.error === USER_API_KEY_GATEWAY_VALIDATION_ERROR ? 'Invalid API key' : keyCheck.error }, 401, { 'Cache-Control': 'no-store', ...corsHeaders });
+    }
+    // Bound unauthenticated validation work before looking up the key owner.
+    const validationLimit = await checkRateLimit(req, corsHeaders, {
+      scope: 'telegram-user-key-validation', limit: 600, window: '1 m', failClosed: true,
+    });
+    if (validationLimit) {
+      validationLimit.headers.set('Cache-Control', 'no-store');
+      return validationLimit;
+    }
+    const userKey = await validateBootstrapUserApiKey(key);
+    const access = userKey.ok ? await validateBootstrapUserApiAccess(userKey.userId) : userKey;
+    if (!access.ok) {
+      return jsonResponse({
+        error: access.error,
+        ...(access.headers?.['X-Billing-Verification'] ? { code: access.reason } : {}),
+      }, access.status, { ...corsHeaders, ...access.headers, 'Cache-Control': 'no-store' });
+    }
+    userAccount = { userId: userKey.userId, entitlement: access.entitlement };
   }
 
   const url = new URL(req.url);
@@ -299,6 +323,43 @@ export default async function handler(req) {
       params.set('limit', String(limit));
       if (topic) params.set('topic', topic);
       if (channel) params.set('channel', channel);
+    }
+
+    if (userAccount && userAccount.entitlement.features.apiRateLimit > 0) {
+      const { userId, entitlement } = userAccount;
+      const enforce = process.env.API_RATE_LIMIT_ENFORCE === 'true';
+      const burst = await checkBurst(entitlement.features.apiRateLimit, userId);
+      const allowance = typeof entitlement.features.apiDailyAllowance === 'number'
+        ? entitlement.features.apiDailyAllowance : -1;
+      const plan = entitlement.planKey;
+      const upgrade_url = plan && plan !== 'enterprise' ? 'https://worldmonitor.app/' : undefined;
+      if (!burst.ok) {
+        if (enforce) {
+          const retryAfterSec = Math.max(1, Math.ceil((burst.reset - Date.now()) / 1000));
+          return jsonResponse({
+            error: 'Too many requests', plan, limit: burst.limit,
+            limit_type: 'per_minute', reset: new Date(burst.reset).toISOString(), upgrade_url,
+          }, 429, {
+            ...corsHeaders, 'Cache-Control': 'no-store',
+            ...rateLimitHeaders({ limit: burst.limit, remaining: 0, resetMs: burst.reset, retryAfterSec }),
+          });
+        }
+        // Match the gateway: a shadow burst denial skips the daily reservation.
+      } else if (allowance >= 0) {
+        const meter = await reserveDailyMeter({ userId, allowance, pipeline: redisPipeline });
+        if (meter.overLimit && enforce) {
+          await meter.rollback();
+          const resetMs = Date.now() + meter.retryAfterSec * 1000;
+          return jsonResponse({
+            error: 'Daily request limit reached', plan, limit: allowance,
+            limit_type: 'daily', reset: new Date(resetMs).toISOString(), upgrade_url,
+          }, 429, {
+            ...corsHeaders, 'Cache-Control': 'no-store',
+            ...rateLimitHeaders({ limit: allowance, remaining: 0, resetMs,
+              retryAfterSec: meter.retryAfterSec, windowSec: 86_400 }),
+          });
+        }
+      }
     }
 
     const relayUrl = `${relayBaseUrl}${relayPath}?${params}`;
@@ -377,14 +438,22 @@ export default async function handler(req) {
     const isTimeout = error?.name === 'AbortError';
     // No `details`: the underlying message can carry relay transport detail
     // (undici cause chains, MTProto text) and the browser has no use for it.
-    // Non-timeout failures are captured server-side instead.
+    // Failures are captured server-side instead.
     console.warn('[telegram-feed] relay request failed:', error?.message || String(error));
-    // Skip Sentry on AbortError — fetchWithTimeout aborts on the mode budget
-    // (TELEGRAM_RELAY_TIMEOUT_MS); those 504s are routine relay latency, not
-    // product defects. Match api/rss-proxy.js. Keep capturing real failures.
-    if (!isTimeout) {
-      void captureSilentError(error, { tags: { route: 'api/telegram-feed', step: 'relay-fetch' } });
-    }
+    // Timeouts capture at `warning`, not `error`: fetchWithTimeout aborts on the
+    // mode budget (TELEGRAM_RELAY_TIMEOUT_MS), so those 504s are routine relay
+    // latency rather than product defects. Skipping them outright (the previous
+    // posture, inherited from api/rss-proxy.js) left relay degradation with no
+    // signal at all — nothing in scripts/ or .github/workflows/ watches it.
+    // `warning` keeps it queryable without counting toward error totals.
+    // `mode` is mandatory on both paths: the budgets differ by 7s, so without
+    // it a feed stall and a channel stall are the same Sentry issue.
+    void captureSilentError(error, {
+      tags: { route: 'api/telegram-feed', step: 'relay-fetch', mode },
+      ...(isTimeout
+        ? { level: 'warning', extra: { timeout_ms: TELEGRAM_RELAY_TIMEOUT_MS[mode] } }
+        : {}),
+    });
     return jsonResponse({
       error: isTimeout ? 'Relay timeout' : 'Relay request failed',
     }, isTimeout ? 504 : 502, { 'Cache-Control': 'no-store', ...corsHeaders });

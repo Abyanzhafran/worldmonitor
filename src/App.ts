@@ -8,6 +8,7 @@ import { openStockResearchOverlay } from '@/features/stock-research/stock-resear
 import { openExternalUrl } from '@/services/external-navigation';
 import { normalizeExclusiveChoropleths } from '@/components/resilience-choropleth-utils';
 import type { AppContext } from '@/app/app-context';
+import { applyVisibleMapDimension } from '@/app/map-dimension-control';
 import {
   REFRESH_INTERVALS,
   DEFAULT_PANELS,
@@ -71,6 +72,7 @@ import type { ParsedMapUrlState } from '@/utils';
 import { BreakingNewsBanner } from '@/components/BreakingNewsBanner';
 import { initBreakingNewsAlerts, destroyBreakingNewsAlerts } from '@/services/breaking-news-alerts';
 import { markLcpDebug } from '@/utils/lcp-debug';
+import { safeStorageGet, safeStorageSet } from '@/utils/safe-storage';
 import type { ServiceStatusPanel } from '@/components/ServiceStatusPanel';
 import type { MonitorPanel } from '@/components/MonitorPanel';
 import type { StablecoinPanel } from '@/components/StablecoinPanel';
@@ -99,6 +101,8 @@ import type { ConsumerPricesPanel } from '@/components/ConsumerPricesPanel';
 import type { DefensePatentsPanel } from '@/components/DefensePatentsPanel';
 import type { MacroTilesPanel } from '@/components/MacroTilesPanel';
 import type { FSIPanel } from '@/components/FSIPanel';
+import type { NqPulsePanel } from '@/components/NqPulsePanel';
+import type { NqCatalystsPanel } from '@/components/NqCatalystsPanel';
 import type { YieldCurvePanel } from '@/components/YieldCurvePanel';
 import type { EarningsCalendarPanel } from '@/components/EarningsCalendarPanel';
 import type { EconomicCalendarPanel } from '@/components/EconomicCalendarPanel';
@@ -120,6 +124,7 @@ import {
   CANADA_ARCTIC_OPT_IN_SOURCES,
   CANADA_DEPTH_OPT_IN_SOURCES,
   CRISIS_FLOOR_OPT_IN_SOURCES,
+  CURATED_REGIONAL_OPT_IN_SOURCES,
   computeDefaultDisabledSources,
   computeLegacyDefaultDisabledSources,
   FEEDS,
@@ -203,7 +208,7 @@ import {
 import { replaceRawI18nKeyPlaceholders } from '@/app/i18n-raw-key-healer';
 import { startAccountAuthHandoff } from '@/app/account-auth-handoff';
 import { TierPreferenceHandoff } from '@/app/tier-preference-handoff';
-import { resolveUserRegion, resolvePreciseUserCoordinates, type PreciseCoordinates } from '@/utils/user-location';
+import { initialRegionFromCache, resolveUserRegion, resolvePreciseUserCoordinates, type PreciseCoordinates } from '@/utils/user-location';
 import { showProBanner } from '@/components/ProBanner';
 import { getAuthState, initAuthState, subscribeAuthState } from '@/services/auth-state';
 import {
@@ -224,6 +229,7 @@ import {
   migrateCanadaArcticOptInsV6,
   migrateCanadaDepthOptInsV7,
   migrateCrisisDeskOptInsV8,
+  migrateCuratedRegionalOptInsV9,
 } from '@/utils/cloud-prefs-migrations';
 import {
   getConvexClient,
@@ -252,7 +258,13 @@ import { initSubscriptionWatch, destroySubscriptionWatch } from '@/services/bill
 import {
   FREE_TIER_FOLLOW_LIMIT,
   WM_FOLLOWED_COUNTRIES_CAP_DROP,
+  addCountry,
+  getFollowed,
   installFollowedCountriesAuthListener,
+  isFollowFeatureEnabled,
+  isFollowed,
+  removeCountry,
+  serviceEntitlementState,
 } from '@/services/followed-countries';
 import {
   capturePendingCheckoutIntentFromUrl,
@@ -292,6 +304,10 @@ export class App {
   private pendingDeepLinkSearchQuery: string | null = null;
   private chokepointDeepLinkTimer: number | null = null;
   private stockDeepLinkTimer: number | null = null;
+  // At most one automatic precise mobile recenter per startup (#7778). Set
+  // when the late position callback fires; cleared on destroy/re-init so a new
+  // App instance gets its own single attempt.
+  private autoGeoRecenterApplied = false;
 
   private panelLayout: PanelLayoutManager;
   private dataLoader: DataLoaderManager;
@@ -315,6 +331,13 @@ export class App {
   private unsubAiFlow: (() => void) | null = null;
   private unsubFreeTier: (() => void) | null = null;
   private unsubEntitlementPremiumLoaders: (() => void) | null = null;
+  /**
+   * Boot epoch for optional local-AI continuations (#7779). destroy() bumps
+   * it first so a stale detached continuation from a torn-down App can never
+   * download a model or restart the shared worker a fresh same-document App
+   * reuses. Continuations also check state.isDestroyed directly.
+   */
+  private localAiInitEpoch = 0;
   // Resolves once Phase-4 UI modules have initialised so WebMCP bindings can
   // await readiness before dispatching into UI managers. Avoids the startup
   // race where an agent discovers a tool via early registerTool and invokes it
@@ -345,6 +368,8 @@ export class App {
   private visiblePanelPrimeRaf: number | null = null;
   private viewportHydrationReady = false;
   private viewportHydrationReadyAt = 0;
+  /** Scroll/resize register at readiness; marks/primes arm only after fan-out. */
+  private viewportTriggersArmed = false;
   private followedCountriesCapDropToastTimer: number | null = null;
   private bootstrapHydrationState: BootstrapHydrationState = getBootstrapHydrationState();
   private cachedModeBannerEl: HTMLElement | null = null;
@@ -366,6 +391,9 @@ export class App {
   };
   private readonly handleViewportPrime = (event?: Event): void => {
     if (!this.viewportHydrationReady || this.state.isDestroyed) return;
+    // The catch-up scan after fan-out covers early viewport changes without
+    // replaying their scroll events as viewport-trigger marks. (#5876)
+    if (!this.viewportTriggersArmed) return;
     if (
       event &&
       this.viewportHydrationReadyAt > 0 &&
@@ -516,8 +544,9 @@ export class App {
 
     if (keySet.has(STORAGE_KEYS.mapMode)) {
       const mode = getStoredMapModePreference();
-      if (mode === 'globe') void this.state.map?.switchToGlobe();
-      else void this.state.map?.switchToFlat();
+      if (this.state.map) {
+        void applyVisibleMapDimension(this.state, mode === 'globe' ? '3d' : '2d');
+      }
     }
 
     if (
@@ -832,6 +861,14 @@ export class App {
     if (shouldPrime('fsi')) {
       const panel = this.state.panels['fsi'] as FSIPanel | undefined;
       if (panel) primeTask('fsi', () => panel.fetchData());
+    }
+    if (shouldPrime('nq-pulse')) {
+      const panel = this.state.panels['nq-pulse'] as NqPulsePanel | undefined;
+      if (panel) primeTask('nq-pulse', () => panel.fetchData());
+    }
+    if (shouldPrime('nq-catalysts')) {
+      const panel = this.state.panels['nq-catalysts'] as NqCatalystsPanel | undefined;
+      if (panel) primeTask('nq-catalysts', () => panel.fetchData());
     }
     if (shouldPrime('yield-curve')) {
       const panel = this.state.panels['yield-curve'] as YieldCurvePanel | undefined;
@@ -1425,6 +1462,27 @@ export class App {
         }
         localStorage.setItem(crisisDeskOptInKey, 'done');
       }
+      const curatedRegionalOptInKey = 'worldmonitor-curated-regional-optin-v1';
+      if (!safeStorageGet(curatedRegionalOptInKey)) {
+        const current = loadFromStorage<string[]>(STORAGE_KEYS.disabledFeeds, []);
+        const migrated = migrateCuratedRegionalOptInsV9({
+          [STORAGE_KEYS.disabledFeeds]: JSON.stringify(current),
+        }, CURATED_REGIONAL_OPT_IN_SOURCES);
+        const rawUpdated = migrated[STORAGE_KEYS.disabledFeeds];
+        let persisted = true;
+        if (typeof rawUpdated === 'string') {
+          let updated: unknown;
+          try { updated = JSON.parse(rawUpdated); } catch { updated = null; }
+          if (
+            Array.isArray(updated)
+            && updated.every((name): name is string => typeof name === 'string')
+            && JSON.stringify(updated) !== JSON.stringify(current)
+          ) {
+            persisted = saveToStorage(STORAGE_KEYS.disabledFeeds, updated);
+          }
+        }
+        if (persisted) safeStorageSet(curatedRegionalOptInKey, 'done');
+      }
       // Locale boost: additively enable locale-matched sources (runs once per locale).
       // Reads the explicit-choice key (`wm-locale-explicit`, written by Settings →
       // Language) before falling back to navigator. Mirrors the i18n.ts:99
@@ -1520,6 +1578,8 @@ export class App {
     this.dataLoader = new DataLoaderManager(this.state, {
       renderCriticalBanner: (postures) => this.panelLayout.renderCriticalBanner(postures),
       refreshOpenCountryBrief: () => this.countryIntel.refreshOpenBrief(),
+      refreshOpenCountryMilitary: () => this.countryIntel.refreshOpenMilitaryActivity(),
+      refreshOpenCountryTimeline: () => this.countryIntel.refreshOpenTimeline(),
     });
 
     this.panelLayout = new PanelLayoutManager(this.state, {
@@ -2144,6 +2204,109 @@ export class App {
           () => this.eventHandlers.openMissionPresetPickerForWebMcp(),
         );
       },
+      listFollowedCountries: async (execution) => {
+        await this.waitForDashboardReady(false, execution?.signal);
+        throwIfWebMcpAborted(execution?.signal);
+        if (this.state.isDestroyed) {
+          throw new DashboardBindingError('app_destroyed', 'Dashboard is no longer available.');
+        }
+        const access = serviceEntitlementState();
+        const countries = getFollowed();
+        return {
+          ok: true,
+          enabled: isFollowFeatureEnabled(),
+          countries,
+          count: countries.length,
+          access,
+          limit: access === 'free' ? FREE_TIER_FOLLOW_LIMIT : null,
+        };
+      },
+      setCountryFollowed: async (iso2, followed, execution) => {
+        await this.waitForDashboardReady(false, execution?.signal);
+        throwIfWebMcpAborted(execution?.signal);
+        if (this.state.isDestroyed) {
+          throw new DashboardBindingError('app_destroyed', 'Dashboard is no longer available.');
+        }
+        if (typeof followed !== 'boolean') {
+          return {
+            ok: false,
+            status: 'invalid',
+            reason: 'malformed_arguments',
+            message: 'followed must be a boolean.',
+          };
+        }
+        const code = typeof iso2 === 'string' ? iso2.trim().toUpperCase() : '';
+        const wasFollowed = isFollowed(code);
+        const result = await (followed ? addCountry(code) : removeCountry(code));
+        throwIfWebMcpAborted(execution?.signal);
+        if (result.ok) {
+          return {
+            ok: true,
+            status: wasFollowed === followed ? 'unchanged' : 'accepted',
+            iso2: code,
+            followed,
+            message: wasFollowed === followed
+              ? `Country ${code} already has the requested followed state.`
+              : `Country ${code} followed state change was accepted.`,
+          };
+        }
+        switch (result.reason) {
+          case 'INVALID_INPUT':
+            return {
+              ok: false,
+              status: 'invalid',
+              reason: 'invalid_country',
+              followed,
+              message: 'iso2 must identify a supported country.',
+            };
+          case 'FREE_CAP':
+            return {
+              ok: false,
+              status: 'denied',
+              iso2: code,
+              followed,
+              reason: 'free_cap',
+              limit: result.limit ?? FREE_TIER_FOLLOW_LIMIT,
+              message: 'The free followed-country limit is already in use.',
+            };
+          case 'ENTITLEMENT_LOADING':
+            return {
+              ok: false,
+              status: 'denied',
+              iso2: code,
+              followed,
+              reason: 'entitlement_loading',
+              message: 'Account access is still loading. Try again after it settles.',
+            };
+          case 'HANDOFF_PENDING':
+            return {
+              ok: false,
+              status: 'denied',
+              iso2: code,
+              followed,
+              reason: 'handoff_pending',
+              message: 'Followed-country state is still syncing. Try again after it settles.',
+            };
+          case 'STORAGE_FULL':
+            return {
+              ok: false,
+              status: 'denied',
+              iso2: code,
+              followed,
+              reason: 'storage_full',
+              message: 'The browser could not save the followed-country state.',
+            };
+          case 'DISABLED':
+            return {
+              ok: false,
+              status: 'denied',
+              iso2: code,
+              followed,
+              reason: 'disabled',
+              message: 'Followed countries are not available on this dashboard.',
+            };
+        }
+      },
       getPanelLayout: async (execution) => {
         await this.waitForDashboardReady(false, execution?.signal);
         throwIfWebMcpAborted(execution?.signal);
@@ -2239,28 +2402,69 @@ export class App {
     const srH1 = document.querySelector('body > h1');
     if (srH1) srH1.textContent = t('shell.documentTitle');
     const aiFlow = getAiFlowSettings();
+    // Optional local AI initializes independently of the dashboard critical
+    // path (#7779): boot proceeds to layout, event handlers and basic panels
+    // immediately; the worker settles in the background. The epoch guards
+    // detached continuations: disable/destroy during capability detection,
+    // worker startup or model restoration resolves late continuations as false
+    // instead of downloading models or restarting for a dead app generation.
+    // destroy() bumps the epoch first, so a stale continuation from a
+    // torn-down App can never load a model into the shared worker a fresh
+    // same-document App reuses. The failed/unavailable path leaves the
+    // dashboard usable; explicit AI operations fail visibly through the
+    // manager's readiness promises instead.
+    const localAiEpoch = this.localAiInitEpoch;
+    // Same authority as before: browserModel on web, unconditional on desktop.
+    // Headline Memory needs no extra disjunct — on web its effective gate
+    // already requires browserModel, on desktop the runtime check covers it.
     if (aiFlow.browserModel || isDesktopRuntime()) {
-      await mlWorker.init();
-      if (BETA_MODE) mlWorker.loadModel('summarization-beta').catch(() => { });
+      void (async () => {
+        try {
+          const ready = await mlWorker.init();
+          if (this.localAiInitEpoch !== localAiEpoch || this.state.isDestroyed) return;
+          if (!ready) return;
+          if (!getAiFlowSettings().browserModel && !isDesktopRuntime()) return;
+          if (BETA_MODE) mlWorker.loadModel('summarization-beta').catch(() => { });
+        } catch {
+          // Worker failure must not break boot; explicit AI operations fail
+          // visibly through the manager's readiness promises instead.
+        }
+      })();
     }
 
     // Headline Memory requires Browser Local Model to be ON — `isHeadlineMemoryEnabled()`
     // ANDs both flags. Without this gate, leaving Headline Memory on while turning
     // Browser Local Model off would silently download/run an embeddings model the user
-    // opted out of via the parent toggle.
+    // opted out of via the parent toggle. Joins the detached boot continuation
+    // above (shared in-flight init, no duplicate worker): on slow workers this
+    // waits without blocking layout or panels.
     if (isHeadlineMemoryEnabled()) {
-      mlWorker.init().then(ok => {
-        if (ok) mlWorker.loadModel('embeddings').catch(() => { });
+      void mlWorker.whenReady('app-boot:headline-memory').then((ready) => {
+        if (!ready) return;
+        if (this.localAiInitEpoch !== localAiEpoch || this.state.isDestroyed) return;
+        if (!isHeadlineMemoryEnabled()) return;
+        mlWorker.loadModel('embeddings').catch(() => { });
       }).catch(() => { });
     }
 
     this.unsubAiFlow = subscribeAiFlowChange((key) => {
+      // Detached continuations re-read current settings and the app lifetime
+      // before requesting a model: a toggle that went away while the worker
+      // was starting must not leave a model downloading (#7779).
       if (key === 'browserModel') {
         const s = getAiFlowSettings();
         if (s.browserModel) {
-          mlWorker.init().then(ok => {
+          // init(), not whenReady(): cold-boot with the toggle off leaves the
+          // manager disabled, and whenReady() on a disabled manager resolves
+          // false without starting anything — the enable path must START the
+          // worker (#7796 review P1). init() is idempotent over an already
+          // running worker, so a racing boot continuation cannot duplicate it.
+          const epoch = this.localAiInitEpoch;
+          void mlWorker.init().then((ready) => {
+            if (!ready) return;
+            if (this.localAiInitEpoch !== epoch || this.state.isDestroyed) return;
             // Re-honor Headline Memory's persisted value on parent re-enable.
-            if (ok && isHeadlineMemoryEnabled()) {
+            if (isHeadlineMemoryEnabled()) {
               mlWorker.loadModel('embeddings').catch(() => { });
             }
           }).catch(() => { });
@@ -2273,8 +2477,16 @@ export class App {
       }
       if (key === 'headlineMemory') {
         if (isHeadlineMemoryEnabled()) {
-          mlWorker.init().then(ok => {
-            if (ok) mlWorker.loadModel('embeddings').catch(() => { });
+          // init(), not whenReady(): Headline Memory can be toggled on while
+          // the manager was never started (web boot with browserModel off) —
+          // waiting would resolve false without starting anything, and its
+          // effective gate already implies the parent toggle (#7796 review P1).
+          const epoch = this.localAiInitEpoch;
+          void mlWorker.init().then((ready) => {
+            if (!ready) return;
+            if (this.localAiInitEpoch !== epoch || this.state.isDestroyed) return;
+            if (!isHeadlineMemoryEnabled()) return;
+            mlWorker.loadModel('embeddings').catch(() => { });
           }).catch(() => { });
         } else {
           mlWorker.unloadModel('embeddings').catch(() => { });
@@ -2385,8 +2597,10 @@ export class App {
         // market-brief / market-implications because their schedulers are
         // gated to SITE_VARIANT === 'finance'). The audit-locking regression
         // test in tests/premium-loaders-fan-out-coverage.test.mts asserts
-        // every `hasPremiumAccess() && shouldLoad('X')` gate in data-loader.ts
+        // every premium gate in data-loader.ts
         // has a matching call here.
+        void this.dataLoader.loadPhysicalPremiumComparison();
+        void this.dataLoader.loadMineralProduction();
         void this.dataLoader.loadTradePolicy();
         void this.dataLoader.loadStockAnalysis();
         void this.dataLoader.loadStockBacktest();
@@ -2398,6 +2612,8 @@ export class App {
       } else if (!nowPremium && hadPremium) {
         // Pro data must not remain visible or available from the client cache
         // after sign-out, expiry, or downgrade.
+        this.dataLoader.clearPhysicalPremiumComparison();
+        this.dataLoader.clearMineralProduction();
         void this.dataLoader.clearGlobalTenders();
       }
       _prevHadPremium = nowPremium;
@@ -2588,8 +2804,22 @@ export class App {
         ? resolvePreciseUserCoordinates(5000)
         : Promise.resolve(null);
 
-    const resolvedRegion = await resolveUserRegion();
-    this.state.resolvedLocation = resolvedRegion;
+    // Readiness must not wait for permission/position work (#7778): seed the
+    // initial region synchronously from usable cached region/coordinates, else
+    // timezone, else global (desktop map startup stays global because layout
+    // reads this value before the background refinement below can land), then
+    // let the shared in-flight lookup refine it in the background without
+    // gating layout or event-handler setup. Desktop keeps its prior
+    // region-ranked predictions via the same background path; only the map
+    // view and the precise recenter stay mobile-only.
+    this.state.resolvedLocation = initialRegionFromCache(this.state.isMobile);
+    void resolveUserRegion().then(
+      (region) => {
+        if (this.state.isDestroyed) return;
+        this.applyLateGeoRegion(region);
+      },
+      () => { /* failed location keeps the synchronous fallback usable */ },
+    );
 
     // Phase 1: Layout (creates map + panels — they'll find hydrated data).
     // init() is async so the dynamic MapContainer import can resolve before
@@ -2603,10 +2833,27 @@ export class App {
     window.addEventListener('online', this.handleConnectivityChange);
     window.addEventListener('offline', this.handleConnectivityChange);
 
-    const mobileGeoCoords = await geoCoordsPromise;
-    if (mobileGeoCoords && this.state.map) {
-      this.state.map.setCenter(mobileGeoCoords.lat, mobileGeoCoords.lon, 6);
-    }
+    // The single automatic precise recenter for this startup (mobile only,
+    // never desktop) runs as background work so a slow position lookup never
+    // blocks layout, event-handler, or data readiness (#7778). It fires only
+    // while the app is alive and no explicit URL view/coordinates or
+    // user/programmatic navigation has claimed the camera since layout: the
+    // authority snapshot below is taken after map construction, and any later
+    // pan/zoom (humanViewportInteractionToken), preset, search, or country
+    // navigation supersedes it.
+    const recenterAuthorityToken = this.state.map?.getViewportAuthorityToken() ?? 0;
+    const urlClaimedCamera = this.state.initialUrlState != null && (
+      this.state.initialUrlState.view !== undefined ||
+      (this.state.initialUrlState.lat !== undefined && this.state.initialUrlState.lon !== undefined)
+    );
+    void geoCoordsPromise.then((mobileGeoCoords) => {
+      if (!mobileGeoCoords || this.state.isDestroyed) return;
+      if (!this.state.isMobile || this.autoGeoRecenterApplied || urlClaimedCamera) return;
+      const map = this.state.map;
+      if (!map || map.getViewportAuthorityToken() !== recenterAuthorityToken) return;
+      this.autoGeoRecenterApplied = true;
+      map.setCenter(mobileGeoCoords.lat, mobileGeoCoords.lon, 6);
+    });
 
     // Happy variant: pre-populate panels from persistent cache for instant render
     if (SITE_VARIANT === 'happy') {
@@ -2710,15 +2957,11 @@ export class App {
     // (3.5 s browser / 8.5 s desktop). (#4512)
     await slowTierReady;
     if (this.state.isDestroyed) return;
-    this.viewportHydrationReadyAt = typeof performance !== 'undefined' &&
-      typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
+    // Open readiness so deferred panel mounts can call primeVisiblePanelData,
+    // but keep scroll/resize triggers disarmed until the fan-out finishes.
+    // Scrolls before readiness (and layout thrash during fan-out after an early
+    // scroll) are covered by the fan-out's current-viewport scan. (#5876)
     this.viewportHydrationReady = true;
-    // Register viewport triggers only after the slow bootstrap tier settles.
-    // Scrolls before this point are covered by the initial fan-out below, which
-    // scans the current viewport after readiness. Registering earlier lets a
-    // captured descendant scroll consume hydration keys before they arrive.
     window.addEventListener('scroll', this.handleViewportPrime, {
       passive: true,
       capture: true,
@@ -2740,6 +2983,17 @@ export class App {
       this.primeVisiblePanelData(),
     ]);
     markLcpDebug('wm:data:initial-fanout-complete');
+    if (this.state.isDestroyed) return;
+    // Stamp + arm only after fan-out so an early scroll cannot schedule or
+    // replay a viewport-trigger mark across readiness. (#5876)
+    this.viewportHydrationReadyAt = typeof performance !== 'undefined' &&
+      typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    this.viewportTriggersArmed = true;
+    // The viewport can move after the initial synchronous geometry scan while
+    // other fan-out requests are pending. Hydrate its current position once.
+    void this.primeVisiblePanelData();
     if (import.meta.env.VITE_E2E === '1') {
       document.documentElement.dataset.wmInitialDataReady = 'true';
     }
@@ -2779,6 +3033,22 @@ export class App {
       panel_count: Object.keys(this.state.panels).length,
     });
     this.eventHandlers.setupPanelViewTracking();
+  }
+
+  /**
+   * Apply a late-arriving geolocation region without another network request
+   * solely for geolocation (#7778). Updates prediction prioritization from the
+   * kept candidate set using the same regional match rules; the failed-location
+   * path keeps the synchronous fallback usable without a map jump. Never
+   * late-recenters desktop. Guarded on isDestroyed so callbacks from a
+   * destroyed (re-initialized) App cannot move the new map or its panels.
+   */
+  private applyLateGeoRegion(region: string): void {
+    if (this.state.isDestroyed) return;
+    if (!region || region === 'global') return;
+    if (region === this.state.resolvedLocation) return;
+    this.state.resolvedLocation = region as AppContext['resolvedLocation'];
+    this.dataLoader.reprioritizeLateRegionPredictions(region);
   }
 
   private shouldDeferTierPreferenceReconciliation(): boolean {
@@ -3243,10 +3513,15 @@ export class App {
   }
 
   public destroy(): void {
+    // Invalidate optional local-AI continuations FIRST: any detached
+    // mlWorker.whenReady() callback captured below terminates instead of
+    // downloading models or restarting for a destroyed app (#7779).
+    this.localAiInitEpoch += 1;
     this.state.isDestroyed = true;
     this.latestSearchAdsb = [];
     this.latestSearchMilitary = [];
     this.latestSearchAdsbUpdatedAt = 0;
+    this.autoGeoRecenterApplied = false;
     this.resolveAppDestroyed();
     // Cancel in-flight App-owned waits before DOM teardown can mutate the
     // document and wake a waiter that still closes over this instance.
@@ -3260,6 +3535,7 @@ export class App {
     this.pendingPreferenceHandoffGeneration = undefined;
     this.viewportHydrationReady = false;
     this.viewportHydrationReadyAt = 0;
+    this.viewportTriggersArmed = false;
     cancelBootstrapSlowTier();
     window.removeEventListener('scroll', this.handleViewportPrime, { capture: true });
     window.removeEventListener('resize', this.handleViewportPrime);
@@ -3327,7 +3603,7 @@ export class App {
       this.state.findingsBadge = new IntelligenceGapBadge();
       this.state.findingsBadge.setOnSignalClick((signal) => {
         if (this.state.countryBriefPage?.isVisible()) return;
-        if (localStorage.getItem('wm-settings-open') === '1') return;
+        if (safeStorageGet('wm-settings-open') === '1') return;
         void this.state.ensureSignalModal()
           .then((signalModal) => {
             if (!this.state.isDestroyed) signalModal.showSignal(signal);
@@ -3338,7 +3614,7 @@ export class App {
       });
       this.state.findingsBadge.setOnAlertClick((alert) => {
         if (this.state.countryBriefPage?.isVisible()) return;
-        if (localStorage.getItem('wm-settings-open') === '1') return;
+        if (safeStorageGet('wm-settings-open') === '1') return;
         void this.state.ensureSignalModal()
           .then((signalModal) => {
             if (!this.state.isDestroyed) signalModal.showAlert(alert);
@@ -3876,6 +4152,18 @@ export class App {
       () => (this.state.panels['fsi'] as FSIPanel).fetchData(),
       REFRESH_INTERVALS.fsi,
       () => this.isPanelNearViewport('fsi')
+    );
+    this.refreshScheduler.scheduleRefresh(
+      'nq-pulse',
+      () => (this.state.panels['nq-pulse'] as NqPulsePanel).fetchData(),
+      REFRESH_INTERVALS.nqPulse,
+      () => this.isPanelNearViewport('nq-pulse')
+    );
+    this.refreshScheduler.scheduleRefresh(
+      'nq-catalysts',
+      () => (this.state.panels['nq-catalysts'] as NqCatalystsPanel).fetchData(),
+      REFRESH_INTERVALS.nqCatalysts,
+      () => this.isPanelNearViewport('nq-catalysts')
     );
     this.refreshScheduler.scheduleRefresh(
       'yield-curve',

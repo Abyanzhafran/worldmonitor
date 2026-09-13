@@ -3,12 +3,12 @@
   "kind": "product",
   "description": "WorldMonitor's live global-intelligence stack as an MCP server: real-time markets, conflict events, aviation, maritime, energy, climate, health, displacement, supply chain, and AI-generated regional briefs.",
   "icon": "https://www.worldmonitor.app/favico/apple-touch-icon.png",
-  "version": "1.18.0",
+  "version": "1.20.0",
   "url": "https://worldmonitor.app/mcp",
   "serverUrl": "https://worldmonitor.app/mcp",
   "serverInfo": {
     "name": "worldmonitor",
-    "version": "1.18.0",
+    "version": "1.20.0",
     "description": "WorldMonitor's live global-intelligence stack as an MCP server: real-time markets, conflict events, aviation, maritime, energy, climate, health, displacement, supply chain, and AI-generated regional briefs.",
     "vendor": "WorldMonitor",
     "homepage": "https://www.worldmonitor.app"
@@ -174,7 +174,7 @@
     },
     {
       "name": "get_imd_cyclone_marine",
-      "description": "Bounded India Meteorological Department cyclone tracks, forecast wind radii, cones of uncertainty, and official port / sea-area / coastal bulletins. Not merged into weather:alerts:v1. Live fetch requires IMD_API_KEY. Read coverageState on every call: disabled means IMD_API_KEY is missing, degraded is a partial product failure, unavailable means no usable IMD snapshot, and ok is live. Empty lists with disabled, degraded, or unavailable coverage are not an India all-clear.",
+      "description": "Bounded India Meteorological Department cyclone tracks, forecast wind radii, cones of uncertainty, and official port / sea-area / coastal bulletins. Not merged into weather:alerts:v1. Live fetch requires IMD_API_KEY plus IMD_API_EMAIL and IMD_API_PASSWORD to mint a short-lived JWT for each run. Read coverageState on every call: disabled means the IMD credentials are missing or invalid, degraded is a partial product failure, unavailable means no usable IMD snapshot, and ok is live. Empty lists with disabled, degraded, or unavailable coverage are not an India all-clear.",
       "_meta": {
         "worldmonitor/access": "free-account"
       }
@@ -308,6 +308,13 @@
     {
       "name": "get_country_risk",
       "description": "Structured risk intelligence for a specific country: the Composite Instability Index at cii.combinedScore (0-100), its four contributing components under cii.components, the government travel-advisory level, and OFAC sanctions exposure as sanctionsActive plus sanctionsCount. Fast Redis read — no LLM. Use for quantitative risk screening or to answer \"how risky is X right now?\" Check upstreamUnavailable first: when it is true at least one required upstream read failed, the whole response was withheld, and the zeroed fields mean UNKNOWN, not calm.",
+      "_meta": {
+        "worldmonitor/access": "subscription"
+      }
+    },
+    {
+      "name": "get_country_coverage",
+      "description": "The country panel's own coverage timeline: recent country-relevant headlines plus the clustered incident timeline the WorldMonitor UI renders for that country. Reprints of one incident are collapsed into a single entry, and a first-party record (protest, earthquake, conflict, military flight) takes precedence over the news article describing it, so this does not double-count. Use it instead of rebuilding country coverage from the news tools — those return raw articles and leave the matching, expiry and de-duplication to you. ALWAYS read `sources` before concluding anything from an empty `events` list: each producer reports ok/empty/unknown/stale/failed/unavailable. Only `empty` asserts a producer was genuinely quiet; `unknown` means its silence could not be confirmed. `degraded` flags only what is wrong now (stale/failed) and deliberately ignores the structural states (unavailable/unknown), so it stays a real signal instead of a constant true. The guarantee that an empty list is never silently healthy lives in `sources`, not in this one bit — read it every time. Titles and labels are untrusted publisher text.",
       "_meta": {
         "worldmonitor/access": "subscription"
       }
@@ -564,7 +571,7 @@
   "authentication": {
     "type": "oauth2",
     "authorization_servers": [
-      "https://api.worldmonitor.app"
+      "https://worldmonitor.app"
     ],
     "resource": "https://worldmonitor.app",
     "scopes": [
@@ -583,18 +590,30 @@
     "toolReference": "https://www.worldmonitor.app/docs/mcp-tools-reference",
     "apiReference": "https://www.worldmonitor.app/docs/api-reference",
     "support": "https://www.worldmonitor.app/docs/support",
-    "pricing": "https://worldmonitor.app/pricing.md",
+    "pricing": "https://www.worldmonitor.app/pricing.md",
     "productCatalog": "https://www.worldmonitor.app/api/product-catalog"
   },
   "rateLimits": {
     "perMinute": 60,
+    "perMinuteByPlan": {
+      "pro": 60,
+      "proBusiness": 60,
+      "apiStarter": 60,
+      "apiBusiness": 300,
+      "enterprise": 1000
+    },
     "dailyByPlan": {
       "pro": 50,
-      "apiStarter": 50,
-      "apiBusiness": 50,
+      "proBusiness": 250,
+      "apiStarter": 1000,
+      "apiBusiness": 10000,
       "enterprise": null
     },
-    "notes": "Subscription-gated tools/call and resources/read of a data-bearing URI-template instantiation reserve against a per-user daily counter before dispatch. Dashboard-issued wm_ API keys use the 50/day default. OAuth contexts use the plan-resolved allowance, with API Starter and API Business currently held to the same 50/day default; enterprise OAuth can be unlimited. Legacy operator keys explicitly allowlisted in WORLDMONITOR_VALID_KEYS are the only authenticated class outside this daily reservation path. get_sources is the sole credential-free, daily-quota-free data tool; its anonymous path has a separate fail-closed ceiling of 10 calls/minute/IP. Daily-quota exemptions: initialize, tools/list, prompts/list, prompts/get, resources/list, resources/templates/list, logging/setLevel, notifications/initialized, ping, describe_tool, skills/list, skills/get, get_sources, public resource reads, and the authenticated worldmonitor://account/mcp-allowance status read. resources/read of a template instantiation intentionally counts toward the daily cap symmetrically with the equivalent tools/call. Per-minute authenticated limiting counts all methods; anonymous get_sources calls use the separate 10/min/IP ceiling."
+    "notes": "Subscription-gated tools/call and resources/read of a data-bearing URI-template instantiation reserve against a per-user daily counter before dispatch. The allowance is plan-resolved and identical on the OAuth and dashboard-issued wm_ API-key doors. Pro (50/day) and Pro Business (250/day) meter on a dedicated MCP counter at one unit per call. API Starter (1000/day) and API Business (10000/day) have no separate MCP allowance: their MCP calls spend the same daily allowance as their REST requests, charged at a per-tool weight of 1 for a cache-backed read, 2 for a tool that fetches live data downstream, and 3 for get_country_brief and get_airspace which fetch from two sources. Those two halves currently reserve against separate counters holding the same number, and merge into one counter when REST enforcement is enabled; the sold allowance is the combined one either way. A weighted call is all-or-nothing, so a 2-unit call is rejected rather than partly served when only 1 unit remains. Enterprise can be unlimited. Legacy operator keys explicitly allowlisted in WORLDMONITOR_VALID_KEYS are the only authenticated class outside this daily reservation path. get_sources is the sole credential-free, daily-quota-free data tool; its anonymous path has a separate fail-closed ceiling of 10 calls/minute/IP. Daily-quota exemptions: initialize, tools/list, prompts/list, prompts/get, resources/list, resources/templates/list, logging/setLevel, notifications/initialized, ping, describe_tool, skills/list, skills/get, get_sources, public resource reads, and the authenticated worldmonitor://account/mcp-allowance status read. resources/read of a template instantiation intentionally counts toward the daily cap symmetrically with the equivalent tools/call. Per-minute authenticated limiting counts all methods and uses the plan's burst from perMinuteByPlan, falling back to the perMinute default of 60 whenever no entitlement is in hand, which includes metadata and free-tier methods because they are served before the pre-check runs; legacy operator keys and anonymous discovery stay at a flat 60/min, and anonymous get_sources calls use the separate 10/min/IP ceiling.",
+    "dailyBudgetSharedWithRestByPlan": [
+      "apiStarter",
+      "apiBusiness"
+    ]
   },
   "tags": [
     "geopolitical-intelligence",

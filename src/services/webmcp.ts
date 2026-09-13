@@ -37,8 +37,10 @@
 //  27. list_mission_presets()     — lists bundled mission presets for this monitor.
 //  28. apply_mission_preset()     — applies a bundled preset atomically.
 //  29. open_mission_picker()      — opens the mission preset picker.
-//  30. get_access_context()       — reads signed-out / loading / signed-in access.
-//  31. open_sign_in()             — opens the existing Clerk sign-in dialog.
+//  30. list_followed_countries()  — reads the current followed-country list.
+//  31. set_country_followed()     — follows or unfollows one country.
+//  32. get_access_context()       — reads signed-out / loading / signed-in access.
+//  33. open_sign_in()             — opens the existing Clerk sign-in dialog.
 //
 // No tool is conditionally registered. Live controls re-check auth and
 // entitlement through the agent-bus applier on every invocation, so a single
@@ -195,6 +197,14 @@ export interface WebMcpAppBindings {
   openMissionPicker(
     options?: WebMcpExecutionOptions,
   ): WebMcpNavigationResult | Promise<WebMcpNavigationResult>;
+  listFollowedCountries(
+    options?: WebMcpExecutionOptions,
+  ): FollowedCountryListResult | Promise<FollowedCountryListResult>;
+  setCountryFollowed(
+    iso2: unknown,
+    followed: unknown,
+    options?: WebMcpExecutionOptions,
+  ): FollowedCountryMutationResult | Promise<FollowedCountryMutationResult>;
   getPanelLayout(
     options?: WebMcpExecutionOptions,
   ): PanelLayoutSnapshot | Promise<PanelLayoutSnapshot>;
@@ -239,6 +249,37 @@ export interface ApplyMissionPresetResult {
     enabled: string[];
   };
   reason?: MissionPresetApplyDenyReason;
+  message: string;
+}
+
+export interface FollowedCountryListResult {
+  ok: true;
+  enabled: boolean;
+  countries: string[];
+  count: number;
+  access: 'free' | 'pro' | 'loading';
+  limit: number | null;
+}
+
+export const FOLLOWED_COUNTRY_MUTATION_REASONS = [
+  'malformed_arguments',
+  'disabled',
+  'invalid_country',
+  'free_cap',
+  'entitlement_loading',
+  'handoff_pending',
+  'storage_full',
+] as const;
+
+export type FollowedCountryMutationReason = typeof FOLLOWED_COUNTRY_MUTATION_REASONS[number];
+
+export interface FollowedCountryMutationResult {
+  ok: boolean;
+  status: 'accepted' | 'unchanged' | 'denied' | 'invalid';
+  iso2?: string;
+  followed?: boolean;
+  reason?: FollowedCountryMutationReason;
+  limit?: number;
   message: string;
 }
 
@@ -430,8 +471,16 @@ type DashboardWebMcpTool = Omit<WebMCP.ModelContextTool, 'execute'> & {
   ) => Promise<unknown> | unknown;
 };
 
+interface LegacyWebMcpProvider {
+  registerTool?: (tool: DashboardWebMcpTool) => void | Promise<void>;
+  unregisterTool?: (name: string) => void;
+  provideContext?: (context: { tools: DashboardWebMcpTool[] }) => void | Promise<void>;
+  clearContext?: () => void;
+}
+
 interface WebMcpRegistrationRuntime {
   document?: Pick<Document, 'modelContext' | 'addEventListener'>;
+  navigator?: { modelContext?: LegacyWebMcpProvider };
   window?: Pick<Window, 'addEventListener'>;
   track?: WebMcpAnalytics;
 }
@@ -515,6 +564,8 @@ export const WEBMCP_TOOL_CANCELLATION_POLICY: Readonly<
   [WEBMCP_SPA_TOOL.listMissionPresets]: 'read-only',
   [WEBMCP_SPA_TOOL.applyMissionPreset]: 'cancellation-required',
   [WEBMCP_SPA_TOOL.openMissionPicker]: 'view-state',
+  [WEBMCP_SPA_TOOL.listFollowedCountries]: 'read-only',
+  [WEBMCP_SPA_TOOL.setCountryFollowed]: 'cancellation-required',
 });
 
 /** Tools the page refuses to run without a target-side AbortSignal. */
@@ -528,6 +579,10 @@ const MAX_SEARCH_RESULTS = 10;
 const DEFAULT_SEARCH_RESULTS = 8;
 const MAX_OUTPUT_CHARS = WEBMCP_TOOL_BUDGETS.outputJsonChars;
 const TARGET_OUTPUT_CHARS = 1_400;
+// Navigation results fill leftover dashboard context into a tighter envelope
+// than the catalog ceiling. Raising `outputJsonChars` for list_mission_presets
+// must not let a hostile 200-id context grow toward that larger cap.
+const NAVIGATION_MAX_OUTPUT_CHARS = 1_500;
 export const DASHBOARD_SEARCH_OUTPUT_TARGET_CHARS = 1_400;
 export const DASHBOARD_SEARCH_TYPE_MAX_CHARS = 32;
 export const DASHBOARD_SEARCH_TITLE_MAX_CHARS = 160;
@@ -590,6 +645,8 @@ const TOOL_FAILURE_MESSAGES: Record<WebMcpSpaToolName, string> = {
   list_mission_presets: 'World Monitor could not list mission presets.',
   apply_mission_preset: 'World Monitor could not apply that mission preset.',
   open_mission_picker: 'World Monitor could not open the mission picker.',
+  list_followed_countries: 'World Monitor could not list followed countries.',
+  set_country_followed: 'World Monitor could not update that followed country.',
   get_access_context: 'World Monitor could not read access context.',
   open_sign_in: 'World Monitor could not open sign-in.',
 };
@@ -820,6 +877,7 @@ const VALIDATION_DENIAL_REASONS = new Set([
   'unknown_monitor',
   'unknown_panel',
   'unknown_country',
+  'invalid_country',
 ]);
 const ENTITLEMENT_DENIAL_REASONS = new Set([
   'panel_not_entitled',
@@ -827,6 +885,7 @@ const ENTITLEMENT_DENIAL_REASONS = new Set([
   'layer_not_entitled',
   'tab_cap',
   'preset_not_entitled',
+  'free_cap',
 ]);
 const STALE_DENIAL_REASONS = new Set([
   'invalid_or_expired_key',
@@ -1290,6 +1349,55 @@ function boundApplyMissionPresetResult(result: ApplyMissionPresetResult): ApplyM
   };
 }
 
+const FOLLOWED_COUNTRY_MUTATION_REASON_SET = new Set(FOLLOWED_COUNTRY_MUTATION_REASONS);
+
+function boundFollowedCountryList(result: FollowedCountryListResult): FollowedCountryListResult {
+  const countries = normalizeIdentifiers(result.countries, 2)
+    .filter((country) => /^[A-Z]{2}$/.test(country))
+    .slice(0, 249);
+  const access = result.access === 'pro' || result.access === 'loading'
+    ? result.access
+    : 'free';
+  return {
+    ok: true,
+    enabled: result.enabled === true,
+    countries,
+    count: countries.length,
+    access,
+    limit: typeof result.limit === 'number'
+      ? Math.max(0, Math.floor(boundedNumber(result.limit)))
+      : null,
+  };
+}
+
+function boundFollowedCountryMutation(
+  result: FollowedCountryMutationResult,
+): FollowedCountryMutationResult {
+  const status = result.status === 'accepted'
+    || result.status === 'unchanged'
+    || result.status === 'invalid'
+    ? result.status
+    : 'denied';
+  const ok = result.ok === true && (status === 'accepted' || status === 'unchanged');
+  const reason = result.reason && FOLLOWED_COUNTRY_MUTATION_REASON_SET.has(result.reason)
+    ? result.reason
+    : undefined;
+  return {
+    ok,
+    status: ok ? status : status === 'invalid' ? 'invalid' : 'denied',
+    ...(typeof result.iso2 === 'string' && /^[A-Z]{2}$/.test(result.iso2)
+      ? { iso2: result.iso2 }
+      : {}),
+    ...(typeof result.followed === 'boolean' ? { followed: result.followed } : {}),
+    ...(!ok && reason ? { reason } : {}),
+    ...(!ok && typeof result.limit === 'number'
+      ? { limit: Math.max(0, Math.floor(boundedNumber(result.limit))) }
+      : {}),
+    message: boundedText(result.message, 200)
+      || (ok ? 'Followed-country preference accepted.' : 'Followed-country change denied.'),
+  };
+}
+
 const PANEL_LAYOUT_DENIAL_REASON_SET: ReadonlySet<string> = new Set(
   PANEL_LAYOUT_DENIAL_REASONS,
 );
@@ -1590,12 +1698,12 @@ function boundDashboardNavigationResult(result: WebMcpNavigationResult): Record<
   };
   const envelopeChars = JSON.stringify(envelope).length;
   // `"context":{}` is already in the envelope; the empty object is 2 chars.
-  const contextBudget = Math.max(0, MAX_OUTPUT_CHARS - envelopeChars + 2);
+  const contextBudget = Math.max(0, NAVIGATION_MAX_OUTPUT_CHARS - envelopeChars + 2);
   const bounded = {
     ...envelope,
     context: boundDashboardContext(result.context ?? EMPTY_NAV_CONTEXT, contextBudget),
   };
-  if (JSON.stringify(bounded).length > MAX_OUTPUT_CHARS) {
+  if (JSON.stringify(bounded).length > NAVIGATION_MAX_OUTPUT_CHARS) {
     throw new SafeWebMcpError('Dashboard navigation result exceeded the safe output limit.');
   }
   return bounded;
@@ -2831,6 +2939,67 @@ export function buildWebMcpTools(
       }, trackEvent),
     },
     {
+      name: WEBMCP_SPA_TOOL.listFollowedCountries,
+      title: 'List Followed Countries',
+      description:
+        'Read the current followed-country list through the same anonymous or signed-in state used by the dashboard. Returns only ISO 3166-1 alpha-2 codes, access state, and the free-tier limit.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.listFollowedCountries, async (args, extra) => {
+        if (!hasOnlyOwnKeys(args, [])) {
+          throw new SafeWebMcpError(
+            'list_followed_countries does not accept arguments.',
+            'validation',
+          );
+        }
+        return boundFollowedCountryList(await app.listFollowedCountries(extra));
+      }, trackEvent, {
+        successMetadata: (_args, value) => ({
+          resultCount: (value as FollowedCountryListResult).countries.length,
+        }),
+      }),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.setCountryFollowed,
+      title: 'Set Country Followed',
+      description:
+        'Follow or unfollow one country through the dashboard service that owns ISO validation, access state, the free-tier cap, sign-in handoff, and storage. Idempotent for the requested state. Requires target-side cancellation because it persists state or writes to the signed-in account.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          iso2: {
+            type: 'string',
+            pattern: '^[A-Z]{2}$',
+            description: 'ISO 3166-1 alpha-2 country code, uppercase.',
+          },
+          followed: {
+            type: 'boolean',
+            description: 'True to follow the country; false to unfollow it.',
+          },
+        },
+        required: ['iso2', 'followed'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.setCountryFollowed, async (args, extra) => {
+        if (!hasOnlyOwnKeys(args, ['iso2', 'followed'])) {
+          return boundFollowedCountryMutation({
+            ok: false,
+            status: 'invalid',
+            reason: 'malformed_arguments',
+            message: 'set_country_followed accepts only iso2 and followed.',
+          });
+        }
+        return boundFollowedCountryMutation(
+          await app.setCountryFollowed(args.iso2, args.followed, extra),
+        );
+      }, trackEvent),
+    },
+    {
       name: WEBMCP_SPA_TOOL.getAccessContext,
       title: 'Get Access Context',
       description:
@@ -2902,7 +3071,7 @@ function registrationFailureReason(error: unknown): RegistrationFailureReason | 
 }
 
 function observeRegistration(
-  provider: WebMCP.ModelContext,
+  provider: Pick<WebMCP.ModelContext, 'registerTool'>,
   tool: DashboardWebMcpTool,
   controller: AbortController,
   trackEvent: WebMcpAnalytics,
@@ -2930,10 +3099,11 @@ function observeRegistration(
 }
 
 function startRegistration(
-  provider: WebMCP.ModelContext,
+  provider: Pick<WebMCP.ModelContext, 'registerTool'>,
   tools: DashboardWebMcpTool[],
   controller: AbortController,
   trackEvent: WebMcpAnalytics,
+  api = 'document-current',
 ): void {
   const registrations = tools.map((tool) => (
     observeRegistration(provider, tool, controller, trackEvent)
@@ -2958,7 +3128,7 @@ function startRegistration(
     reportWebMcpEvent(trackEvent, 'webmcp-registered', {
       toolCount,
       pageSurface: 'dashboard',
-      api: 'document-current',
+      api,
     });
   });
 }
@@ -2991,9 +3161,55 @@ export function registerWebMcpTools(
     } catch {
       return false;
     }
-    if (!provider || typeof provider.registerTool !== 'function') return false;
+    if (provider && typeof provider.registerTool === 'function') {
+      registrationStarted = true;
+      startRegistration(provider, tools, controller, trackEvent);
+      return true;
+    }
+    let legacy: LegacyWebMcpProvider | undefined;
+    try {
+      const runtimeNavigator = runtime.navigator
+        ?? (typeof navigator === 'undefined' ? undefined : navigator as Navigator & { modelContext?: LegacyWebMcpProvider });
+      legacy = runtimeNavigator?.modelContext;
+    } catch {
+      return false;
+    }
+    if (!legacy || (typeof legacy.registerTool !== 'function' && typeof legacy.provideContext !== 'function')) return false;
     registrationStarted = true;
-    startRegistration(provider, tools, controller, trackEvent);
+    const legacyTools = tools.map((tool) => ({
+      ...tool,
+      execute: (input: Record<string, unknown>, context?: WebMcpToolExecutionContext) => {
+        throwIfWebMcpAborted(controller.signal);
+        return tool.execute(input, context);
+      },
+    }));
+    const batch = typeof legacy.registerTool !== 'function';
+    const cleanup = (): void => {
+      try {
+        if (batch) legacy.clearContext?.();
+        else for (const tool of legacyTools) legacy.unregisterTool?.(tool.name);
+      } catch {
+        // Old hosts may have no usable unregister API. Callbacks still reject after teardown.
+      }
+    };
+    controller.signal.addEventListener('abort', cleanup, { once: true });
+    let batchRegistration: Promise<void> | undefined;
+    const adapter = {
+      registerTool(tool: DashboardWebMcpTool): Promise<void> {
+        throwIfWebMcpAborted(controller.signal);
+        if (batch) {
+          batchRegistration ??= new Promise<void>((resolve) => resolve(legacy.provideContext!({ tools: legacyTools })))
+            .then(() => { if (controller.signal.aborted) cleanup(); });
+          return batchRegistration;
+        }
+        return Promise.resolve(legacy.registerTool!(tool)).then(() => {
+          if (controller.signal.aborted) {
+            try { legacy.unregisterTool?.(tool.name); } catch { /* The callback remains disabled. */ }
+          }
+        });
+      },
+    };
+    startRegistration(adapter, legacyTools, controller, trackEvent, batch ? 'navigator-batch' : 'navigator-register');
     return true;
   };
 

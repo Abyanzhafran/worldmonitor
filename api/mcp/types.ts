@@ -3,6 +3,7 @@
 // from anywhere without creating evaluation-order surprises or cycles.
 
 import type { BillingVerificationStatus } from '../../server/_shared/entitlement-check';
+import type { McpBudget } from './quota';
 
 // ---------------------------------------------------------------------------
 // Auth-context shape passed into tool _execute. U7 widened the previous
@@ -15,12 +16,14 @@ export type McpAuthContext =
   | { kind: 'env_key'; apiKey: string }
   | { kind: 'pro'; userId: string; mcpTokenId: string }
   // Customer-issued dashboard key (Convex userApiKeys, #4859). Carries BOTH
-  // the raw key (downstream _execute fetches authenticate as the owner via
-  // X-WorldMonitor-Key, so REST metering/limits attribute to them) AND the
-  // resolved owner userId (per-user rate limit + daily quota + the mcpAccess
+  // the presented inbound key (auth-resolution identity) AND the resolved
+  // owner userId (per-user rate limit + daily quota + the mcpAccess
   // entitlement pre-check — a user_key context must NEVER skip that gate the
-  // way env_key does).
-  | { kind: 'user_key'; apiKey: string; userId: string }
+  // way env_key does). Downstream `_execute` fetches sign as this userId via
+  // the same internal HMAC as the OAuth door, so the gateway does not
+  // increment the shared daily account meter a second time.
+  // OAuth resolves the stored hash without recovering the plaintext key.
+  | { kind: 'user_key'; apiKey?: string; userId: string }
   // U7 (R7): an uncredentialed caller admitted to the always-free tool subset.
   // Carries NO identity by construction — it is the absence of a principal,
   // modelled as its own kind rather than a synthesised `env_key`/`pro` so every
@@ -64,11 +67,17 @@ export interface BaseToolDef {
   // envelope instead of the oversized payload. Required so a new tool can't
   // be added without an explicit budget choice.
   _outputBudgetBytes: number;
-  // Attribution-bound responses may opt out of the universal JMESPath
-  // projection when projecting fields independently would make an otherwise
-  // permitted value unsafe to redistribute. The dispatcher also enforces the
-  // denial as defence in depth.
-  _jmespathDisabled?: true;
+  // JMESPath expression extracting this tool's source list from its
+  // UNPROJECTED payload. Declared by every tool whose `outputSchema` carries a
+  // licence marker (`shared/attribution-rider.ts::LICENCE_MARKER_FIELDS`), and
+  // enforced by `tests/mcp-attribution-rider.test.mjs` — a new tool with an
+  // `attribution` field and no extraction fails the build.
+  //
+  // When a caller projects such a tool, the dispatcher re-attaches the
+  // extracted sources as `_attribution` AFTER `jmespath.search`, so the
+  // projection cannot separate the values from the attribution that licenses
+  // their redistribution.
+  _attribution?: string;
   // U7 (R7, R9): membership in the always-free subset — servable to an
   // uncredentialed caller, consuming no quota for any principal. Declared HERE,
   // on the tool itself, so the roster and the tool definition cannot drift
@@ -79,6 +88,12 @@ export interface BaseToolDef {
   // throws rather than signing. In practice that means `_apiPaths: []` and a
   // committed-registry or cache read. Enforced by test, not by convention.
   _freeTier?: true;
+  // Budget units this tool charges, overriding the class default in
+  // `registry/index.ts::toolWeight`. Set it only when the tool's downstream
+  // fan-out differs from its class — the two tools that fetch twice. A tool
+  // that grows a second fetch and forgets this is undercharging, which
+  // `tests/mcp-tool-weight.test.mjs` catches by re-deriving fan-out from source.
+  _weight?: number;
   // Spec-defined `Tool.outputSchema` (MCP 2025-06-18+). JSON Schema fragment
   // describing the tool's normal (non-envelope) response shape so a compliant
   // client can validate `tools/call` results AND so the LLM can write a
@@ -322,10 +337,18 @@ export interface PublicToolShape {
   //     anonymous-free, authenticated free-account allowance, and
   //     subscription-only tools without probing denials. `free` retains its
   //     original anonymous/quota-free meaning for backward compatibility.
+  //   - `worldmonitor/weight`, what one `tools/call` COSTS in budget units
+  //     (`registry/index.ts::toolWeight`). Present on every tool, because the
+  //     cost is a property of the TOOL, not of the caller — `tools/list` is
+  //     served on paths that hold no budget at all. It is only ever CHARGED
+  //     against an `api` allowance, where an MCP call is meant to be
+  //     comparable to a REST request; a dedicated MCP allowance pays one unit
+  //     per call whatever this says.
   _meta: {
     ui?: { resourceUri: string };
     'ui/resourceUri'?: string;
     'worldmonitor/access': McpAccessClass;
+    'worldmonitor/weight': number;
   };
 }
 
@@ -337,7 +360,14 @@ export interface PublicToolShape {
 // otherwise-successful 200 — the shape readExistsFlags branches on. While this
 // omitted `error`, a consumer could not read that field without a local cast
 // (api/mcp/dispatch.ts carried one, with a comment saying so, until #6152).
-export type PipelineFn = (commands: Array<Array<string | number>>, timeoutMs?: number) => Promise<Array<{ result?: unknown; error?: unknown }> | null>;
+//
+// PRECONDITION (#7674): the production binding (PRODUCTION_DEPS.redisPipeline)
+// sends commands VERBATIM (raw = true default) because the MCP quota and
+// free-account-allowance counters are already deployment-prefixed by
+// quota.ts / free-account-allowance.ts at construction. Only pass logical,
+// unprefixed keys through this dep if you also flip the binding — the raw
+// default is deliberate and inverts the shared helpers' prefix-by-default.
+export type PipelineFn = (commands: Array<Array<string | number>>, timeoutMs?: number, raw?: boolean) => Promise<Array<{ result?: unknown; error?: unknown }> | null>;
 
 export interface QuotaReserved {
   ok: true;
@@ -376,14 +406,17 @@ export interface McpHandlerDeps {
     features: {
       tier: number;
       mcpAccess?: boolean;
-      // Mirrors `CachedEntitlements.features.planLimits`. Only the MCP daily
-      // allowance is read here (plan 2026-07-25-001 U3); the siblings are
-      // declared so the shape stays recognisable against the catalog and a
-      // future consumer doesn't have to re-widen the dep contract.
+      // Mirrors `CachedEntitlements.features.planLimits`. The MCP daily
+      // allowance and the MCP minute burst are read here (plan 2026-07-25-001
+      // U3); the siblings are declared so the shape stays recognisable against
+      // the catalog and a future consumer doesn't have to re-widen the dep
+      // contract. `mcpCallsPerDay` carries the `SHARED_API_BUDGET` marker on the
+      // API tiers — narrowing it back to `number | null` here makes the marker
+      // an impossible value in a mirror that receives it every request.
       planLimits?: {
         apiRequestsPerDay?: number | null;
         apiBurstRequestsPerMinute?: number | null;
-        mcpCallsPerDay?: number | null;
+        mcpCallsPerDay?: number | null | 'shared-api-budget';
         mcpBurstRequestsPerMinute?: number | null;
         dashboardAiCallsPerDay?: number | null;
       };
@@ -424,18 +457,25 @@ export interface AuthResolutionRejected {
 export interface McpPreCheckPassed {
   ok: true;
   /**
-   * Daily `tools/call` allowance for this caller, three-way:
-   *   omitted → unknown; the quota layer applies `PRO_DAILY_QUOTA_LIMIT`
-   *   null    → unlimited (no cap, counter still incremented for metering)
-   *   number  → enforced verbatim
-   * Set for the `pro` context only. `user_key` and `env_key` omit it — raising
-   * API-plan MCP allowances is a deliberate follow-up, not a default (KTD6).
+   * Which daily counter this caller's `tools/call`s charge, and its ceiling.
+   * Omitted → the quota layer falls back to the dedicated Pro counter at
+   * `PRO_DAILY_QUOTA_LIMIT`, so an unresolved budget can never widen a cap.
+   * `limit: null` is unlimited (still metered, never rejected).
+   *
+   * Set for both the `pro` and `user_key` contexts: an API-tier subscriber
+   * resolves the same shared REST budget through either door.
    *
    * Free-account paid-funnel (#6716): when `freeAccountAllowance` is set, this
-   * is the free call ceiling and dispatch meters via
+   * carries the free call ceiling and dispatch meters via
    * `reserveFreeAccountAllowance` instead of `reserveQuota`.
    */
-  mcpDailyLimit?: number | null;
+  budget?: McpBudget;
+  /**
+   * The caller's per-minute MCP burst threshold, from the same entitlement
+   * read. Omitted → `applyPerMinuteLimit` uses its own default, so an
+   * unresolved pre-check can never widen the burst ceiling either.
+   */
+  burstPerMinute?: number;
   /**
    * Authenticated free / insufficient-tier caller admitted at the MCP call
    * site only (#6716). Must never be set by relaxing `checkProMcpAccess`.

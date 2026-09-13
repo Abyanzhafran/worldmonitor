@@ -190,7 +190,7 @@
       "decisionSignalsUnavailable": "Ảnh chụp nhanh tín hiệu quyết định của Trung Quốc hiện không có sẵn."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -292,6 +292,9 @@
         "defense_industrialBalance": "Cân bằng công nghiệp quốc phòng",
         "defense_supplierDiversity": "Đa dạng nhà cung cấp vũ khí"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Nâng cấp lên PRO để xem phụ thuộc nhà cung cấp vũ khí và năng lực quân sự"
     }
   },
   "header": {
@@ -976,7 +979,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Nâng cấp lên PRO để xem thị phần quốc gia của mỏ và nhà máy lọc dầu với độ tập trung (HHI) theo giai đoạn"
     },
     "tradePolicy": {
       "tariffs": "Thuế quan",
@@ -2217,7 +2221,8 @@
       "dependentCommodities": "Hàng hóa phụ thuộc",
       "stateOk": "Hiện tại",
       "stateStale": "Đầu vào cũ",
-      "stateInsufficient": "Không đủ dữ liệu"
+      "stateInsufficient": "Không đủ dữ liệu",
+      "proLocked": "Nâng cấp lên PRO để xem điểm số lỗ hổng hàng hóa"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Bộ theo dõi thương mại Hormuz</strong> Theo dõi tàu AIS trực tiếp qua eo biển Hormuz, điểm nghẽn dầu quan trọng nhất thế giới. Giám sát số lượng tàu chở dầu, sự kiện gián đoạn và thay đổi dòng chảy hàng tuần. Khoảng 20% nguồn cung dầu toàn cầu đi qua đây hàng ngày.",
@@ -2765,6 +2770,27 @@
       "succeeded": "Khóa truy cập đã lưu. Bạn có thể sử dụng nó lần tới khi đăng nhập.",
       "retryable": "Quá trình chưa hoàn tất. Bạn có thể thử lại.",
       "failed": "Chúng tôi không thể lưu khóa truy cập trên thiết bị này."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Bản tóm tắt quyết định về hàng hóa",
+      "commodity": "Hàng hóa / sản phẩm",
+      "blockedChokepoint": "Điểm nghẽn giả định bị phong tỏa",
+      "commodityCapture": "Ghi lại so sánh hàng hóa",
+      "title": "Bản tóm tắt quyết định",
+      "fuel": "Nhiên liệu",
+      "chokepoint": "Điểm nghẽn",
+      "baseline": "Gián đoạn cơ sở",
+      "comparison": "Gián đoạn so sánh",
+      "capture": "Lấy / làm mới cả hai",
+      "downloadHtml": "Tải bản tóm tắt HTML",
+      "downloadJson": "Tải bản tóm tắt JSON",
+      "back": "← Về bản tóm tắt quốc gia",
+      "select": "Chọn một gián đoạn năng lượng, rồi lấy cả hai kịch bản.",
+      "changed": "Lựa chọn đã thay đổi. Hãy lấy cả hai kịch bản trước khi xuất.",
+      "loading": "Đang lấy cả hai kịch bản…",
+      "captured": "Đã lấy. Kiểm tra ngày quan sát và các hạn chế trước khi tải xuống.",
+      "failed": "Không thể lấy các kịch bản. Kiểm tra quyền truy cập và thử lại. Không có kết quả để xuất.",
+      "locked": "Bản tóm tắt quyết định có trong Pro."
     }
   },
   "popups": {
@@ -2808,9 +2834,9 @@
     },
     "gpsJamming": {
       "title": "Nhiễu GPS/GNSS",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Máy bay bị ảnh hưởng",
+      "samples": "Số máy bay bị ảnh hưởng",
+      "aircraft": "Tổng số máy bay quan sát được",
       "h3Hex": "H3 Hex"
     },
     "flight": {

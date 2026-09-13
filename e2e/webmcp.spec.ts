@@ -17,6 +17,7 @@ const DASHBOARD_TOOL_NAMES = [
   'get_panel_layout',
   'list_dashboard_panels',
   'list_dashboard_tabs',
+  'list_followed_countries',
   'list_map_layers',
   'list_mission_presets',
   'move_panel',
@@ -31,6 +32,7 @@ const DASHBOARD_TOOL_NAMES = [
   'rename_dashboard_tab',
   'search_dashboard',
   'select_dashboard_tab',
+  'set_country_followed',
   'set_map_layers',
   'set_map_mode',
   'set_map_view',
@@ -760,6 +762,7 @@ test.describe('top-level WebMCP dashboard contract', () => {
           'get_dashboard_context',
           'get_panel_layout',
           'list_dashboard_tabs',
+          'list_followed_countries',
           'list_map_layers',
           'list_dashboard_panels',
           'list_mission_presets',
@@ -2075,3 +2078,34 @@ test.describe('top-level WebMCP dashboard contract', () => {
     }
   });
 });
+
+for (const api of ['registerTool', 'provideContext'] as const) {
+  test(`discovers homepage and dashboard tools with legacy ${api}`, async ({ page }) => {
+    test.skip(productionSmoke, 'Legacy provider fixtures run only against the local build.');
+    await page.addInitScript((method) => {
+      Object.defineProperty(document, 'modelContext', { value: undefined, configurable: true });
+      const tools: WebMCP.ModelContextTool[] = [];
+      Object.defineProperty(navigator, 'modelContext', {
+        configurable: true,
+        value: {
+          [method]: method === 'registerTool'
+            ? (tool: WebMCP.ModelContextTool) => { tools.push(tool); }
+            : (context: { tools: WebMCP.ModelContextTool[] }) => { tools.push(...context.tools); },
+          getTools: () => tools,
+        },
+      });
+    }, api);
+    for (const [route, expected] of [
+      ['/pro/welcome.html', HOMEPAGE_TOOL_NAMES],
+      ['/dashboard', DASHBOARD_TOOL_NAMES],
+    ] as const) {
+      await page.goto(route);
+      await expect.poll(() => page.evaluate(() => {
+        const provider = (navigator as Navigator & {
+          modelContext: { getTools(): WebMCP.ModelContextTool[] };
+        }).modelContext;
+        return provider.getTools().map(tool => tool.name).sort();
+      })).toEqual([...expected].sort());
+    }
+  });
+}

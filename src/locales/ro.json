@@ -194,7 +194,7 @@
       "decisionSignalsUnavailable": "Instantaneul semnalelor de decizie ale Chinei este momentan indisponibil."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -296,6 +296,9 @@
         "defense_industrialBalance": "Echilibru industrial apărare",
         "defense_supplierDiversity": "Diversitate furnizori armament"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Actualizare la PRO pentru dependența furnizorilor de arme și capacitatea militară"
     }
   },
   "header": {
@@ -982,7 +985,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Actualizare la PRO pentru cotele țărilor minelor și rafinăriilor cu concentrație (HHI) pe etapă"
     },
     "tradePolicy": {
       "tariffs": "Tarife vamale",
@@ -2235,7 +2239,8 @@
       "dependentCommodities": "Materii prime dependente",
       "stateOk": "Actual",
       "stateStale": "Date de intrare învechite",
-      "stateInsufficient": "Date insuficiente"
+      "stateInsufficient": "Date insuficiente",
+      "proLocked": "Actualizare la PRO pentru scoruri de vulnerabilitate a mărfurilor"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Tracker comercial Hormuz</strong> Urmărire AIS a navelor în timp real prin Strâmtoarea Hormuz, cel mai critic punct de blocaj petrolier din lume. Monitorizează numărul de tancuri petroliere, evenimente de perturbare și schimbări săptămânale ale fluxurilor. Aproximativ 20% din aprovizionarea globală cu petrol tranzitează zilnic aici.",
@@ -2803,6 +2808,27 @@
       "succeeded": "Cheia de acces a fost salvată. O poți folosi data viitoare când te autentifici.",
       "retryable": "Nu s-a finalizat. Poți încerca din nou.",
       "failed": "Nu am putut salva o cheie de acces pe acest dispozitiv."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Raport decizional privind materiile prime",
+      "commodity": "Materie primă / produs",
+      "blockedChokepoint": "Trecere presupusă blocată",
+      "commodityCapture": "Înregistrează comparația materiilor prime",
+      "title": "Sinteză pentru decizie",
+      "fuel": "Combustibil",
+      "chokepoint": "Punct de trecere critic",
+      "baseline": "Perturbare de referință",
+      "comparison": "Perturbare comparată",
+      "capture": "Încarcă / actualizează ambele",
+      "downloadHtml": "Descarcă sinteza în HTML",
+      "downloadJson": "Descarcă sinteza în JSON",
+      "back": "← Înapoi la sinteza țării",
+      "select": "Selectați o perturbare energetică, apoi încărcați ambele scenarii.",
+      "changed": "Selecția s-a schimbat. Încărcați ambele scenarii înainte de export.",
+      "loading": "Se încarcă ambele scenarii…",
+      "captured": "Încărcare completă. Verificați datele observațiilor și constrângerile înainte de descărcare.",
+      "failed": "Scenariile nu au putut fi încărcate. Verificați accesul și încercați din nou. Nu există rezultate de exportat.",
+      "locked": "Sinteza pentru decizie este disponibilă cu Pro."
     }
   },
   "popups": {
@@ -2846,9 +2872,9 @@
     },
     "gpsJamming": {
       "title": "Interferență GPS/GNSS",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Aeronave afectate",
+      "samples": "Număr de aeronave afectate",
+      "aircraft": "Număr total de aeronave observate",
       "h3Hex": "H3 Hex"
     },
     "flight": {

@@ -36,14 +36,14 @@
       "pro": {
         "description": "Full intelligence dashboard",
         "features": [
-          "Everything in Free",
-          "AI stock analysis & backtesting",
-          "Daily market briefs",
-          "Military & geopolitical tracking",
-          "Custom widget builder",
-          "۱۰ داشبورد سفارشی (در مقابل ۳)",
+          "همه چیز در نسخه رایگان — پنل‌ها، منابع و کشورهای دنبال‌شده نامحدود",
+          "گفتگوی تحلیلگر WM + تجزیه و تحلیل سهام و بک‌تست هوش‌مندی",
+          "مدل‌سازی شوک هزینه و آزمایش‌های تنش زنجیره تامین",
+          "هوش‌مندی — جستجوی تاریخی، خط‌مسیرهای زمانی و رویدادهای مشابه",
+          "داده‌های واگرایی فلزات فیزیکی، غلظت معادن و بدهی حاکمیتی",
+          "خلاصه هوش‌مندی برنامه‌ریزی‌شده + موتور قوانین هشدار",
           "دسترسی MCP + SDK برای Claude Desktop و سایر کلاینت‌های AI (۵۰ فراخوانی/روز)",
-          "Priority data refresh"
+          "ابزارک‌های سفارشی و ۱۰ داشبورد (در برابر ۳)"
         ],
         "highlightFeatures": [
           "Personal license",
@@ -72,7 +72,7 @@
           "License / API key included",
           "Real-time data streams",
           "60 requests/minute",
-          "1,000 requests/day included",
+          "۱۰۰۰ درخواست در روز شامل (REST + MCP ترکیبی؛ یک تماس زندهٔ MCP به عنوان ۲-۳ محاسبه می‌شود)",
           "Webhook notifications"
         ],
         "highlightFeatures": [
@@ -83,9 +83,9 @@
         "description": "راه‌اندازی محصول خود بر روی داده‌های WorldMonitor",
         "features": [
           "همه چیز در API Starter",
-          "حقوق توزیع مجدد — داده‌های ما را در محصولات خود تعبیه کنید",
+          "حقوق توزیع مجدد R1–R3 برای محصولات رو‌به‌مشتری",
           "۳۰۰ درخواست/دقیقه",
-          "۱۰٬۰۰۰ درخواست/روز شامل",
+          "۱۰۰۰۰ درخواست در روز شامل (REST + MCP ترکیبی؛ یک تماس زندهٔ MCP به عنوان ۲-۳ محاسبه می‌شود)",
           "۵ مجوز Pro — کاربران را با هر دامنه ایمیل سازمانی دعوت کنید",
           "پشتیبانی اولویتدار"
         ],
@@ -151,7 +151,7 @@
     "proF6": "Flight search & price comparison",
     "proF7": "Alert rules engine — custom triggers, quiet hours, AES-256 encrypted channels",
     "proF8": "Market watchlist, macro & central bank tracking",
-    "proF9": "AI Market Implications & Regional Intelligence (Soon: orbital surveillance, premium map layers, longer history)",
+    "proF9": "پیامدهای بازار هوش‌مندی و هوش‌مندی منطقه‌ای",
     "choosePlan": "Choose Your Plan",
     "entTitle": "World Monitor Enterprise",
     "entDesc": "For teams that need shared monitoring, API access, deployment options, TV apps, and direct support.",
@@ -167,7 +167,8 @@
     "entF10": "Cloud, on-prem, or air-gapped deployment",
     "entF11": "Dedicated onboarding & support",
     "entCta": "Talk to Sales",
-    "freeF2": "خوراک‌های منتخب، منابع مرجع‌شده، و لایه‌های نقشه"
+    "freeF2": "خوراک‌های منتخب، منابع مرجع‌شده، و لایه‌های نقشه",
+    "proF10": "هوش‌مندی — جستجوی تاریخی، خط‌مسیرهای زمانی و جستجوی رویدادهای مشابه"
   },
   "whyUpgrade": {
     "title": "چرا به World Monitor Pro ارتقا دهیم؟",
@@ -274,13 +275,14 @@
     "economyAnalyticsDesc": "GDP, inflation, interest rates, and growth cycles. Macro data correlated with market signals and geopolitical events.",
     "riskMonitoring": "Risk Monitoring & Scenarios",
     "riskMonitoringDesc": "Global risk scoring, scenario analysis, and geopolitical risk assessment. Convergence detection across market and political signals.",
-    "orbitalSurveillance": "Orbital Surveillance",
-    "orbitalSurveillanceDesc": "(Soon) Overhead pass predictions, revisit frequency analysis, and imaging window alerts. Know when intelligence satellites are watching your areas of interest.",
     "morningBriefs": "Personal Intelligence Desk",
     "morningBriefsDesc": "تا ۳۰ داستان رتبه‌بندی شده در هر خلاصه، حذف تکرار در سراسر منابع. برنامه روزانه، دو بار روزانه، یا هفتگی را انتخاب کنید — یا هشدارهای بی‌درنگ برای رویدادهای حیاتی. ارزیابی هوشمند و سیگنال‌های نظارتی، تحویل شده به Slack، Discord، Telegram، Email یا webhook. نه یک خبرنامه — یک تحلیلگر.",
     "oneKey": "خدمات زنده، ۱ کلید",
     "oneKeyDesc": "Finnhub, FRED, ACLED, UCDP, NASA FIRMS, AISStream, OpenSky, and more — all active, no separate registrations.",
-    "deliveryLabel": "Choose how intelligence finds you"
+    "deliveryLabel": "Choose how intelligence finds you",
+    "supplyChainLab": "آزمایشگاه تنش زنجیره تامین",
+    "supplyChainLabDesc": "مدل‌سازی شوک هزینه در کشورها و بخش‌ها. رتبه‌بندی آسیب‌پذیری کالا بر اساس وابستگی به نقاط تنگنای توزیع. پیگیری غلظت معدن تا پالایشگاه و واگرایی حق‌الزحمه فیزیکی SGE–COMEX — سری‌ای که پیش از تیتر خبر حرکت می‌کند.",
+    "roadmapNote": "در برنامه: نظارت مداری، تاریخچه طولانی‌تر، لایه‌های نقشه ارزشمند."
   },
   "slackMock": {
     "morningBrief": "Morning Brief",
@@ -479,14 +481,18 @@
       "screenshotAlt": "World Monitor live intelligence dashboard — global map with conflict, shipping and market layers",
       "plateNote": "Captured from the live map — click to open it",
       "trustBuild": "Build on it:",
-      "positioningLink": "WorldMonitor is not an open-source Palantir"
+      "positioningLink": "WorldMonitor is not an open-source Palantir",
+      "asOf": "تا ۸ سپتامبر ۲۰۲۶",
+      "whatIsTitle": "World Monitor چیست؟",
+      "whatIsBody": "World Monitor یک داشبورد رایگان و متن‌باز است که سیگنال‌های ژئوپلیتیک، بازار، کشتیرانی، هوانوری، زیرساخت و سایبری را به صورت زنده بر روی یک نقشه جهانی پخش می‌کند. این ابزار فیدهای جداگانه را در یک تصویر عملیاتی یکپارچه ترکیب می‌کند، همگرایی را قبل از تیتر‌های خبری شناسایی می‌کند و هر رقم از منابع معتبر و هر روش توثیق‌شده است."
     },
     "live": {
       "eyebrow": "Live right now",
       "title": "این صفحه در حال حاضر چه داده‌های زندهای را نمایش می‌دهد؟",
       "subtitle": "Four of the hundred-plus signals World Monitor watches around the clock.",
       "liveBadge": "Live",
-      "sampleBadge": "Sample",
+      "pulseBadge": "نبض منتشر شده {{date}}",
+      "refreshNote": "برای تازهسازی جاوا اسکریپت را فعال کنید — نبض منتشر شده بالا بدون آن نیز در دسترس است.",
       "cardHeadlines": "Top signals",
       "cardCii": "Instability index",
       "ciiNote": "12 fused signals per country",
@@ -584,35 +590,20 @@
       "eyebrow": "Under the hood",
       "title": "مدل داده World Monitor چقدر عمیق است؟",
       "sub": "Every number below is live in the dashboard today — not a roadmap.",
-      "s1v": "اشتراک‌شده",
-      "s1l": "Map layers",
-      "s2v": "منتخب",
-      "s2l": "Curated feeds",
-      "s3v": "مرجع‌شده",
-      "s3l": "Data providers",
-      "s4v": "زنده",
+      "s1l": "انواع لایه‌های نقشه",
+      "s2l": "فیدهای خبری و OSINT",
+      "s3l": "ارائه‌دهندگان منسوب",
       "s4l": "Chokepoints · live AIS",
-      "s5v": "سطح ۱",
       "s5l": "Instability index · live",
-      "s6v": "عمومی",
       "s6l": "Resilience rankings",
-      "s7v": "نقشه‌برداری شده",
       "s7l": "Subsea cables",
-      "s8v": "نقشه‌برداری شده",
       "s8l": "Pipelines & LNG",
-      "s9v": "نقشه‌برداری شده",
       "s9l": "AI datacenters mapped",
-      "s10v": "نمره‌دهی شده",
       "s10l": "Scored hotspots",
-      "s11v": "زنده",
       "s11l": "Exchanges & assets",
-      "s12v": "زنده",
       "s12l": "MCP tools",
-      "s13v": "سریع",
-      "s13l": "⌘K commands",
-      "s14v": "محلی‌سازی شده",
+      "s13l": "تعریف‌های فرمان ⌘K",
       "s14l": "Languages · RTL incl.",
-      "s15v": "5",
       "s15l": "Independent alert origins",
       "n1Title": "Satellite tracking",
       "n1Desc": "Live orbital positions computed in-browser with SGP4 — watch ISS, Starlink and military birds overhead.",
@@ -685,7 +676,7 @@
       "q4": "Can I watch chokepoints like Hormuz or Bab el-Mandeb in real time?",
       "a4": "بله. نقاط تنگنا با شمار کشتی‌های AIS زنده، تغییر عبور هفتگی و نمره‌دهی اختلال نظارت می‌شوند — و ناهنجاری‌های چگالی در برابر بازخط چرخشی هر تنگنا پرچم‌دار می‌شوند.",
       "q5": "How is this different from a conflict map like Liveuamap?",
-      "a5": "تنازع یک لایه نقشه است. World Monitor تنازعات را با حمل‌ونقل دریایی، پروازهای نظامی، زیرساخت‌ها، بازارها و فضای سایبری ترکیب می‌کند — سپس AI همگرایی را امتیازدهی می‌کند: شاخص‌های ناپایداری، تشدید نقاط داغ، هشدارهای خبری تایید‌شده و خلاصه‌های روزانه.",
+      "a5": "تنازع یکی از لایه‌های نقشه است. World Monitor تنازعات را با حمل‌ونقل دریایی، پروازهای نظامی، زیرساخت‌ها، بازارها و فضای سایبری ترکیب می‌کند — سپس هوش مصنوعی همگرایی را امتیاز‌دهی می‌کند: شاخص‌های ناپایداری، تشدید نقاط داغ، هشدارهای شکسته‌ای تأیید‌شده و گزارش‌های روزانه. World Monitor را با Liveuamap و دیگر نقشه‌های تنازع مقایسه کنید: worldmonitor.app/compare/liveuamap-alternatives.",
       "q6": "Why should I trust an alert?",
       "a6": "A breaking banner fires only when independent origin types corroborate — news classification, keyword velocity, hotspot escalation, military surges, official sirens — deduplicated and rate-limited. Fewer alerts, real ones.",
       "q7": "Can AI agents like Claude or GPT use it?",
@@ -718,5 +709,19 @@
       "countryRiskDesc": "سیگنال‌های سیاسی، امنیتی، اقتصادی و تاب‌آوری پشت تغییر کشور را ردیابی کنید.",
       "open": "باز کردن شواهد"
     }
+  },
+  "whatsNew": {
+    "eyebrow": "سیاهه کشتی‌رانی",
+    "title": "جدید در World Monitor",
+    "subtitle": "ویژگی‌های جدید از ۳۰ روز گذشته — اصلاحات و بهبودهای داخلی شامل نیستند.",
+    "proTag": "PRO",
+    "m1": "شاخص واگرایی حق‌الزحمه فیزیکی — SGE در برابر COMEX، با تاریخچه",
+    "m2": "رتبه‌بندی آسیب‌پذیری عرضه کالا — بسط وابستگی به نقاط تنگنای توزیع",
+    "m3": "غلظت تولید معادن و پایگاه صنعت دفاعی",
+    "m4": "کارت‌های امتیاز تاب‌آوری پنج‌عاملی با نمرات سطح شاخص",
+    "m5": "فهرست‌های نظارتی کانال تلگرام سفارشی",
+    "m6": "ورود کلید دسترسی",
+    "m7": "عوامل هوش‌مندی می‌توانند داشبورد را رانندگی کنند — پنل‌ها، برگه‌ها، لایه‌های نقشه و ماموریت‌ها",
+    "m8": "صفحات تاب‌آوری کشور غنی‌تر"
   }
 }

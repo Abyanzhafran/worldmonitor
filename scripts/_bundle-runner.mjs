@@ -81,6 +81,35 @@ async function readRedisKey(key) {
   }
 }
 
+export const SOURCE_RETRY_CLAIM_SCRIPT = [
+  "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end",
+  "redis.call('SET', KEYS[1], ARGV[2], 'XX', 'KEEPTTL')",
+  'return 1',
+].join('\n');
+
+async function claimSourceRetry(claim) {
+  if (!REDIS_URL || !REDIS_TOKEN) return false;
+  try {
+    const response = await fetch(REDIS_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${REDIS_TOKEN}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'worldmonitor-bundle-runner/1.0',
+      },
+      body: JSON.stringify([
+        'EVAL',
+        SOURCE_RETRY_CLAIM_SCRIPT,
+        1, claim.key, claim.previousValue, claim.nextValue,
+      ]),
+      signal: AbortSignal.timeout(REDIS_READ_TIMEOUT_MS),
+    });
+    return response.ok && (await response.json()).result === 1;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Record that the scheduler actually started this container.
  *
@@ -130,7 +159,7 @@ async function writeBundleHeartbeat(label) {
 /**
  * Read section freshness for the interval gate.
  *
- * Returns `{ fetchedAt }` or null. A declared `freshnessMetaKey` is authoritative
+ * Returns `{ fetchedAt, retryAt?, retryClaim? }` or null. A declared `freshnessMetaKey` is authoritative
  * for sources whose canonical envelope may be republished from retained
  * last-good data. When `completionMetaKey` is also declared, its timestamp must
  * be at or after source transport success; an older completion belongs to a
@@ -149,6 +178,20 @@ async function writeBundleHeartbeat(label) {
  * mark them due on every tick — the #6806 failure this must not reintroduce.
  */
 export async function readSectionFreshness(section, readKey = readRedisKey) {
+  // Opt-in, per the invariant above: a section that declares no
+  // `expectedSourceVersion` keeps its pre-migration clock byte-for-byte,
+  // error markers included. The error-marker check exists only so a FAILED
+  // migration cannot claim success — seed-owid-energy-mix's failure path
+  // writes a fresh `fetchedAt` under the NEW sourceVersion, so without it the
+  // gate would pass on the very run it must reject. Applying that check to
+  // every section instead would strip the fresh-fetchedAt backoff that
+  // sections like Resilience-Static (90-day interval) rely on, making them due
+  // on every tick — the #6806 failure this docstring forbids.
+  const isErrorMarker = (meta) => meta?.status === 'error' || meta?.state === 'ERROR';
+  const acceptsVersion = (meta) => (
+    !section.expectedSourceVersion
+    || (!isErrorMarker(meta) && meta?.sourceVersion === section.expectedSourceVersion)
+  );
   if (section.freshnessMetaKey) {
     if (section.requireCanonical && section.canonicalKey) {
       const canonical = await readKey(section.canonicalKey);
@@ -156,7 +199,7 @@ export async function readSectionFreshness(section, readKey = readRedisKey) {
     }
     const raw = await readKey(section.freshnessMetaKey);
     const meta = unwrapEnvelope(raw).data;
-    if (!Number.isFinite(meta?.fetchedAt)) return null;
+    if (!Number.isFinite(meta?.fetchedAt) || !acceptsVersion(meta)) return null;
     if (!section.completionMetaKey) return { fetchedAt: meta.fetchedAt };
     const completionRaw = await readKey(section.completionMetaKey);
     const completion = unwrapEnvelope(completionRaw).data;
@@ -172,6 +215,7 @@ export async function readSectionFreshness(section, readKey = readRedisKey) {
     const raw = await readKey(section.canonicalKey);
     const { _seed } = unwrapEnvelope(raw);
     if (_seed?.fetchedAt) {
+      if (!acceptsVersion(_seed)) return null;
       if (!section.completionMetaKey) return { fetchedAt: _seed.fetchedAt };
       const completionRaw = await readKey(section.completionMetaKey);
       const completion = unwrapEnvelope(completionRaw).data;
@@ -192,7 +236,32 @@ export async function readSectionFreshness(section, readKey = readRedisKey) {
     // Legacy seed-meta is `{ fetchedAt, recordCount, sourceVersion }` at top
     // level. It has no `_seed` wrapper so unwrapEnvelope returns it as data.
     const meta = unwrapEnvelope(raw).data;
-    if (meta?.fetchedAt) return { fetchedAt: meta.fetchedAt };
+    if (meta?.fetchedAt && acceptsVersion(meta)) {
+      const freshness = { fetchedAt: meta.fetchedAt };
+      if (raw === meta && section.sourceRetryMetaKey && Number.isFinite(section.sourceRetryDelayMs) && section.sourceRetryDelayMs > 0) {
+        const source = unwrapEnvelope(await readKey(section.sourceRetryMetaKey)).data;
+        const firstAt = source?.firstSourceFailureAt;
+        if (
+          source?.sourceState === 'degraded' && source.stale === true
+          && Number.isInteger(source.recordCount) && source.recordCount > 0
+          && Number.isFinite(source.fetchedAt) && source.fetchedAt > 0
+          && Number.isFinite(firstAt) && firstAt > source.fetchedAt
+          && source.lastSourceAttemptAt === firstAt && source.consecutiveSourceFailures === 1
+          && typeof source.errorCode === 'string' && source.errorCode.length > 0
+          && source.lastSourceFailureCode === source.errorCode
+          && Number.isFinite(meta.fetchedAt) && firstAt <= meta.fetchedAt && meta.fetchedAt <= Date.now()
+          && meta.sourceRetryClaimedFor == null
+        ) {
+          freshness.retryAt = firstAt + section.sourceRetryDelayMs;
+          freshness.retryClaim = {
+            key: `seed-meta:${section.seedMetaKey}`,
+            previousValue: JSON.stringify(raw),
+            nextValue: JSON.stringify({ ...meta, sourceRetryClaimedFor: firstAt }),
+          };
+        }
+      }
+      return freshness;
+    }
   }
   return null;
 }
@@ -387,6 +456,8 @@ function spawnSeed(scriptPath, { timeoutMs, label, bundleStartedAtMs, completion
  *   label: string,
  *   script: string,
  *   seedMetaKey?: string,    // legacy (pre-contract); reads `seed-meta:<key>`
+ *   sourceRetryMetaKey?: string, // opt-in source-attempt meta for legacy completion gates
+ *   sourceRetryDelayMs?: number, // one early retry after the first failed attempt
  *   freshnessMetaKey?: string, // authoritative explicit seed-meta key
  *   canonicalKey?: string,   // PR 2+: reads envelope from the canonical data key
  *   completionMetaKey?: string, // full key written LAST by the run; must not
@@ -609,9 +680,13 @@ export async function runBundle(label, sections, opts = {}) {
     const freshness = freshnessByLabel
       ? freshnessByLabel.get(section.label) || null
       : await readSectionFreshness(section);
+    let earlyRetry = false;
     if (freshness?.fetchedAt) {
-      const elapsed = Date.now() - freshness.fetchedAt;
-      if (elapsed < section.intervalMs * 0.8) {
+      const now = Date.now();
+      const elapsed = now - freshness.fetchedAt;
+      const retryDue = Number.isFinite(freshness.retryAt) && now >= freshness.retryAt;
+      earlyRetry = elapsed < section.intervalMs * 0.8 && retryDue;
+      if (elapsed < section.intervalMs * 0.8 && !retryDue) {
         const agoMin = Math.round(elapsed / 60_000);
         const intervalMin = Math.round(section.intervalMs / 60_000);
         console.log(`  [${section.label}] Skipped, last seeded ${agoMin}min ago (interval: ${intervalMin}min)`);
@@ -625,7 +700,7 @@ export async function runBundle(label, sections, opts = {}) {
     // and need SIGKILL after grace). Admit only when the full worst-case fits.
     // Shared with the startup check so the two can never disagree about which
     // sections are admittable.
-    const worstCase = sectionWorstCaseMs(section);
+    const worstCase = sectionWorstCaseMs(section) + (earlyRetry ? REDIS_READ_TIMEOUT_MS : 0);
     if (elapsedBundle + worstCase > maxBundleMs) {
       const remainingSec = Math.max(0, Math.round((maxBundleMs - elapsedBundle) / 1000));
       const needSec = Math.round(worstCase / 1000);
@@ -645,6 +720,12 @@ export async function runBundle(label, sections, opts = {}) {
         );
         stalled++;
       }
+      continue;
+    }
+
+    if (earlyRetry && !await claimSourceRetry(freshness.retryClaim)) {
+      console.warn(`  [${section.label}] Early recovery not claimed; keeping normal admission`);
+      skipped++;
       continue;
     }
 

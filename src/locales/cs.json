@@ -196,7 +196,7 @@
       "decisionSignalsUnavailable": "Snímek rozhodovacích signálů Číny je momentálně nedostupný."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -298,6 +298,9 @@
         "defense_industrialBalance": "Bilance průmyslu obrany",
         "defense_supplierDiversity": "Rozmanitost dodavatelů zbraní"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Upgradujte na PRO pro závislosti dodavatelů zbraní a vojenskou kapacitu"
     }
   },
   "header": {
@@ -973,7 +976,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Upgradujte na PRO pro podíly zemí dolů a rafinerií s koncentrací (HHI) podle fáze"
     },
     "tradePolicy": {
       "tariffs": "Cla",
@@ -2244,7 +2248,8 @@
       "dependentCommodities": "Závislé komodity",
       "stateOk": "Aktuální",
       "stateStale": "Zastaralý vstup",
-      "stateInsufficient": "Nedostatečná data"
+      "stateInsufficient": "Nedostatečná data",
+      "proLocked": "Upgradujte na PRO pro skórování zranitelnosti komodit"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Sledování obchodu v Hormuzu</strong> Sledování AIS plavidel v reálném čase přes Hormuzský průliv, nejkritičtější ropný úzký profil na světě. Monitoruje počty tankerů, narušení a týdenní změny toků. Přibližně 20 % světových dodávek ropy tudy denně prochází.",
@@ -2822,6 +2827,27 @@
       "succeeded": "Přístupový klíč uložen. Můžete jej použít při příštím přihlášení.",
       "retryable": "To se nedokončilo. Můžete to zkusit znovu.",
       "failed": "Na tomto zařízení se nám nepodařilo uložit přístupový klíč."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Podklad pro rozhodování o komoditách",
+      "commodity": "Komodita / produkt",
+      "blockedChokepoint": "Předpokládaný zablokovaný průchod",
+      "commodityCapture": "Zachytit srovnání komodit",
+      "title": "Rozhodovací přehled",
+      "fuel": "Palivo",
+      "chokepoint": "Úzké hrdlo",
+      "baseline": "Výchozí narušení",
+      "comparison": "Srovnávací narušení",
+      "capture": "Načíst / obnovit oba",
+      "downloadHtml": "Stáhnout přehled v HTML",
+      "downloadJson": "Stáhnout přehled v JSON",
+      "back": "← Zpět na přehled země",
+      "select": "Vyberte narušení dodávek energie a načtěte oba scénáře.",
+      "changed": "Výběr změněn. Před exportem načtěte oba scénáře.",
+      "loading": "Načítání obou scénářů…",
+      "captured": "Načteno. Před stažením zkontrolujte data pozorování a omezení.",
+      "failed": "Scénáře se nepodařilo načíst. Zkontrolujte přístup a zkuste to znovu. Není dostupný žádný výsledek k exportu.",
+      "locked": "Rozhodovací přehled je dostupný s Pro."
     }
   },
   "popups": {
@@ -2865,9 +2891,9 @@
     },
     "gpsJamming": {
       "title": "Interference GPS/GNSS",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Zasažená letadla",
+      "samples": "Počet zasažených letadel",
+      "aircraft": "Pozorovaná letadla",
       "h3Hex": "H3 Hex"
     },
     "flight": {

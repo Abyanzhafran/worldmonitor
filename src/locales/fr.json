@@ -194,7 +194,7 @@
       "decisionSignalsUnavailable": "L'instantané des signaux de décision de la Chine est actuellement indisponible."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -296,6 +296,9 @@
         "defense_industrialBalance": "Balance industrielle de défense",
         "defense_supplierDiversity": "Diversité des fournisseurs d'armes"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Passez à PRO pour les dépendances fournisseurs d'armements et la capacité militaire"
     }
   },
   "header": {
@@ -2001,7 +2004,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Passez à PRO pour les parts de pays de mines et de raffineries avec concentration (HHI) par étape"
     },
     "positiveNewsFeed": {
       "noStories": "Aucune histoire dans cette catégorie pour le moment"
@@ -2235,7 +2239,8 @@
       "dependentCommodities": "Matières premières dépendantes",
       "stateOk": "À jour",
       "stateStale": "Donnée d’entrée obsolète",
-      "stateInsufficient": "Données insuffisantes"
+      "stateInsufficient": "Données insuffisantes",
+      "proLocked": "Passez à PRO pour l'évaluation de vulnérabilité des matières premières"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Suivi commercial d'Ormuz</strong> Suivi AIS des navires en temps réel à travers le détroit d'Ormuz, le goulet d'étranglement pétrolier le plus critique au monde. Surveille le nombre de pétroliers, les événements de perturbation et les variations hebdomadaires des flux. Environ 20 % de l'approvisionnement mondial en pétrole y transite quotidiennement.",
@@ -2803,6 +2808,27 @@
       "succeeded": "Clé d'accès enregistrée. Vous pouvez l'utiliser la prochaine fois que vous vous connectez.",
       "retryable": "Cette opération ne s'est pas terminée. Vous pouvez réessayer.",
       "failed": "Nous n'avons pas pu enregistrer une clé d'accès sur cet appareil."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Note de décision sur les matières premières",
+      "commodity": "Matière première / produit",
+      "blockedChokepoint": "Passage supposé bloqué",
+      "commodityCapture": "Capturer la comparaison des matières premières",
+      "title": "Note de décision",
+      "fuel": "Combustible",
+      "chokepoint": "Point de passage critique",
+      "baseline": "Perturbation de référence",
+      "comparison": "Perturbation comparée",
+      "capture": "Capturer / actualiser les deux",
+      "downloadHtml": "Télécharger la note en HTML",
+      "downloadJson": "Télécharger la note en JSON",
+      "back": "← Retour à la fiche pays",
+      "select": "Sélectionnez une perturbation énergétique, puis capturez les deux scénarios.",
+      "changed": "Sélection modifiée. Capturez les deux scénarios avant de les exporter.",
+      "loading": "Capture des deux scénarios…",
+      "captured": "Capture terminée. Vérifiez les dates des observations et les contraintes avant le téléchargement.",
+      "failed": "Impossible de capturer les scénarios. Vérifiez votre accès et réessayez. Aucun résultat à exporter.",
+      "locked": "La note de décision est disponible avec Pro."
     }
   },
   "popups": {
@@ -2844,10 +2870,10 @@
       "highSeverity": "Sévérité Élevée"
     },
     "gpsJamming": {
-      "title": "Interférence GPS/GNSS",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "title": "Interférences GPS/GNSS",
+      "navPerformance": "Aéronefs affectés",
+      "samples": "Nombre d’aéronefs affectés",
+      "aircraft": "Nombre total d’aéronefs observés",
       "h3Hex": "H3 Hex"
     },
     "flight": {

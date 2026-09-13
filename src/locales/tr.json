@@ -192,7 +192,7 @@
       "decisionSignalsUnavailable": "Çin karar sinyali anlık görüntüsü şu anda kullanılamıyor."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -294,6 +294,9 @@
         "defense_industrialBalance": "Savunma sanayi dengesi",
         "defense_supplierDiversity": "Silah tedarikçi çeşitliliği"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Silah tedarikçisi bağımlılığı ve askeri kapasite için PRO'ya yükseltin"
     }
   },
   "header": {
@@ -979,7 +982,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Maden ve rafineri ülke payları ile aşama başına konsantrasyon (HHI) için PRO'ya yükseltin"
     },
     "tradePolicy": {
       "tariffs": "Gümrük Tarifeleri",
@@ -2226,7 +2230,8 @@
       "dependentCommodities": "Bağımlı emtialar",
       "stateOk": "Güncel",
       "stateStale": "Eski girdi",
-      "stateInsufficient": "Yetersiz veri"
+      "stateInsufficient": "Yetersiz veri",
+      "proLocked": "Emtia kırılganlık puanlandırması için PRO'ya yükseltin"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Hürmüz Ticaret Takipçisi</strong> Dünyanın en kritik petrol darboğazı olan Hürmüz Boğazı'ndan geçen AIS gemi takibi. Tanker sayılarını, aksama olaylarını ve haftalık akış değişikliklerini izler. Küresel petrol arzının yaklaşık %20'si buradan günlük geçmektedir.",
@@ -2784,6 +2789,27 @@
       "succeeded": "Passkey kaydedildi. Bir sonraki oturum açışında kullanabilirsiniz.",
       "retryable": "Bu tamamlanmadı. Yeniden deneyebilirsiniz.",
       "failed": "Bu cihaza passkey kaydedilemedi."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Emtia karar özeti",
+      "commodity": "Emtia / ürün",
+      "blockedChokepoint": "Kapalı olduğu varsayılan geçit",
+      "commodityCapture": "Emtia karşılaştırmasını kaydet",
+      "title": "Karar özeti",
+      "fuel": "Yakıt",
+      "chokepoint": "Dar geçit",
+      "baseline": "Temel kesinti",
+      "comparison": "Karşılaştırma kesintisi",
+      "capture": "İkisini de al / yenile",
+      "downloadHtml": "Özeti HTML olarak indir",
+      "downloadJson": "Özeti JSON olarak indir",
+      "back": "← Ülke özetine dön",
+      "select": "Bir enerji kesintisi seçin, ardından iki senaryoyu da alın.",
+      "changed": "Seçim değişti. Dışa aktarmadan önce iki senaryoyu da alın.",
+      "loading": "İki senaryo alınıyor…",
+      "captured": "Alındı. İndirmeden önce gözlem tarihlerini ve kısıtları inceleyin.",
+      "failed": "Senaryolar alınamadı. Erişiminizi kontrol edip yeniden deneyin. Dışa aktarılacak sonuç yok.",
+      "locked": "Karar özeti Pro ile kullanılabilir."
     }
   },
   "popups": {
@@ -2827,9 +2853,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS Paraziti",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Etkilenen hava araçları",
+      "samples": "Etkilenen hava aracı sayısı",
+      "aircraft": "Gözlemlenen hava araçlarının toplam sayısı",
       "h3Hex": "H3 Hex"
     },
     "flight": {

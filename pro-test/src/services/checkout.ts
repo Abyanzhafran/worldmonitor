@@ -42,6 +42,14 @@ import {
   getContentAttributionForAnalytics,
   withContentAttribution,
 } from '../../../shared/content-attribution';
+import {
+  CHECKOUT_ATTEMPT_STORAGE_KEY,
+  CHECKOUT_RETURN_SOURCE_PARAM,
+  DESKTOP_CHECKOUT_HANDOFF,
+  parseMissionPreviewAttribution,
+  resolveCheckoutContext,
+  type CheckoutAttribution,
+} from '../../../shared/checkout-attribution';
 
 let checkoutInFlight = false;
 
@@ -242,6 +250,8 @@ export async function startCheckout(
     referralCode?: string;
     discountCode?: string;
     attributionSource?: string;
+    checkoutAttribution?: CheckoutAttribution;
+    desktopHandoff?: boolean;
     bypassPendingGuard?: boolean;
   },
 ): Promise<boolean> {
@@ -261,6 +271,8 @@ async function startCheckoutInner(
     referralCode?: string;
     discountCode?: string;
     attributionSource?: string;
+    checkoutAttribution?: CheckoutAttribution;
+    desktopHandoff?: boolean;
     bypassPendingGuard?: boolean;
   },
 ): Promise<boolean> {
@@ -275,10 +287,17 @@ async function startCheckoutInner(
 
   // Funnel (#4931): every /pro pricing CTA routes through here. authed:false
   // marks intent clicks that detour through the Clerk sign-in modal first.
+  const checkoutAttribution = parseMissionPreviewAttribution(
+    options?.checkoutAttribution?.missionId,
+    options?.checkoutAttribution?.panelKey,
+  );
   trackFunnelEvent('checkout-start', {
     productId: bucketProductIdForAnalytics(productId),
     surface: 'pro-page',
     authed: Boolean(c.user),
+    ...(checkoutAttribution
+      ? { missionId: checkoutAttribution.missionId, panelKey: checkoutAttribution.panelKey }
+      : {}),
   });
 
   if (!c.user) {
@@ -318,12 +337,32 @@ export async function tryResumeCheckoutFromUrl(): Promise<boolean> {
     return false;
   }
   if (!c.user) return false;
-  const { productId, referralCode, discountCode, attributionSource } = intent;
+  const {
+    productId,
+    referralCode,
+    discountCode,
+    attributionSource,
+    checkoutAttribution,
+    desktopHandoff,
+  } = intent;
   // Funnel (#4931): post-sign-in auto-resume — the pre-auth click already
   // fired checkout-start{authed:false}; this marks the resumed attempt.
   // productId is URL-derived here — bucketed for analytics (round-4 F2).
-  trackFunnelEvent('checkout-start', { productId: bucketProductIdForAnalytics(productId), surface: 'pro-resume', authed: true });
-  return doCheckout(productId, { referralCode, discountCode, attributionSource });
+  trackFunnelEvent('checkout-start', {
+    productId: bucketProductIdForAnalytics(productId),
+    surface: 'pro-resume',
+    authed: true,
+    ...(checkoutAttribution
+      ? { missionId: checkoutAttribution.missionId, panelKey: checkoutAttribution.panelKey }
+      : {}),
+  });
+  return doCheckout(productId, {
+    referralCode,
+    discountCode,
+    attributionSource,
+    checkoutAttribution,
+    desktopHandoff,
+  });
 }
 
 async function doCheckout(
@@ -332,6 +371,8 @@ async function doCheckout(
     referralCode?: string;
     discountCode?: string;
     attributionSource?: string;
+    checkoutAttribution?: CheckoutAttribution;
+    desktopHandoff?: boolean;
     bypassPendingGuard?: boolean;
   },
 ): Promise<boolean> {
@@ -343,6 +384,20 @@ async function doCheckout(
   if (_phase.kind === 'rate_limited') setPhase({ kind: 'idle' });
   if (checkoutInFlight) return false;
   checkoutInFlight = true;
+  const checkoutContext = resolveCheckoutContext({
+    surface: options.checkoutAttribution ? 'mission-preview' : 'dashboard',
+    attribution: options.checkoutAttribution,
+  });
+  try {
+    window.sessionStorage.setItem(CHECKOUT_ATTEMPT_STORAGE_KEY, JSON.stringify({
+      version: 2,
+      productId,
+      referralCode: options.referralCode,
+      discountCode: options.discountCode,
+      startedAt: Date.now(),
+      context: checkoutContext,
+    }));
+  } catch {}
   // Phase transitions to creating_checkout ONLY here, not in
   // startCheckout's no-user branch. This narrow window (post-auth,
   // edge call + Dodo SDK import + overlay open) is the only time the
@@ -388,7 +443,9 @@ async function doCheckout(
         // failure, cancel, pending) — `?wm_checkout=success` would false-succeed
         // a failed/pending/no-ID return. `?wm_checkout=return` only reconciles
         // success against authoritative Dodo evidence. See checkout-return.ts.
-        returnUrl: DASHBOARD_CHECKOUT_RETURN_URL,
+        returnUrl: options.desktopHandoff
+          ? `${DASHBOARD_CHECKOUT_RETURN_URL}&${CHECKOUT_RETURN_SOURCE_PARAM}=${DESKTOP_CHECKOUT_HANDOFF}`
+          : DASHBOARD_CHECKOUT_RETURN_URL,
         discountCode: options.discountCode,
         referralCode: options.referralCode,
         attributionSource: options.attributionSource,
@@ -470,6 +527,30 @@ async function doCheckout(
           tags: { surface: 'pro-marketing', code: 'payment_in_progress' },
           extra: { serverMessage: err?.message },
         });
+      } else {
+        // Everything the chain above does not name. Previously this arm was a
+        // bare `return false`: the interstitial unmounted, no toast appeared,
+        // and nothing reached Sentry, so the buyer saw a click that did
+        // nothing and we saw no event at all.
+        //
+        // WORLDMONITOR-Q4 made that gap wider rather than narrower. This
+        // surface shares `checkout-transport.ts` byte-for-byte with the
+        // dashboard (tests/marketing-mirror-parity.test.mts), so it inherited
+        // the widened Cloudflare 52x retry — and with it the 409
+        // `idempotency_conflict` a replay draws when it races a still-running
+        // first attempt. The dashboard classifies that as retryable; here it
+        // has no branch at all. Reporting is the half that was never mirrored.
+        Sentry.captureMessage(`Checkout edge error: ${resp.status}`, {
+          level: 'error',
+          tags: {
+            surface: 'pro-marketing',
+            code: 'service_unavailable',
+            // Claims this as a first-party report for the zero-frame gate, the
+            // same contract src/services/checkout-sentry-policy.ts encodes.
+            kind: 'checkout_request_failed',
+          },
+          extra: { httpStatus: resp.status, serverMessage: err?.message ?? err?.error },
+        });
       }
       return false;
     }
@@ -501,6 +582,20 @@ async function doCheckout(
     return true;
   } catch (err) {
     console.error('[checkout] Failed:', err);
+    // The transport's 15s budget and a double network failure both land here.
+    // Console-only was the reason WORLDMONITOR-Q4 stayed open on this surface
+    // after the dashboard half was fixed: no event is emitted, so no filter
+    // policy — this bundle's or any other — gets a say. `kind` claims it as a
+    // first-party report so a zero-frame rejection is not read as extension
+    // noise wherever this event is filtered.
+    Sentry.captureException(err, {
+      level: 'error',
+      tags: {
+        surface: 'pro-marketing',
+        code: 'service_unavailable',
+        kind: 'checkout_request_failed',
+      },
+    });
     return false;
   } finally {
     checkoutInFlight = false;

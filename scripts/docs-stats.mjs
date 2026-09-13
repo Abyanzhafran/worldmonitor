@@ -16,7 +16,7 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { buildSourceAttributionStats } from './source-attribution.mjs';
 import { extractAssignedObjectBlock } from './lib/js-source-structure.mjs';
 
@@ -948,7 +948,10 @@ export async function withStatsRoot(fn) {
         continue;
       }
       try {
-        cpSync(join(ROOT, entry.name), join(sandbox, entry.name), { recursive: true });
+        cpSync(join(ROOT, entry.name), join(sandbox, entry.name), {
+          recursive: true,
+          filter: (from) => basename(from) !== 'node_modules',
+        });
       } catch {
         // A path that cannot be copied (platform link, transient state): the
         // stat reports zero for whatever lived there, same as a repo
@@ -975,7 +978,7 @@ function dirHasFiles(rel) {
   return false;
 }
 
-function computeStats() {
+function computeStats({ sourceAttribution: suppliedAttribution } = {}) {
   const makefile = read('Makefile');
   const serverCard = parseJson('public/.well-known/mcp/server-card.json');
   const mcpApps = parseMcpAppsInventory();
@@ -1060,7 +1063,7 @@ function computeStats() {
   // several feed URLs, while a structured endpoint may never appear in the
   // curated-feed registry. The attribution checker owns manifest coverage;
   // docs-stats pins the public count surfaces to the same live number.
-  const sourceAttribution = buildSourceAttributionStats({ rootDir: rootOf() });
+  const sourceAttribution = suppliedAttribution ?? buildSourceAttributionStats({ rootDir: rootOf() });
 
   // ---- Operational source counts used by data-source and methodology docs ----
   const airportCount = (read('src/config/airports.ts').match(/\biata:\s*'/g) || []).length;
@@ -1300,6 +1303,40 @@ export function retainedExactContractCoverageFailures(contracts, observedContrac
     .map((contract) => `${contract.path}: retained exact count contract is missing or changed: ${contract.text}`);
 }
 
+export const AI_SEARCH_COVERAGE_HEADING = '## Data Coverage';
+export const AI_SEARCH_COVERAGE_OPEN = '<!-- generated:ai-search-coverage -->';
+export const AI_SEARCH_COVERAGE_CLOSE = '<!-- /generated:ai-search-coverage -->';
+
+/**
+ * Line span of the generated coverage block in public/ai-search.md.
+ *
+ * The scanner's rule is that *hand-authored* acquisition copy may not publish
+ * extensible inventory totals, because hand-maintained totals rot. This block
+ * is written by scripts/build-ai-search.mjs from the same registries that
+ * produce /sources/, and tests/ai-search-product-facts.test.mjs fails when the
+ * committed block drifts from the generator — so its figures are
+ * registry-derived by construction. #6736 removed the numerals instead, which
+ * made the one file written for AI citation uncitable (#6038). Every other
+ * line of the file, including the surrounding prose, stays in the scan.
+ *
+ * The span is delimited by explicit sentinels rather than inferred from the
+ * next `## ` heading: an editorial change with no relation to this gate —
+ * demoting `## Source Examples` to `###`, renaming it, moving it — would
+ * silently extend an inferred span over hand-authored prose and hand it a pass
+ * from a merge-blocking check. A self-describing span cannot drift that way,
+ * and an unbalanced or missing pair fails closed by scanning the whole file.
+ */
+function generatedCoverageLines(path, source) {
+  if (path !== 'public/ai-search.md') return null;
+  const lines = source.split('\n');
+  const start = lines.indexOf(AI_SEARCH_COVERAGE_OPEN);
+  const end = lines.indexOf(AI_SEARCH_COVERAGE_CLOSE);
+  if (start === -1 || end === -1 || end < start) return null;
+  // Only one pair may exist; a second open would mean two exempt regions.
+  if (lines.indexOf(AI_SEARCH_COVERAGE_OPEN, start + 1) !== -1) return null;
+  return { start, end };
+}
+
 export function validateVolatileInventoryClaims() {
   const retainedExactContracts = [
     { path: 'docs/signal-intelligence.mdx', text: /(?:3\+ source types|6\+ sources\/hour)/ },
@@ -1315,6 +1352,10 @@ export function validateVolatileInventoryClaims() {
     { path: 'docs/features.mdx', text: /72 indicators across 21 active dimensions and 6 domains/ },
     { path: 'docs/overview.mdx', text: /72 indicators across 21 active dimensions and 6 domains/ },
     { path: 'public/llms-full.txt', text: /72 indicators across 21 active dimensions, 6 domains/ },
+    { path: 'public/llms.txt', text: /live in 190\+ countries/ },
+    { path: 'public/llms.txt', text: /structural resilience ranked for/ },
+    { path: 'index.html', text: /live in 190\+ countries/ },
+    { path: 'docs/about.mdx', text: /live in 190\+ countries/ },
     { path: 'blog-site/src/content/blog/country-instability-index-methodology-explained.md', text: /72 indicators, 21 active dimensions, and 6 domains/ },
     { path: 'blog-site/src/content/blog/country-resilience-index-methodology-explained.md', text: /72 indicators across 21 active dimensions and 6 domains/ },
     { path: 'blog-site/src/content/blog/country-resilience-index-methodology-explained.md', text: /six domains/i },
@@ -1364,7 +1405,16 @@ export function validateVolatileInventoryClaims() {
   const failures = [];
   const observedRetainedContracts = new Set();
   const visit = (path) => {
-    for (const [index, line] of read(path).split('\n').entries()) {
+    const source = read(path);
+    // Generated llms-full corpus republishes methodology already scanned at
+    // its source paths (#7463). Keep the hand-authored brief in this scan.
+    const generatedCorpusAt = path === 'public/llms-full.txt'
+      ? source.indexOf('\n## Generated corpus\n')
+      : -1;
+    const scannable = generatedCorpusAt === -1 ? source : source.slice(0, generatedCorpusAt);
+    const generatedCoverage = generatedCoverageLines(path, scannable);
+    for (const [index, line] of scannable.split('\n').entries()) {
+      if (generatedCoverage && index >= generatedCoverage.start && index < generatedCoverage.end) continue;
       if (/\btool errors\b/i.test(line)) continue;
       if (/\bTier \d+(?:[–-]\d+)? sources\b/i.test(line)) continue;
       const retained = retainedExactContracts.filter((entry) => entry.path === path && entry.text.test(line));
@@ -1615,8 +1665,11 @@ function healthSummaryDocSources(pages = null) {
 //   - `total` equals the registry size. True of any response, whatever its status.
 //   - the buckets sum to `total`. `summary.warn` is already net of onDemandWarn
 //     (api/health.js computes `realWarnCount = counts.warn - counts.onDemandWarn`),
-//     and staleContent/rolloutPending are documented SUBSETS of warn, so the
-//     partition is exactly ok + warn + onDemandWarn + crit. This is what caught
+//     and rolloutPending is a documented SUBSET of warn, so the partition is
+//     exactly ok + warn + onDemandWarn + crit. staleContent is diagnostic: a
+//     graced entry counts in `ok`, so it is NOT a subset of warn — but every
+//     STALE_CONTENT entry still lands in exactly one of ok/warn, which keeps
+//     `staleContent <= ok + warn` a real bound worth enforcing. This is what caught
 //     the pre-#6300 api-platform.mdx body, which showed a concrete "HEALTHY"
 //     alongside 5 warns.
 function validateHealthSummaryDocs(stats, docs = null) {
@@ -1641,7 +1694,7 @@ function validateHealthSummaryDocs(stats, docs = null) {
         return m ? Number(m[1]) : null;
       };
       const counts = {};
-      for (const name of ['total', 'ok', 'warn', 'onDemandWarn', 'staleContent', 'rolloutPending', 'crit']) {
+      for (const name of ['total', 'ok', 'warn', 'containedWarn', 'onDemandWarn', 'staleContent', 'rolloutPending', 'crit']) {
         counts[name] = field(name);
         if (counts[name] === null) failures.push(`${where}: /api/health summary example is missing "${name}"`);
       }
@@ -1656,12 +1709,29 @@ function validateHealthSummaryDocs(stats, docs = null) {
           `${where}: ok + warn + onDemandWarn + crit = ${partition}, which must equal total (${counts.total})`,
         );
       }
-      for (const subset of ['staleContent', 'rolloutPending']) {
-        if (counts[subset] > counts.warn) {
-          failures.push(
-            `${where}: ${subset} (${counts[subset]}) is documented as a subset of warn (${counts.warn})`,
-          );
-        }
+      if (counts.rolloutPending > counts.warn) {
+        failures.push(
+          `${where}: rolloutPending (${counts.rolloutPending}) is documented as a subset of warn (${counts.warn})`,
+        );
+      }
+      // Same rule as rolloutPending: the pages state containedWarn is a subset
+      // of warn, not an additional bucket, so it must never exceed it. Without
+      // this the partition check above stays silent, because containedWarn is
+      // deliberately absent from that sum.
+      if (counts.containedWarn > counts.warn) {
+        failures.push(
+          `${where}: containedWarn (${counts.containedWarn}) is documented as a subset of warn (${counts.warn})`,
+        );
+      }
+      // staleContent is no longer a subset of warn (a graced entry counts in
+      // ok), but it is still bounded: STATUS_COUNTS maps STALE_CONTENT to warn
+      // and healthStatusBucket only ever overrides that to ok, so an example
+      // claiming more stale-content diagnoses than there are ok+warn keys is
+      // arithmetically impossible and must not ship.
+      if (counts.staleContent > counts.ok + counts.warn) {
+        failures.push(
+          `${where}: staleContent (${counts.staleContent}) exceeds ok + warn (${counts.ok + counts.warn}), which is impossible`,
+        );
       }
     });
   }

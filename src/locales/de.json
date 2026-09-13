@@ -192,7 +192,7 @@
       "decisionSignalsUnavailable": "Der China-Entscheidungssignal-Snapshot ist derzeit nicht verfügbar."
     },
     "foodStocks": "Food stocks",
-    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT fills production only where PSD has no country coverage.",
+    "foodStocksHelp": "USDA PSD commodity stocks-to-use by marketing year, with the world ratio alongside for context. FAOSTAT Food Balances supplies production and domestic supply when PSD has no complete country balance.",
     "loadingFoodStocks": "Loading food stocks…",
     "foodStocksUnavailable": "Food stocks unavailable.",
     "foodStocksProLocked": "Upgrade to PRO for commodity stocks-to-use",
@@ -294,6 +294,9 @@
         "defense_industrialBalance": "Verteidigungsindustrielle Bilanz",
         "defense_supplierDiversity": "Waffenlieferanten-Diversität"
       }
+    },
+    "defenseIndustrialBase": {
+      "proLocked": "Upgraden Sie auf PRO für Waffenlieferanten-Abhängigkeiten und militärische Kapazität"
     }
   },
   "header": {
@@ -967,7 +970,8 @@
       "refineryStage": "Refine",
       "stageUnavailable": "No published figures for this stage",
       "withheldNote": "W withheld",
-      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them."
+      "productionCaption": "Country shares of actual production. The map deposits layer shows where resources sit; this table shows who mines or refines them.",
+      "productionProLocked": "Upgraden Sie auf PRO für Anteile von Bergbau- und Raffinerieländern mit Konzentration (HHI) nach Stufe"
     },
     "tradePolicy": {
       "tariffs": "Zölle",
@@ -2226,7 +2230,8 @@
       "dependentCommodities": "Abhängige Rohstoffe",
       "stateOk": "Aktuell",
       "stateStale": "Veraltete Eingabe",
-      "stateInsufficient": "Unzureichende Daten"
+      "stateInsufficient": "Unzureichende Daten",
+      "proLocked": "Upgraden Sie auf PRO für Rohstoff-Anfälligkeitsbewertung"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Hormuz-Handelstracker</strong> AIS-Schiffsverfolgung in Echtzeit durch die Straße von Hormuz, den kritischsten Öl-Engpass der Welt. Überwacht Tankeranzahl, Störungsereignisse und wöchentliche Flussänderungen. Etwa 20 % der globalen Ölversorgung passiert hier täglich.",
@@ -2784,6 +2789,27 @@
       "succeeded": "Passkey gespeichert. Sie können ihn beim nächsten Anmelden verwenden.",
       "retryable": "Das konnte nicht abgeschlossen werden. Sie können es erneut versuchen.",
       "failed": "Wir konnten keinen Passkey auf diesem Gerät speichern."
+    },
+    "decisionBrief": {
+      "commodityTitle": "Entscheidungsvorlage für Rohstoffe",
+      "commodity": "Rohstoff / Produkt",
+      "blockedChokepoint": "Als blockiert angenommener Engpass",
+      "commodityCapture": "Rohstoffvergleich erfassen",
+      "title": "Entscheidungsbrief",
+      "fuel": "Brennstoff",
+      "chokepoint": "Engpass",
+      "baseline": "Unterbrechung im Ausgangsszenario",
+      "comparison": "Unterbrechung im Vergleichsszenario",
+      "capture": "Beide erfassen / aktualisieren",
+      "downloadHtml": "Entscheidungsbrief als HTML herunterladen",
+      "downloadJson": "Entscheidungsbrief als JSON herunterladen",
+      "back": "← Zurück zum Länderbrief",
+      "select": "Wählen Sie eine Energieunterbrechung und erfassen Sie dann beide Szenarien.",
+      "changed": "Auswahl geändert. Erfassen Sie vor dem Export beide Szenarien.",
+      "loading": "Beide Szenarien werden erfasst…",
+      "captured": "Erfasst. Prüfen Sie vor dem Download die Beobachtungsdaten und Einschränkungen.",
+      "failed": "Die Szenarien konnten nicht erfasst werden. Prüfen Sie Ihren Zugang und versuchen Sie es erneut. Es ist kein Ergebnis zum Exportieren verfügbar.",
+      "locked": "Der Entscheidungsbrief ist mit Pro verfügbar."
     }
   },
   "popups": {

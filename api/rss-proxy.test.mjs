@@ -158,7 +158,7 @@ test('allows legitimate apex to www RSS canonical redirects', async () => {
   const res = await handler(makeRequest('https://techcrunch.com/feed'));
 
   assert.equal(res.status, 200);
-  assert.equal(res.headers.get('content-type'), 'application/rss+xml');
+  assert.equal(res.headers.get('content-type'), 'text/plain; charset=utf-8');
   assert.match(await res.text(), /<rss>/);
   assert.deepEqual(calls.map((call) => call.url), [
     'https://techcrunch.com/feed',
@@ -296,7 +296,8 @@ test('keeps legacy plain STALE relay responses non-cacheable during rollout', as
   assert.equal(calls.length, 2);
 });
 
-test('preserves the original direct-fetch error when the relay fallback itself throws (#5398)', async () => {
+test('preserves the original direct-fetch diagnostic when the relay fallback itself throws (#5398)', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
   // Both legs fail, but the relay's throw must not replace directError as the
   // reported failure — the #5378 suite only ever covered relay returning
   // null/Response, never throwing.
@@ -318,7 +319,8 @@ test('preserves the original direct-fetch error when the relay fallback itself t
 
     assert.equal(res.status, 502);
     assert.equal(body.error, 'Failed to fetch feed');
-    assert.equal(body.details, 'boom direct fetch');
+    assert.deepEqual(body, { error: 'Failed to fetch feed', url: feedUrl });
+    assert.ok(log.mock.calls.some(({ arguments: args }) => args[2] === 'boom direct fetch'));
     assert.equal(calls.length, 2);
   }
 });
@@ -730,7 +732,7 @@ test('retries through the relay when the direct fetch returns a non-2xx status',
   ]);
 });
 
-test('falls back to application/xml when upstream sends no content-type', async () => {
+test('uses inert text when upstream sends no content-type', async () => {
   const calls = spyFetch(() => {
     const res = new Response('<rss><channel/></rss>', { status: 200 });
     res.headers.delete('content-type');
@@ -740,7 +742,7 @@ test('falls back to application/xml when upstream sends no content-type', async 
   const res = await handler(makeRequest('https://techcrunch.com/feed'));
 
   assert.equal(res.status, 200);
-  assert.equal(res.headers.get('Content-Type'), 'application/xml');
+  assert.equal(res.headers.get('Content-Type'), 'text/plain; charset=utf-8');
   assert.equal(calls.length, 1);
 });
 
@@ -761,23 +763,25 @@ test('maps a direct-fetch AbortError to 504 Feed timeout', async () => {
   const body = await res.json();
 
   assert.equal(res.status, 504);
-  assert.equal(body.error, 'Feed timeout');
-  assert.equal(body.url, 'https://techcrunch.com/feed');
+  assert.deepEqual(body, { error: 'Feed timeout', url: 'https://techcrunch.com/feed' });
   assert.equal(calls.length, 1);
 });
 
-test('maps a generic direct-fetch error to 502 Failed to fetch feed when no relay is configured', async () => {
+test('maps a generic direct-fetch error to 502 Failed to fetch feed when no relay is configured', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
   // Non-Abort throw + WS_RELAY_URL unset -> fetchViaRailway returns null ->
   // directError rethrows into the outer catch: the handler's generic-failure
   // branch and the ONLY captureSilentError call site. Untested before this.
-  const calls = spyFetch(() => { throw new Error('boom direct fetch'); });
+  const message = 'fetch failed https://internal.example/?key=synthetic-secret';
+  const calls = spyFetch(() => { throw new Error(message); });
 
   const res = await handler(makeRequest('https://techcrunch.com/feed'));
   const body = await res.json();
 
   assert.equal(res.status, 502);
   assert.equal(body.error, 'Failed to fetch feed');
-  assert.equal(body.details, 'boom direct fetch');
+  assert.deepEqual(body, { error: 'Failed to fetch feed', url: 'https://techcrunch.com/feed' });
+  assert.ok(log.mock.calls.some(({ arguments: args }) => args[2] === message));
   assert.equal(body.url, 'https://techcrunch.com/feed');
 });
 
@@ -791,7 +795,7 @@ test('maps a relay-only host to 502 when the relay is unavailable', async () => 
 
   assert.equal(res.status, 502);
   assert.equal(body.error, 'Failed to fetch feed');
-  assert.match(body.details, /Railway relay unavailable for relay-only domain: rss\.cnn\.com/);
+  assert.deepEqual(body, { error: 'Failed to fetch feed', url: 'https://rss.cnn.com/rss/edition.rss' });
   // No relay configured and direct fetch is skipped for relay-only hosts, so
   // nothing was ever fetched.
   assert.deepEqual(calls, []);
@@ -920,4 +924,40 @@ test('does not treat an upstream CBC 403 as a cacheable success (#6624)', async 
   assert.equal(res.headers.get('cache-control'), 'private, max-age=180');
   assert.equal(res.headers.get('cdn-cache-control'), null);
   assert.equal(calls[0].headers['User-Agent'], RSS_BROWSER_UA);
+});
+
+for (const relay of [false, true]) {
+  for (const mime of ['text/html', 'application/xhtml+xml', 'image/svg+xml', 'application/xml', 'application/rss+xml']) {
+    test(`serves hostile ${mime} as inert text through ${relay ? 'relay' : 'direct'} fetch`, async () => {
+      if (relay) process.env.WS_RELAY_URL = 'wss://relay.example.com';
+      const body = '<?xml-stylesheet href="https://attacker.invalid/style.xsl"?><html xmlns="http://www.w3.org/1999/xhtml"><script>alert(1)</script></html>';
+      const calls = spyFetch(() => new Response(body, { headers: {
+        'Content-Type': mime,
+        'X-Cache': 'STALE',
+        'X-Relay-Stale': '1',
+      } }));
+      const response = await handler(makeRequest(relay ? 'https://www.cisa.gov/feed' : 'https://techcrunch.com/feed'));
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), body);
+      assert.equal(response.headers.get('Content-Type'), 'text/plain; charset=utf-8');
+      assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
+      assert.equal(response.headers.get('Content-Security-Policy'), "sandbox; default-src 'none'");
+      assert.equal(response.headers.get('Cache-Control'), 'private, max-age=180');
+      assert.equal(response.headers.get('X-Relay-Stale'), relay ? '1' : null);
+      assert.equal(response.headers.get('X-Cache'), relay ? 'STALE' : null);
+      assert.equal(calls.length, 1);
+      assert.equal(new URL(calls[0].url).hostname, relay ? 'relay.example.com' : 'techcrunch.com');
+    });
+  }
+}
+
+test('keeps upstream HTML errors inert while preserving their status', async () => {
+  const body = '<html><script>alert(1)</script></html>';
+  spyFetch(() => new Response(body, { status: 403, headers: { 'Content-Type': 'text/html' } }));
+  const response = await handler(makeRequest('https://techcrunch.com/feed'));
+  assert.equal(response.status, 403);
+  assert.equal(await response.text(), body);
+  assert.equal(response.headers.get('Content-Type'), 'text/plain; charset=utf-8');
+  assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
+  assert.equal(response.headers.get('Content-Security-Policy'), "sandbox; default-src 'none'");
 });

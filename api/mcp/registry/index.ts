@@ -23,6 +23,31 @@ export function isQuotaExemptMetadataTool(tool: ToolDef): boolean {
   return tool.name === 'describe_tool';
 }
 
+/**
+ * What one `tools/call` COSTS, in REST-request units.
+ *
+ * Whether that cost is charged is `reserveQuota`'s call: only an `api`
+ * allowance pays the weight, because only there is an MCP call meant to be
+ * comparable to a REST request. A dedicated MCP allowance charges one unit per
+ * call regardless of what this returns.
+ *
+ * A cache tool answers from the Upstash bootstrap cache and costs what a REST
+ * request costs, so it charges 1. A tool with `_execute` fetches downstream
+ * through the gateway, which `server/gateway.ts` deliberately exempts from the
+ * per-account meter for internal-MCP callers — so the edge has to charge that
+ * work here or it goes unbilled entirely.
+ *
+ * The measured spread is 1-2 downstream calls per tool, not the 10x an
+ * "MCP call = many API calls" intuition suggests, so the table is two values
+ * plus per-tool overrides for the pair that genuinely fetch twice. Deriving the
+ * class from `_execute` rather than a hand-maintained list means a new tool
+ * inherits the right weight by construction.
+ */
+export function toolWeight(tool: ToolDef): number {
+  if (tool._weight !== undefined) return tool._weight;
+  return tool._execute === undefined ? 1 : 2;
+}
+
 /** Single access classifier used by tools/list, describe_tool, and resources. */
 export function toolAccess(tool: ToolDef): McpAccessClass {
   if (tool._freeTier === true) return 'free';
@@ -96,9 +121,12 @@ export function buildPublicTool(
   if (isCacheTool) {
     clonedProperties.summary = structuredClone(SUMMARY_SCHEMA);
   }
-  if (tool._jmespathDisabled !== true) {
-    clonedProperties.jmespath = structuredClone(JMESPATH_SCHEMA);
-  }
+  // Universal, with no roster: a licence-bearing tool declares `_attribution`
+  // instead, and the dispatcher re-attaches its sources to every projection
+  // (shared/attribution-rider.ts). Nothing here is allowed to gate it, because
+  // a tool advertising no `jmespath` is exactly the state that made the old
+  // roster's gaps invisible.
+  clonedProperties.jmespath = structuredClone(JMESPATH_SCHEMA);
 
   const description = opts.compressDescriptions
     ? compressDescription(tool.description, TOOL_DESCRIPTION_MAX_BYTES)
@@ -122,6 +150,7 @@ export function buildPublicTool(
     annotations: structuredClone(tool.annotations),
     _meta: {
       'worldmonitor/access': toolAccess(tool),
+      'worldmonitor/weight': toolWeight(tool),
     },
   };
 
