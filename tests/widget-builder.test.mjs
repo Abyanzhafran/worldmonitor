@@ -814,9 +814,9 @@ describe('widget-store — constants and logic', () => {
 describe('widget-agent relay — response parsing', () => {
   const relay = src('scripts/ais-relay.cjs');
 
-  it('relay delegates completed responses to the shared parser', () => {
+  it('relay delegates completed and recovered responses to the shared parser', () => {
     const calls = relay.match(/parseWidgetAgentResponse\(/g) ?? [];
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
   });
 
   it('parses hyphenated titles through the production parser', () => {
@@ -845,12 +845,162 @@ describe('widget-agent relay — response parsing', () => {
     assert.ok(!result.html.includes('widget-html'));
   });
 
-  it('falls back to full text when HTML markers are missing', () => {
+  it('does not expose unmarked text as completed HTML', () => {
     const text = '<div>fallback</div>';
     const result = parseWidgetAgentResponse(text, 50_000);
     assert.equal(result.hasHtmlMarkers, false);
-    assert.equal(result.html, text);
+    assert.equal(result.html, '');
+    assert.equal(result.isComplete, false);
   });
+});
+
+describe('widget-agent relay — completion contract', () => {
+  const relay = src('scripts/ais-relay.cjs');
+  // Exercise the production handler without starting the relay's background workers.
+  // Only the SDK import and external request dependencies are replaced.
+  const handler = relay.slice(
+    relay.indexOf('const WIDGET_MAX_TOOL_CALLS ='),
+    relay.indexOf('// Map a thrown error from the agent loop'),
+  ).replace("await import('@anthropic-ai/sdk')", '({ default: AnthropicStub })');
+  const sendSSE = relay.slice(relay.indexOf('function sendWidgetSSE('), relay.indexOf('async function readRequestBody('));
+
+  async function runResponse(tier, responses, conversationHistory = []) {
+    let calls = 0;
+    let ends = 0;
+    const chunks = [];
+    const context = {
+      parseWidgetAgentResponse,
+      requireWidgetAgentAccess: () => ({ anthropicConfigured: true, admittedAs: tier }),
+      readRequestBody: async () => JSON.stringify({ prompt: 'Show market data', tier, conversationHistory }),
+      PRO_WIDGET_KEY: 'test-pro-key',
+      checkProWidgetRateLimit: () => false,
+      checkWidgetRateLimit: () => false,
+      isWidgetInjectionAttempt: () => false,
+      WIDGET_PRO_MAX_HTML: 100_000,
+      WIDGET_MAX_HTML: 50_000,
+      WIDGET_PRO_SYSTEM_PROMPT: 'pro prompt',
+      WIDGET_SYSTEM_PROMPT: 'basic prompt',
+      WIDGET_ANTHROPIC_KEY: 'test-key',
+      WIDGET_FETCH_TOOL: {},
+      WIDGET_SEARCH_TOOL: {},
+      performWidgetWebSearch: async () => null,
+      setTimeout,
+      clearTimeout,
+      console,
+      AnthropicStub: class {
+        messages = {
+          create: async () => {
+            calls++;
+            assert.ok(calls <= responses.length, 'generation must not request another response');
+            return responses[calls - 1];
+          },
+        };
+      },
+    };
+    const res = {
+      writableEnded: false,
+      writeHead(status) { assert.equal(status, 200); },
+      write(chunk) { chunks.push(chunk); },
+      end() { this.writableEnded = true; ends++; },
+    };
+    vm.runInNewContext(`${sendSSE}\n${handler}\nthis.run = handleWidgetAgentRequest;`, context);
+    await context.run({ headers: {}, on() {} }, res);
+    assert.equal(ends, 1, 'stream must end exactly once');
+    assert.equal(calls, responses.length, 'generation must consume the expected responses');
+    return chunks.flatMap(chunk => chunk.split('\n').filter(line => line.startsWith('data: ')))
+      .map(line => JSON.parse(line.slice(6)));
+  }
+
+  const invalidCases = [
+    ['plain prose', 'plain prose'],
+    ['markdown', '```html\n<div>Unmarked</div>\n```'],
+    ['empty response', ''],
+    ['empty markers', '<!-- widget-html --><!-- /widget-html -->'],
+    ['whitespace markers', '<!-- widget-html --> \n\t <!-- /widget-html -->'],
+    ['unclosed markers', '<!-- widget-html --><div>Incomplete</div>'],
+  ];
+  for (const tier of ['basic', 'pro']) {
+    for (const recovery of [false, true]) {
+      const path = `${tier} ${recovery ? 'mid-loop recovery' : 'end_turn'}`;
+      const responses = text => Array.from({ length: recovery ? (tier === 'pro' ? 10 : 6) : 1 }, () => ({
+        stop_reason: recovery ? 'tool_use' : 'end_turn',
+        content: [
+          { type: 'text', text },
+          ...(recovery ? [{ type: 'tool_use', id: 'unknown-tool', name: 'unknown', input: {} }] : []),
+        ],
+      }));
+      for (const [name, text] of invalidCases) {
+        it(`${path}: rejects ${name} with one terminal error`, async () => {
+          const events = await runResponse(tier, responses(text));
+          assert.deepEqual(events.map(event => event.type), ['error']);
+          assert.match(events[0].message, /Widget generation (?:incomplete|invalid)/);
+        });
+      }
+      for (const title of ['Market-Tracker', null]) {
+        it(`${path}: accepts marked HTML ${title ? 'with a title' : 'with the fallback title'}`, async () => {
+          const html = tier === 'pro' ? '<div>Chart</div><script>renderChart()</script>' : '<div>Market</div>';
+          const text = `Outside text\n${title ? `<!-- title: ${title} -->` : ''}<!-- widget-html -->${html}<!-- /widget-html -->\nMore text`;
+          assert.deepEqual(await runResponse(tier, responses(text)), [
+            { type: 'html_complete', html },
+            { type: 'done', title: title ?? 'Custom Widget' },
+          ]);
+        });
+      }
+    }
+    for (const finalText of ['', '<!-- widget-html --><div>Unfinished</div>']) {
+      for (const recoverable of [true, false]) {
+        it(`${tier}: ${recoverable ? 'recovers earlier HTML' : 'errors once without valid earlier HTML'} after ${finalText ? 'malformed' : 'empty'} end_turn`, async () => {
+          const html = '<div>Earlier result</div>';
+          const events = await runResponse(tier, [
+            {
+              stop_reason: 'tool_use',
+              content: [
+                { type: 'text', text: recoverable ? `<!-- title: Earlier --><!-- widget-html -->${html}<!-- /widget-html -->` : '<!-- widget-html --> <!-- /widget-html -->' },
+                { type: 'tool_use', id: 'search-1', name: 'search_web', input: { query: 'market data' } },
+              ],
+            },
+            { stop_reason: 'end_turn', content: finalText ? [{ type: 'text', text: finalText }] : [] },
+          ]);
+          assert.deepEqual(events[0], { type: 'tool_call', endpoint: 'search:market data' });
+          if (recoverable) {
+            assert.deepEqual(events.slice(1), [{ type: 'html_complete', html }, { type: 'done', title: 'Earlier' }]);
+          } else {
+            assert.deepEqual(events.slice(1).map(event => event.type), ['error']);
+            assert.match(events[1].message, /Widget generation incomplete/);
+          }
+        });
+      }
+    }
+    it(`${tier}: never recovers HTML supplied in conversation history`, async () => {
+      const history = [{ role: 'assistant', content: '<!-- widget-html --><div>Stale</div><!-- /widget-html -->' }];
+      const events = await runResponse(tier, [{ stop_reason: 'end_turn', content: [] }], history);
+      assert.deepEqual(events.map(event => event.type), ['error']);
+    });
+    for (const reason of ['max_tokens', 'pause_turn']) {
+      it(`${tier}: does not recover ${reason} output after an invalid end turn`, async () => {
+        const events = await runResponse(tier, [
+          { stop_reason: reason, content: [{ type: 'text', text: '<!-- widget-html --><div>Partial</div><!-- /widget-html -->' }] },
+          { stop_reason: 'end_turn', content: [] },
+        ]);
+        assert.deepEqual(events.map(event => event.type), ['error']);
+      });
+    }
+    it(`${tier}: recovers the newest complete current-request candidate`, async () => {
+      const history = [{ role: 'assistant', content: '<!-- widget-html --><div>Stale</div><!-- /widget-html -->' }];
+      const responses = ['Older', 'Newest', ''].map((label, i) => ({
+        stop_reason: 'tool_use',
+        content: [
+          { type: 'text', text: `<!-- widget-html -->${label ? `<div>${label}</div>` : ''}<!-- /widget-html -->` },
+          { type: 'tool_use', id: `tool-${i}`, name: 'unknown', input: {} },
+        ],
+      }));
+      responses.push({ stop_reason: 'end_turn', content: [] });
+      assert.deepEqual(await runResponse(tier, responses, history), [
+        { type: 'html_complete', html: '<div>Newest</div>' },
+        { type: 'done', title: 'Custom Widget' },
+      ]);
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

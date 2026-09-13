@@ -13733,6 +13733,8 @@ async function handleWidgetAgentRequest(req, res) {
     messages.push({ role: 'user', content: String(prompt).slice(0, 2000) });
 
     let completed = false;
+    const recoveryCandidates = [];
+    let incompleteMessage = `Widget generation incomplete: tool loop exhausted (${maxTurns} turns)`;
     let finalizing = false;
     let truncatedResponses = 0;
     for (let turn = 0; turn < maxTurns; turn++) {
@@ -13759,7 +13761,11 @@ async function handleWidgetAgentRequest(req, res) {
       if (response.stop_reason === 'end_turn' && !hasToolRequests) {
         const textBlock = response.content.find(b => b.type === 'text');
         const text = textBlock?.text ?? '';
-        const { html, title } = parseWidgetAgentResponse(text, maxHtml);
+        const { html, title, isComplete } = parseWidgetAgentResponse(text, maxHtml);
+        if (!isComplete) {
+          incompleteMessage = 'Widget generation incomplete: expected nonempty HTML inside complete widget-html markers.';
+          break;
+        }
         sendWidgetSSE(res, 'html_complete', { html });
         sendWidgetSSE(res, 'done', { title });
         completed = true;
@@ -13845,6 +13851,7 @@ async function handleWidgetAgentRequest(req, res) {
         }
         messages.push({ role: 'assistant', content: response.content });
         messages.push({ role: 'user', content: toolResults });
+        if (response.stop_reason === 'tool_use') recoveryCandidates.push(response.content);
       } else {
         messages.push({ role: 'assistant', content: response.content });
       }
@@ -13873,7 +13880,21 @@ async function handleWidgetAgentRequest(req, res) {
       }
     }
     if (!completed && !cancelled) {
-      throw new Error(`Widget generation incomplete: tool loop exhausted (${maxTurns} turns)`);
+      // Recover the newest complete tool-turn output from this request only.
+      let recovered = false;
+      for (let i = recoveryCandidates.length - 1; i >= 0; i--) {
+        const text = recoveryCandidates[i].filter(b => b.type === 'text').map(b => b.text).join('');
+        const parsed = parseWidgetAgentResponse(text, maxHtml);
+        if (parsed.isComplete) {
+          sendWidgetSSE(res, 'html_complete', { html: parsed.html });
+          sendWidgetSSE(res, 'done', { title: parsed.title });
+          recovered = true;
+          break;
+        }
+      }
+      if (!recovered) {
+        sendWidgetSSE(res, 'error', { message: incompleteMessage });
+      }
     }
   } catch (err) {
     // Classify the error so the client gets an actionable message instead
